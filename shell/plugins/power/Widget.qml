@@ -53,6 +53,6 @@ Item {
   MouseArea {
     anchors.fill: parent
     cursorShape: Qt.PointingHandCursor
-    onClicked: if (root.host) root.host.summon("cn.power", {})
+    onClicked: if (root.host) root.host.toggle("cn.power", {})
   }
 }

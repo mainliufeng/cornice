@@ -15,12 +15,17 @@ qs="$bin_dir/cornice-qs"
 
 while "$qs" kill -p "$config_dir" --any-display >/dev/null 2>&1; do :; done
 
+# Absolute path on purpose: the compositor's PATH does not necessarily contain
+# ~/.local/bin, and a failed relaunch after killing the old shell leaves the user
+# with no bar at all.
 if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && command -v hyprctl >/dev/null 2>&1; then
-  hyprctl dispatch "exec cornice-launch" >/dev/null 2>&1 || setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
-else
-  setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
+  hyprctl dispatch "exec $bin_dir/cornice-launch" >/dev/null 2>&1
+  sleep 0.3
 fi
-disown || true
+if ! timeout 3 "$bin_dir/cornice" ping >/dev/null 2>&1; then
+  setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
+  disown || true
+fi
 
 for _ in $(seq 1 50); do
   if timeout 5 "$qs" ipc -p "$config_dir" call shell ping >/dev/null 2>&1; then

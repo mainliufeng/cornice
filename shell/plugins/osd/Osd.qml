@@ -14,9 +14,10 @@ PanelFrame {
   id: root
 
   edge: "bottom"
-  panelWidth: 280
-  panelHeight: 54
+  panelWidth: 340
+  panelHeight: 64
   takesKeyboard: false
+  dismissOnClickAway: false
 
   // { kind, value, label, icon }
   property string kind: "volume"
@@ -28,6 +29,11 @@ PanelFrame {
 
   readonly property var sink: Pipewire.defaultAudioSink
   readonly property var source: Pipewire.defaultAudioSource
+
+  // See the audio widget: untracked nodes report volume 0.
+  PwObjectTracker {
+    objects: [Pipewire.defaultAudioSink, Pipewire.defaultAudioSource]
+  }
 
   readonly property real sinkVolume: (sink && sink.audio) ? sink.audio.volume : -1
   readonly property bool sinkMuted: (sink && sink.audio) ? sink.audio.muted : false

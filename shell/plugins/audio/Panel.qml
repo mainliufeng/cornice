@@ -20,6 +20,13 @@ PanelFrame {
     return list.filter(node => node.isSink && !node.isStream)
   }
 
+  PwObjectTracker {
+    objects: {
+      const all = Pipewire.nodes ? Pipewire.nodes.values.slice() : []
+      return all.concat([root.sink, root.source].filter(node => node !== null))
+    }
+  }
+
   function setVolume(node, value) {
     if (!node || !node.audio) return
     node.audio.volume = value

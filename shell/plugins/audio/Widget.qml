@@ -24,6 +24,13 @@ Item {
 
   readonly property string text: muted ? "muted" : (percent + "%")
 
+  // Quickshell only binds a PipeWire node's parameters (volume, mute) for
+  // objects that are tracked — without this every node reports volume 0 and
+  // muted false.
+  PwObjectTracker {
+    objects: [Pipewire.defaultAudioSink, Pipewire.defaultAudioSource]
+  }
+
   implicitHeight: Style.widgetHeight
   implicitWidth: label.implicitWidth + Style.space(1)
   visible: !!sink
@@ -46,7 +53,7 @@ Item {
       if (mouse.button === Qt.LeftButton)
         Util.exec("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")
       else if (mouse.button === Qt.RightButton && root.host)
-        root.host.summon("cn.audio", {})
+        root.host.toggle("cn.audio", {})
       else if (mouse.button === Qt.MiddleButton)
         Util.exec("pavucontrol-qt || pavucontrol")
     }
@@ -54,6 +61,38 @@ Item {
     onWheel: wheel => {
       const delta = wheel.angleDelta.y > 0 ? 1 : -1
       Util.exec("wpctl set-volume @DEFAULT_AUDIO_SINK@ " + (delta * root.step) + "%+")
+    }
+  }
+
+  // Read-only support hook.
+  ShellIpc {
+    target: "audioinfo"
+
+    function dump(): string {
+      const all = Pipewire.nodes ? Pipewire.nodes.values : []
+      const sinks = []
+      for (const node of all) {
+        if (!node.isSink || node.isStream) continue
+        sinks.push({
+          id: node.id,
+          name: String(node.name),
+          description: String(node.description),
+          volume: node.audio ? node.audio.volume : null,
+          muted: node.audio ? node.audio.muted : null,
+          ready: node.ready
+        })
+      }
+      return JSON.stringify({
+        ready: Pipewire.ready,
+        nodeCount: all.length,
+        defaultSink: Pipewire.defaultAudioSink
+          ? { id: Pipewire.defaultAudioSink.id, name: String(Pipewire.defaultAudioSink.name),
+              volume: Pipewire.defaultAudioSink.audio ? Pipewire.defaultAudioSink.audio.volume : null }
+          : null,
+        preferredSink: Pipewire.preferredDefaultAudioSink
+          ? String(Pipewire.preferredDefaultAudioSink.name) : null,
+        sinks: sinks
+      })
     }
   }
 }

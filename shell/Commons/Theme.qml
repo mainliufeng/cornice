@@ -32,11 +32,11 @@ QtObject {
       muted: "#6e7681"
     },
     metrics: {
-      barHeight: 30,
-      fontSize: 12,
+      barHeight: 38,
+      fontSize: 16,
       radius: 0,
-      gap: 6,
-      padding: 10
+      gap: 8,
+      padding: 12
     }
   })
 

@@ -40,7 +40,7 @@ Item {
     cursorShape: Qt.PointingHandCursor
     onClicked: mouse => {
       if (mouse.button === Qt.MiddleButton) root.showAlt = !root.showAlt
-      else if (root.host) root.host.summon("cn.clock", {})
+      else if (root.host) root.host.toggle("cn.clock", {})
     }
   }
 }

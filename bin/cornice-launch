@@ -13,6 +13,10 @@ prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
 export CORNICE_PATH="$prefix"
 config_dir="$prefix/shell"
 qs="$bin_dir/cornice-qs"
+
+# Desktop entries and CLI helpers assume the user's own bin dir is on PATH
+# (a login shell would have it); the compositor's environment often does not.
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"
 socket="${XDG_RUNTIME_DIR:-/tmp}/cornice-${USER:-user}.sock"
 
 # A socket left behind by a crashed shell would make the CLI talk into nothing.

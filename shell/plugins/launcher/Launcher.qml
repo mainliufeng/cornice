@@ -77,11 +77,27 @@ PanelFrame {
     close()
   }
 
+  // .desktop Exec lines carry field codes (%U, %F, %c, %k, %i, ...). We have no
+  // file arguments, so drop the file placeholders and expand the rest — and run
+  // through sh with the user's own bin dir on PATH, because desktop files assume
+  // a login-ish environment.
+  function sanitizedCommand(entry) {
+    return String(entry.execString || "")
+      .replace(/%[uUfFdDnNickvm]/g, code => {
+        if (code === "%c") return entry.name || ""
+        if (code === "%k") return entry.id || ""
+        if (code === "%i") return ""
+        return ""
+      })
+      .replace(/\s+/g, " ")
+      .trim()
+  }
+
   function launch(entry) {
-    // runInTerminal entries need a terminal wrapper; everything else is spawned
-    // directly from its Exec line.
-    if (entry.runInTerminal === true) Util.exec("kitty -e " + entry.execString)
-    else Quickshell.execDetached(["sh", "-c", entry.execString])
+    const command = "PATH=\"$HOME/.local/bin:$PATH\" " + sanitizedCommand(entry)
+    if (command.trim() === "") return
+    if (entry.runInTerminal === true) Util.exec("kitty -e sh -c " + JSON.stringify(command))
+    else Quickshell.execDetached(["sh", "-c", command])
   }
 
   Column {

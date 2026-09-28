@@ -19,9 +19,14 @@ Item {
     return list.length > 0 ? list[0] : null
   }
 
-  readonly property string connectivity: String(Networking.connectivity)
-  readonly property bool online: connectivity === "Connected" || connectivity === "Portal"
-  readonly property bool wired: activeDevice !== null && String(activeDevice.type).toLowerCase().indexOf("wired") !== -1
+  // Quickshell's networking enums are integers in QML (String() gives "4", not
+  // "Full"), so compare against the enum types instead of parsing strings.
+  readonly property int connectivity: Networking.connectivity
+  readonly property bool online: connectivity === NetworkConnectivity.Full
+    || connectivity === NetworkConnectivity.Limited
+    || connectivity === NetworkConnectivity.Portal
+  readonly property int deviceType: activeDevice ? activeDevice.type : DeviceType.None
+  readonly property bool wired: deviceType === DeviceType.Wired
 
   readonly property string icon: {
     if (!activeDevice) return "\uf00d"
@@ -66,7 +71,34 @@ Item {
     cursorShape: Qt.PointingHandCursor
     onClicked: mouse => {
       if (mouse.button === Qt.RightButton) Util.exec("nm-connection-editor")
-      else if (root.host) root.host.summon("cn.network", {})
+      else if (root.host) root.host.toggle("cn.network", {})
+    }
+  }
+
+  // Read-only support hook (temporary while the module behaviour is unclear).
+  ShellIpc {
+    target: "netinfo"
+
+    function dump(): string {
+      const devices = Networking.devices ? Networking.devices.values : []
+      return JSON.stringify({
+        backend: String(Networking.backend),
+        connectivity: String(Networking.connectivity),
+        canCheck: Networking.canCheckConnectivity,
+        wifiEnabled: Networking.wifiEnabled,
+        wifiHardwareEnabled: Networking.wifiHardwareEnabled,
+        deviceCount: devices.length,
+        devices: devices.map(device => ({
+          name: String(device.name),
+          type: String(device.type),
+          state: String(device.state),
+          connected: device.connected,
+          address: String(device.address),
+          networkCount: device.networks ? (device.networks.values ? device.networks.values.length : -1) : -2
+        })),
+        activeDevice: root.activeDevice ? String(root.activeDevice.name) : null,
+        icon: root.icon
+      })
     }
   }
 }

@@ -10,11 +10,11 @@
     "surfaceBorder": "#cfcac1"
   },
   "metrics": {
-    "barHeight": 30,
-    "fontSize": 12,
+    "barHeight": 38,
+    "fontSize": 16,
     "radius": 0,
-    "gap": 6,
-    "padding": 10,
+    "gap": 8,
+    "padding": 12,
     "fontFamily": "Hack Nerd Font"
   }
 }

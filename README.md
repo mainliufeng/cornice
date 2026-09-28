@@ -156,6 +156,22 @@ property var widgetConfig  // the entry from config.json
 Plugin code runs inside the shell process, unsandboxed — same trust model as
 any dotfile. Run `cornice reload-plugins` after adding one.
 
+## Support hooks
+
+Some read-only IPC targets exist so a problem can be diagnosed from outside the
+shell instead of guessing:
+
+| Target | Shows |
+| --- | --- |
+| `cornice ipc tray dump` | every StatusNotifier item, its icon name and how it resolved |
+| `cornice ipc netinfo dump` | backend, connectivity, devices, the icon the network widget picked |
+| `cornice ipc audioinfo dump` | PipeWire readiness, default sink, per-node volumes |
+| `cornice ipc shell debug` | plugin instances and which panels are open |
+
+`test/inject-click.py` injects a real mouse click through `/dev/uinput` (needs
+write access, no root) with feedback-controlled positioning — the only way to
+verify pointer interactions such as "clicking the bar opens the panel".
+
 ## Verify without touching your desktop
 
 `test/headless-verify.sh` starts a private headless Hyprland in a temporary

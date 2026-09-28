@@ -245,6 +245,18 @@ ShellRoot {
   }
 
   function toggle(id, payload) {
+    const plugin = pluginRegistry.byId(id)
+    if (!plugin) return "unknown"
+
+    // A kept-loaded panel is already mounted: close it when it is open, open it
+    // otherwise. (Without this, a second click on a bar widget re-opened it.)
+    if (plugin.keepLoaded === true) {
+      const instance = instanceFor(id)
+      if (!instance) return "not-loaded"
+      if (instance.item && instance.item.isOpen === true) return instance.close()
+      return instance.open(payload || ({}))
+    }
+
     for (const instance of summoned) {
       if (instance.id === id) return hide(id)
     }

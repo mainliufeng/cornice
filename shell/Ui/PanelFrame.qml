@@ -20,6 +20,10 @@ Item {
   property int panelWidth: 360
   property int panelHeight: 400
   property bool takesKeyboard: false
+  // Dismiss when the user clicks somewhere else. This needs the same keyboard
+  // grab as a keyboard panel, so interactive panels (the OSD) turn it off to
+  // stay out of the way.
+  property bool dismissOnClickAway: true
 
   // State driven by the shell.
   property bool isOpen: false
@@ -32,6 +36,7 @@ Item {
   default property alias content: contentArea.data
 
   readonly property alias window: window
+  readonly property bool wantsKeyboard: takesKeyboard || dismissOnClickAway
 
   function parsePayload(json) {
     if (!json || json === "") return ({})
@@ -60,7 +65,7 @@ Item {
 
     visible: root.isOpen
     color: "transparent"
-    focusable: root.takesKeyboard
+    focusable: root.wantsKeyboard
     exclusiveZone: 0
     aboveWindows: true
 
@@ -79,7 +84,7 @@ Item {
 
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "cornice-panel"
-    WlrLayershell.keyboardFocus: root.takesKeyboard ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: root.wantsKeyboard ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
     Surface {
       anchors.fill: parent
@@ -88,22 +93,52 @@ Item {
       Item {
         id: contentArea
         anchors.fill: parent
+        focus: true
+
+        // Escape closes any panel, focused input or not.
+        Keys.onPressed: event => {
+          if (event.key === Qt.Key_Escape) {
+            root.close()
+            event.accepted = true
+          }
+        }
       }
     }
   }
 
   // A keyboard panel takes an exclusive focus grab, which also reports when the
   // user clicks somewhere else — that is the dismissal gesture for a launcher.
-  HyprlandFocusGrab {
-    windows: [window]
-    active: root.isOpen && root.takesKeyboard
-    onCleared: root.close()
+  // The grab is what makes click-away dismissal work: Hyprland tells us when it
+  // is released, which is exactly when the user clicked elsewhere.
+  //
+  // It must not arm in the same instant the panel opens, though: the click that
+  // opened it (a bar widget) is still in flight, Hyprland reports the grab as
+  // immediately cleared, and the panel closes before it is drawn — which looks
+  // exactly like "clicking does nothing".
+  property bool grabArmed: false
+
+  Timer {
+    id: armTimer
+    interval: 220
+    repeat: false
+    onTriggered: root.grabArmed = true
   }
 
-  Keys.onPressed: event => {
-    if (event.key === Qt.Key_Escape) {
-      root.close()
-      event.accepted = true
+  Connections {
+    target: root
+    function onOpened() {
+      root.grabArmed = false
+      armTimer.restart()
     }
+    function onDismissed() {
+      armTimer.stop()
+      root.grabArmed = false
+    }
+  }
+
+  HyprlandFocusGrab {
+    windows: [window]
+    active: root.isOpen && root.wantsKeyboard && root.grabArmed
+    onCleared: if (root.grabArmed) root.close()
   }
 }

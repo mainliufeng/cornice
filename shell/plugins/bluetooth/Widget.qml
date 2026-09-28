@@ -40,6 +40,6 @@ Item {
   MouseArea {
     anchors.fill: parent
     cursorShape: Qt.PointingHandCursor
-    onClicked: if (root.host) root.host.summon("cn.bluetooth", {})
+    onClicked: if (root.host) root.host.toggle("cn.bluetooth", {})
   }
 }
