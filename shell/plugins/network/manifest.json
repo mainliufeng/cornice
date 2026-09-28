@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.network",
+  "name": "Network",
+  "version": "0.2.0",
+  "author": "cornice",
+  "description": "Connectivity in the bar, Wi-Fi networks and connection details in a panel",
+  "kinds": ["bar-widget", "panel"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "Widget.qml",
+    "panel": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Network",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": { "showName": false },
+    "schema": [
+      { "key": "showName", "type": "boolean", "label": "Show the connection name next to the icon" }
+    ]
+  }
+}

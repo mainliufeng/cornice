@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.spacer",
+  "name": "Spacer",
+  "version": "0.2.0",
+  "author": "cornice",
+  "description": "Flexible space between bar widgets",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Spacer",
+    "category": "Layout",
+    "allowMultiple": true,
+    "defaultSection": "center",
+    "defaults": { "size": 12 },
+    "schema": [
+      { "key": "size", "type": "number", "label": "Width in pixels" }
+    ]
+  }
+}

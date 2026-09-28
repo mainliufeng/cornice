@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.tray",
+  "name": "System tray",
+  "version": "0.2.0",
+  "author": "cornice",
+  "description": "StatusNotifier items: click to activate, right click for the item's menu",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "System tray",
+    "category": "Status",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": { "iconSize": 16 },
+    "schema": [
+      { "key": "iconSize", "type": "number", "label": "Icon size in pixels" }
+    ]
+  }
+}

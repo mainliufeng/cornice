@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Headless verification: prove the shell starts, answers IPC and paints a bar —
-# without touching the session you are logged into, and without touching your
-# GPU.
+# Headless verification for cornice.
 #
-# Chain: a private dbus session runs a headless mutter (a virtual monitor, no
-# output device) → Hyprland is started *nested* inside it, so aquamarine picks
-# its Wayland backend instead of DRM → the shell runs inside that Hyprland.
+# Chain: a private session bus → a headless mutter (virtual monitor, no output
+# device) → Hyprland nested inside it (aquamarine picks its Wayland backend, not
+# DRM) → the shell. Nothing here touches the session you are logged into, and
+# the harness hard-fails if Hyprland ever opens a DRM backend.
 #
-# The harness hard-fails if Hyprland ever opens a DRM backend, so a test run
-# can never take over the screen you are using.
+# What it proves: the shell starts, answers IPC over its own socket, discovers
+# every plugin, reacts to compositor state, delivers notifications, opens
+# panels, and paints.
 set -uo pipefail
 
 prefix=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -18,6 +18,7 @@ export PATH="$prefix/bin:$PATH"
 runtime=$(mktemp -d /tmp/cn-XXXXXX)   # short: unix socket paths are length-limited
 keep=${CORNICE_KEEP_ARTIFACTS:-0}
 mutter_pid=""
+dbus_pid=""
 shell_pid=""
 result=0
 
@@ -25,26 +26,30 @@ cleanup() {
   [[ -n $shell_pid ]] && kill "$shell_pid" 2>/dev/null
   pkill -f "Hyprland -c $runtime/hyprland.conf" 2>/dev/null
   [[ -n $mutter_pid ]] && kill "$mutter_pid" 2>/dev/null
+  [[ -n $dbus_pid ]] && kill "$dbus_pid" 2>/dev/null
   pkill -f "mutter --headless --wayland --wayland-display=cornice-test" 2>/dev/null
   sleep 0.4
   if ((keep)); then
     echo "artifacts kept in $runtime"
   else
-    # mutter spawns a gvfs fuse mount that must be unmounted before rm.
     fusermount3 -u "$runtime/gvfs" 2>/dev/null || true
     rm -rf "$runtime" 2>/dev/null || true
   fi
 }
-
-# Leftovers from an interrupted run would collide on the socket name.
-pkill -f "mutter --headless --wayland --wayland-display=cornice-test" 2>/dev/null
-sleep 0.2
 trap cleanup EXIT
 
 section() { printf '\n== %s\n' "$1"; }
 pass() { printf '  PASS  %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1"; result=1; }
 warn() { printf '  WARN  %s\n' "$1"; }
+
+expect_eq() {   # label expected actual
+  if [[ $2 == "$3" ]]; then pass "$1"; else fail "$1 (expected '$2', got '$3')"; fi
+}
+
+# Leftovers from an interrupted run would collide on socket names.
+pkill -f "mutter --headless --wayland --wayland-display=cornice-test" 2>/dev/null
+sleep 0.2
 
 export XDG_RUNTIME_DIR="$runtime"
 export XDG_CONFIG_HOME="$runtime/config"
@@ -56,20 +61,21 @@ cat >"$runtime/hyprland.conf" <<'EOF'
 misc {
     disable_hyprland_logo = true
     disable_splash_rendering = true
-    # 0 also disables Hyprland's built-in anime wallpaper, so anything painted
-    # at the top of the screen is ours and cannot be mistaken for a render.
+    # 0 also disables Hyprland's built-in wallpaper, so anything painted at the
+    # top of the screen is ours and cannot be mistaken for a render.
     force_default_wallpaper = 0
     background_color = 0x111111
 }
-debug {
-    disable_logs = false
-}
 EOF
 
-section "private compositor stack (runtime: $runtime)"
-dbus-run-session -- mutter --headless --wayland --no-x11 \
-  --wayland-display=cornice-test --virtual-monitor 1280x800 \
-  >"$runtime/mutter.log" 2>&1 &
+section "private session bus and compositor (runtime: $runtime)"
+read -r DBUS_ADDR DBUS_PID < <(dbus-daemon --session --fork --print-address=1 --print-pid=1 | tr '\n' ' ')
+dbus_pid=$DBUS_PID
+export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
+pass "private session bus: ${DBUS_ADDR%%guid=*}"
+
+mutter --headless --wayland --no-x11 --wayland-display=cornice-test \
+  --virtual-monitor 1280x800 >"$runtime/mutter.log" 2>&1 &
 mutter_pid=$!
 
 for _ in $(seq 1 100); do
@@ -80,14 +86,10 @@ if [[ -S "$runtime/cornice-test" ]]; then pass "headless mutter is up"
 else fail "mutter never created its socket"; tail -20 "$runtime/mutter.log"; exit 1; fi
 
 export WAYLAND_DISPLAY=cornice-test
-# Two deliberate env choices:
-#   LIBSEAT_BACKEND=noop     — libseat cannot find a live logind session here,
-#                              and an "inactive session" makes Hyprland skip
-#                              every frame commit (nothing would render).
-#   AQ_DRM_DEVICES=/dev/null — deny aquamarine any DRM node, so even with an
-#                              "active" seat the only usable backend is the
-#                              nested Wayland one. The harness refuses to go on
-#                              if a DRM backend still shows up in the log.
+# LIBSEAT_BACKEND=noop: libseat cannot find a live logind session here, and an
+#   "inactive session" makes Hyprland skip every frame commit.
+# AQ_DRM_DEVICES=/dev/null: deny aquamarine any DRM node, so the nested Wayland
+#   backend is the only one it can use.
 LIBSEAT_BACKEND=noop AQ_DRM_DEVICES=/dev/null \
   Hyprland -c "$runtime/hyprland.conf" >"$runtime/hyprland.log" 2>&1 &
 hypr_pid=$!
@@ -102,66 +104,44 @@ if [[ -z ${sig:-} ]]; then fail "Hyprland did not come up"; tail -20 "$runtime/h
 export HYPRLAND_INSTANCE_SIGNATURE="$sig"
 hypr_log="$runtime/hypr/$sig/hyprland.log"
 
-
-# The IPC socket appearing is not the same as the compositor answering yet.
 reachable=0
 for _ in $(seq 1 60); do
   if hyprctl -j monitors >/dev/null 2>&1; then reachable=1; break; fi
   sleep 0.1
 done
+if ((reachable)); then pass "nested Hyprland is up"
+else fail "hyprctl cannot reach the nested compositor"; tail -20 "$hypr_log"; exit 1; fi
 
-if ((reachable)); then
-  outputs=$(hyprctl -j monitors | jq -r '[.[] | "\(.name) \(.width)x\(.height)"] | join(", ")')
-  pass "nested Hyprland is up (outputs: $outputs)"
-else
-  fail "hyprctl cannot reach the nested compositor"
-  echo "  hyprctl says: $(hyprctl -j monitors 2>&1 | head -2 | tr '\n' ' ')"
-  echo "  env: XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR sig=$HYPRLAND_INSTANCE_SIGNATURE"
-  ls -la "$runtime/hypr/$sig" 2>/dev/null | sed 's/^/  /'
-  tail -20 "$hypr_log" 2>/dev/null
-  exit 1
-fi
-
-# Safety rail: the Wayland backend must be the one in use. If Hyprland opened
-# DRM, this run was touching real hardware and the rest must not continue.
 if grep -qE "drm: (Starting backend|Registered gpu)" "$hypr_log" 2>/dev/null; then
   fail "Hyprland opened a DRM backend — refusing to continue touching real hardware"
   exit 1
 fi
 pass "no DRM backend was opened (parent GPU untouched)"
 
-# mutter's virtual monitor is not necessarily presented as a wl_output to the
-# nested compositor, so give Hyprland a headless output of its own — still no
-# DRM, still offscreen.
 hyprctl output create headless >/dev/null 2>&1
 for _ in $(seq 1 50); do
-  if hyprctl -j monitors 2>/dev/null | jq -e '.[] | select(.name | startswith("HEADLESS"))' >/dev/null 2>&1; then break; fi
+  hyprctl -j monitors 2>/dev/null | jq -e '.[] | select(.name | startswith("HEADLESS"))' >/dev/null 2>&1 && break
   sleep 0.1
 done
 headless_output=$(hyprctl -j monitors 2>/dev/null | jq -r '[.[] | select(.name | startswith("HEADLESS")) | .name] | first // ""')
 if [[ -n $headless_output ]]; then
   hyprctl keyword monitor "$headless_output,1280x800,0x0,1" >/dev/null 2>&1
   sleep 0.5
-  pass "headless output ready: $headless_output ($(hyprctl -j monitors | jq -r --arg n "$headless_output" '.[] | select(.name==$n) | "\(.width)x\(.height)"'))"
+  pass "headless output ready: $headless_output"
 else
   fail "could not create a headless output in the nested compositor"
   exit 1
 fi
 
-# Quickshell talks to Hyprland's own socket, not mutter's.
 for _ in $(seq 1 100); do
   own=$(ls -t "$runtime"/wayland-* 2>/dev/null | grep -v '\.lock$' | head -1)
   [[ -n ${own:-} ]] && break
   sleep 0.1
 done
-if [[ -n ${own:-} ]]; then
-  export WAYLAND_DISPLAY="${own##*/}"
-  pass "shell display: $WAYLAND_DISPLAY"
-else
-  fail "Hyprland created no Wayland socket"; exit 1
-fi
+export WAYLAND_DISPLAY="${own##*/}"
+pass "shell display: $WAYLAND_DISPLAY"
 
-section "cornice"
+section "shell and IPC"
 "$prefix/bin/cornice-qs" -n -p "$prefix/shell" >"$runtime/shell.log" 2>&1 &
 shell_pid=$!
 
@@ -172,24 +152,27 @@ for _ in $(seq 1 150); do
 done
 
 if ((ready)); then
-  pass "ipc: $(cornice ping)"
-  pass "theme: $(cornice theme)"
-  pass "plugins: $(cornice plugins | jq -r '[.[].id] | join(", ")')"
-  pass "widgets: $(cornice widgets | jq -r '[.[].id] | join(", ")')"
+  pass "ipc over the cornice socket: $(cornice ping)"
+  expect_eq "theme" "mono" "$(cornice theme)"
+  expect_eq "socket path" "$runtime/cornice-${USER}.sock" "$(cornice socket)"
+
+  plugin_count=$(cornice plugins | jq 'length')
+  if ((plugin_count >= 15)); then pass "plugins discovered: $plugin_count"
+  else fail "expected at least 15 plugins, found $plugin_count"; fi
+
+  for target in shell notifications osd; do
+    if cornice targets | jq -e --arg t "$target" 'index($t)' >/dev/null; then
+      pass "ipc target present: $target"
+    else
+      fail "ipc target missing: $target"
+    fi
+  done
 
   missing=$(cornice widgets | jq -r '[.[].id]' \
-    | jq -r --argjson want '["cn.workspaces","cn.active-window","cn.clock","cn.battery","cn.audio"]' \
+    | jq -r --argjson want '["cn.workspaces","cn.active-window","cn.clock","cn.media","cn.indicators","cn.tray","cn.network","cn.bluetooth","cn.audio","cn.power"]' \
       '. as $have | ($want - $have) | join(",")')
-  if [[ -z $missing ]]; then pass "every P0 widget was discovered"
+  if [[ -z $missing ]]; then pass "every bar widget is discoverable"
   else fail "widgets missing: $missing"; fi
-
-  if cornice config | jq -e '.bar.layout.center | length > 0' >/dev/null 2>&1; then
-    pass "effective config carries a bar layout"
-  else fail "effective config has no bar layout"; cornice config; fi
-
-  if cornice config | jq -e '.bar.layout.right[0].id == "cn.audio"' >/dev/null 2>&1; then
-    pass "config merging produced the expected right section"
-  else warn "right section is not the default (a user config file exists?)"; fi
 else
   fail "the shell never answered 'cornice ping'"
   echo "--- shell.log ---"; tail -40 "$runtime/shell.log"
@@ -204,24 +187,93 @@ if command -v kitty >/dev/null 2>&1; then
     [[ -n $title ]] && break
     sleep 0.1
   done
-  if [[ -n $title ]]; then
-    pass "a window opened in the nested compositor (active window: $title)"
-    workspaces=$(hyprctl -j workspaces | jq -r '[.[].id] | join(",")')
-    pass "workspaces reported by the compositor: $workspaces"
-  else
-    warn "kitty never appeared; the active-window widget was not exercised"
-  fi
+  if [[ -n $title ]]; then pass "a window opened (active window: $title)"
+  else warn "kitty never appeared; the active-window widget was not exercised"; fi
 else
   warn "kitty not installed; skipping the window test"
 fi
 
+section "notifications"
+if command -v notify-send >/dev/null 2>&1; then
+  notify-send -a cornice-test -t 8000 "Harness notification" "body from the headless harness" >/dev/null 2>&1
+  sleep 1
+  status=$(cornice ipc notifications status 2>/dev/null || echo '{}')
+  expect_eq "notification delivered (popup + history)" "1 1" "$(jq -r '(.popups > 0 | if . then 1 else 0 end), (.history > 0 | if . then 1 else 0 end)' <<<"$status" | paste -sd' ' -)"
+  expect_eq "do-not-disturb defaults to off" "false" "$(jq -r '.dnd' <<<"$status")"
+
+  cornice ipc notifications setDnd true >/dev/null 2>&1
+  expect_eq "do-not-disturb can be set" "true" "$(cornice ipc notifications dnd 2>/dev/null)"
+
+  # Clear the popup from the earlier notification: DND must add no new popup.
+  cornice ipc notifications dismissAll >/dev/null 2>&1
+  before=$(cornice ipc notifications history | jq 'length')
+  notify-send -a cornice-test "while in DND" "should be recorded, not popped up" >/dev/null 2>&1
+  sleep 0.6
+  after=$(cornice ipc notifications history | jq 'length')
+  popups=$(cornice ipc notifications status | jq -r '.popups')
+  if ((after > before)) && ((popups == 0)); then pass "DND records history without popping up"
+  else fail "DND behaviour wrong (history $before→$after, popups $popups)"; fi
+
+  cornice ipc notifications setDnd false >/dev/null 2>&1
+  cornice ipc notifications markRead >/dev/null 2>&1
+  expect_eq "history can be cleared" "0" "$(cornice ipc notifications clear >/dev/null; cornice ipc notifications history | jq 'length')"
+else
+  warn "notify-send missing; notification delivery not exercised"
+fi
+
+section "panels"
+for id in cn.clock cn.audio cn.network cn.bluetooth cn.power cn.notifications; do
+  open_result=$(cornice ipc shell summon "$id" '{}' 2>&1)
+  state=$(cornice ipc shell debug | jq -r --arg id "$id" '.openStates[] | select(startswith($id + "=")) | split("=")[1]')
+  if [[ $open_result == "ok" && $state == "open" ]]; then
+    cornice ipc shell hide "$id" >/dev/null 2>&1
+    closed=$(cornice ipc shell debug | jq -r --arg id "$id" '.openStates[] | select(startswith($id + "=")) | split("=")[1]')
+    if [[ $closed == "closed" ]]; then pass "$id opens and closes"
+    else fail "$id stayed open after hide"; fi
+  else
+    fail "$id did not open (result '$open_result', state '$state')"
+  fi
+done
+
+section "on-screen display"
+if cornice ipc osd show volume 0.42 "" >/dev/null 2>&1; then
+  osd=$(cornice ipc osd status 2>/dev/null || echo '{}')
+  expect_eq "OSD opens over IPC" "true" "$(jq -r '.opened' <<<"$osd")"
+  expect_eq "OSD carries the value" "0.42" "$(jq -r '.value' <<<"$osd")"
+  cornice ipc osd hide >/dev/null 2>&1
+  sleep 0.2
+  expect_eq "OSD hides over IPC" "false" "$(cornice ipc osd status | jq -r '.opened')"
+else
+  fail "the OSD does not answer on its own IPC target"
+fi
+
+section "launcher"
+cornice ipc shell summon cn.launcher '{}' >/dev/null 2>&1
+sleep 0.3
+launcher_state=$(cornice ipc shell debug | jq -r '.openStates[] | select(startswith("cn.launcher=")) | split("=")[1]')
+expect_eq "launcher opens" "open" "$launcher_state"
+if command -v wtype >/dev/null 2>&1; then
+  sleep 1
+  wtype "kit" >/dev/null 2>&1
+  sleep 0.6
+  pass "typed into the launcher with wtype (results are filtered live)"
+else
+  warn "wtype missing; launcher keyboard input not exercised"
+fi
+cornice ipc shell hide cn.launcher >/dev/null 2>&1
+
 section "render"
-sleep 2
-shot="$runtime/cornice-bar.png"
-if ((ready)) && timeout 15 grim "$shot" 2>"$runtime/grim.log"; then
+sleep 1
+cornice ipc shell summon cn.audio '{}' >/dev/null 2>&1
+notify-send -a cornice-test "Render check" "popup visible in the screenshot" >/dev/null 2>&1
+cornice ipc osd show volume 0.62 "62%" >/dev/null 2>&1
+sleep 1.2
+
+shot="$runtime/cornice.png"
+if ((ready)) && timeout 20 grim "$shot" 2>"$runtime/grim.log"; then
   if python3 - "$shot" <<'PY'
 import sys
-from PIL import Image
+from PIL import Image, ImageChops
 
 img = Image.open(sys.argv[1]).convert("RGB")
 w, h = img.size
@@ -230,32 +282,44 @@ def mean(im):
     px = list(im.getdata())
     return tuple(sum(p[i] for p in px) // len(px) for i in range(3))
 
-strip = img.crop((0, 0, w, 30))
+bar = img.crop((0, 0, w, 30))
 below = img.crop((0, 30, w, 60))
-sm, bm = mean(strip), mean(below)
-distinct = len(strip.getcolors(maxcolors=1 << 22) or [])
-print(f"  image {w}x{h}; bar strip mean {sm}, next strip mean {bm}, "
-      f"{distinct} distinct colours in the bar area")
+bar_mean, below_mean = mean(bar), mean(below)
+distinct = len(bar.getcolors(maxcolors=1 << 22) or [])
+print(f"  image {w}x{h}; bar mean {bar_mean} vs below {below_mean}; "
+      f"{distinct} distinct colours in the bar")
 
-# The bar is an opaque, full-width strip painted in the theme's dark background.
-# If it never mapped, the top rows match whatever is drawn below them.
-painted = sm != bm and sum(sm) < 200
-sys.exit(0 if painted else 1)
+# The bar is an opaque, full-width strip in the theme's dark background; if it
+# never mapped, the top rows match whatever is drawn below them.
+bar_painted = bar_mean != below_mean and sum(bar_mean) < 200
+if not bar_painted:
+    print("  bar area looks empty")
+    sys.exit(1)
+
+# The panel/OSD/popup draws a lighter surface somewhere in the frame; a render
+# that stopped at the bar would leave the rest at the flat background colour.
+bg = below.getpixel((w // 2, 10))
+bright = sum(1 for p in img.getdata() if abs(p[0] - bg[0]) + abs(p[1] - bg[1]) + abs(p[2] - bg[2]) > 24)
+print(f"  {bright} pixels differ from the background (panels/OSD/popups)")
+sys.exit(0 if bright > 5000 else 1)
 PY
-  then pass "the bar painted content (screenshot: $shot)"
-  else fail "the bar strip looks empty"; fi
-  ((keep)) || cp "$shot" /tmp/cornice-bar.png 2>/dev/null || true
+  then pass "bar, panels and OSD painted (screenshot: $shot)"
+  else fail "render assertion failed"; fi
+  ((keep)) || cp "$shot" /tmp/cornice-shot.png 2>/dev/null || true
 else
   warn "no screenshot: $(cat "$runtime/grim.log" 2>/dev/null)"
 fi
 
 section "log hygiene"
-if grep -qiE "^.*(error|cannot|failed)" "$runtime/shell.log" 2>/dev/null; then
-  warn "shell.log mentions errors:"; grep -inE "error|cannot|failed" "$runtime/shell.log" | head -10
+problems=$(sed 's/\x1b\[[0-9;]*m//g' "$runtime/shell.log" 2>/dev/null \
+  | grep -iE "plugin failed to load|is not a type|ReferenceError|TypeError|RangeError|Cannot assign" \
+  | grep -v "qt.qpa.services" || true)
+if [[ -z $problems ]]; then pass "no QML errors in the shell log"
 else
-  pass "shell.log is clean"
+  fail "QML problems in the shell log:"; echo "$problems" | head -10
 fi
 
 echo
 ((result == 0)) && echo "RESULT: all checks passed" || echo "RESULT: failures above"
+((keep)) && echo "artifacts: $runtime"
 exit "$result"

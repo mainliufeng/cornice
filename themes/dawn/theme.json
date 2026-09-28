@@ -1,0 +1,20 @@
+{
+  "colors": {
+    "foreground": "#2b2b2b",
+    "background": "#f2f0eb",
+    "accent": "#2f6fb5",
+    "urgent": "#c0392b",
+    "muted": "#7a7570",
+    "barBackground": "#f2f0eb",
+    "surface": "#e6e3dc",
+    "surfaceBorder": "#cfcac1"
+  },
+  "metrics": {
+    "barHeight": 30,
+    "fontSize": 12,
+    "radius": 0,
+    "gap": 6,
+    "padding": 10,
+    "fontFamily": "Hack Nerd Font"
+  }
+}

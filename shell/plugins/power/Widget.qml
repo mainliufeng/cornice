@@ -53,6 +53,6 @@ Item {
   MouseArea {
     anchors.fill: parent
     cursorShape: Qt.PointingHandCursor
-    onClicked: Util.exec("command -v gnome-power-statistics >/dev/null 2>&1 && gnome-power-statistics || true")
+    onClicked: if (root.host) root.host.summon("cn.power", {})
   }
 }

@@ -40,6 +40,22 @@ Item {
     return forKind("bar")
   }
 
+  function services() {
+    return forKind("service")
+  }
+
+  // Panels/overlays/menus that ask to stay mounted between summons.
+  function keepLoaded() {
+    const out = []
+    for (const plugin of plugins) {
+      if (plugin.keepLoaded !== true) continue
+      const points = plugin.entryPoints || ({})
+      if (!points.panel && !points.overlay && !points.menu) continue
+      out.push(plugin)
+    }
+    return out
+  }
+
   function barWidgets() {
     const out = []
     for (const plugin of plugins) {

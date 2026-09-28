@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.launcher",
+  "name": "Launcher",
+  "version": "0.2.0",
+  "author": "cornice",
+  "description": "Application launcher: type to filter, enter to run, with a run-command mode",
+  "kinds": ["menu"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "menu": "Launcher.qml"
+  }
+}

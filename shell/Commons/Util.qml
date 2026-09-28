@@ -27,6 +27,16 @@ QtObject {
     return !!value && typeof value === "object" && !Array.isArray(value)
   }
 
+  // Shallow copy for maps that hold live QML objects (plugin instances,
+  // services). Never deep-copy those: enumerating a QObject walks parent and
+  // children, which recurses until the stack dies.
+  function shallow(object) {
+    const out = {}
+    if (!object) return out
+    for (const key in object) out[key] = object[key]
+    return out
+  }
+
   function clone(value) {
     if (Array.isArray(value)) return value.map(clone)
     if (isPlainObject(value)) {

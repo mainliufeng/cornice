@@ -6,15 +6,20 @@ import "services"
 
 // The single long-lived Quickshell instance that hosts the Cornice desktop.
 //
-// Everything visible is a plugin: the bar, its widgets, and (later) panels,
-// overlays and menus. This file only owns the contract between them —
-// configuration, theme, plugin discovery and IPC.
+// Everything visible is a plugin: the bar, its widgets, panels, overlays and
+// menus. This file owns the contract between them — configuration, theme,
+// plugin discovery, service lifetime, summon/hide, and IPC.
 ShellRoot {
   id: shell
 
   readonly property string prefix: Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
   readonly property string home: Quickshell.env("HOME")
-  readonly property string version: "0.1.0"
+  readonly property string version: "0.2.0"
+
+  readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"
+  readonly property string userName: Quickshell.env("USER") || "user"
+  // Keep this identical to the path bin/cornice computes.
+  readonly property string socketPath: runtimeDir + "/cornice-" + userName + ".sock"
 
   readonly property string defaultsPath: prefix + "/config/default.json"
   readonly property string userConfigPath: home + "/.config/cornice/config.json"
@@ -25,6 +30,23 @@ ShellRoot {
   property var userConfig: undefined
   property var config: ({ version: 1, theme: "mono", bar: ({}) })
   property string configError: ""
+
+  // Long-lived plugin instances (kind: service), keyed by plugin id, so other
+  // first-party plugins can talk to them without a round trip through IPC.
+  property var services: ({})
+
+  // Summonable plugin instances: [{ id, entry, payload }].
+  property var summoned: []
+
+  function registerService(id, item) {
+    const next = Util.shallow(services)
+    next[id] = item
+    services = next
+  }
+
+  function service(id) {
+    return services[id] === undefined ? null : services[id]
+  }
 
   function parseJson(text, label) {
     if (!text || text.trim() === "") return undefined
@@ -70,14 +92,19 @@ ShellRoot {
   }
 
   PluginRegistry {
-    id: registry
+    id: pluginRegistry
     host: shell
   }
 
-  // The active bar: the configured `bar.id`, or the built-in bar as fallback.
+  IpcServer {
+    socketPath: shell.socketPath
+  }
+
+  // ---- the bar -------------------------------------------------------------
+
   readonly property var barPlugin: {
     const wanted = Util.option(config.bar, "id", "cn.bar")
-    return registry.byId(wanted) || registry.byId("cn.bar")
+    return pluginRegistry.byId(wanted) || pluginRegistry.byId("cn.bar")
   }
 
   readonly property string barUrl: {
@@ -98,13 +125,13 @@ ShellRoot {
       }
       setSource(shell.barUrl, {
         "host": shell,
-        "registry": registry,
+        "registry": pluginRegistry,
         "config": shell.config
       })
     }
 
     Connections {
-      target: registry
+      target: pluginRegistry
       function onReadyChanged() { barLoader.rebuild() }
     }
 
@@ -114,7 +141,141 @@ ShellRoot {
     }
   }
 
-  IpcHandler {
+  // ---- services and summoned plugins --------------------------------------
+  //
+  // Instances live under a container Item rather than directly under the
+  // ShellRoot: a Repeater parented to a non-Item root never instantiates its
+  // delegates, which silently produced zero plugin instances.
+  Item {
+    id: pluginInstances
+
+    visible: false
+
+    // Long-lived (kind: service) plugins.
+    Repeater {
+      id: serviceRepeater
+      model: pluginRegistry.services()
+      delegate: PluginInstance {
+        required property var modelData
+        host: shell
+        registry: pluginRegistry
+        pluginId: modelData.id
+        entry: "service"
+      }
+    }
+
+    // Plugins that stay mounted between summons (the OSD, the notification
+    // centre): loaded once, then only opened and closed.
+    Repeater {
+      id: keepLoadedRepeater
+      model: pluginRegistry.keepLoaded()
+      delegate: PluginInstance {
+        required property var modelData
+        host: shell
+        registry: pluginRegistry
+        pluginId: modelData.id
+        entry: shell.entryFor(modelData)
+        payload: ({})
+        autoOpen: false
+      }
+    }
+
+    // Summoned panels, overlays and menus.
+    Repeater {
+      id: summonedRepeater
+      model: shell.summoned
+      delegate: PluginInstance {
+        required property var modelData
+        host: shell
+        registry: pluginRegistry
+        pluginId: modelData.id
+        entry: modelData.entry
+        payload: modelData.payload
+      }
+    }
+  }
+
+  // Summonable plugins declare one of these entry points; a plugin with
+  // several kinds is addressed by its most specific one.
+  function entryFor(plugin) {
+    const points = plugin.entryPoints || ({})
+    for (const candidate of ["panel", "overlay", "menu"]) {
+      if (points[candidate]) return candidate
+    }
+    return ""
+  }
+
+  function summon(id, payload) {
+    const plugin = pluginRegistry.byId(id)
+    if (!plugin) return "unknown"
+    const entry = entryFor(plugin)
+    if (entry === "") return "not-summonable"
+
+    // Kept-loaded plugins are already mounted: open them, do not remount.
+    if (plugin.keepLoaded === true) {
+      const instance = instanceFor(id)
+      if (!instance) return "not-loaded"
+      return instance.open(payload || ({}))
+    }
+
+    const next = []
+    let replaced = false
+    for (const instance of summoned) {
+      if (instance.id === id) {
+        next.push({ id: id, entry: entry, payload: payload || ({}) })
+        replaced = true
+      } else {
+        next.push(instance)
+      }
+    }
+    if (!replaced) next.push({ id: id, entry: entry, payload: payload || ({}) })
+    summoned = next
+    return "ok"
+  }
+
+  function hide(id) {
+    const plugin = pluginRegistry.byId(id)
+    if (plugin && plugin.keepLoaded === true) {
+      const instance = instanceFor(id)
+      if (instance) instance.close()
+      return "ok"
+    }
+    summoned = summoned.filter(instance => instance.id !== id)
+    return "ok"
+  }
+
+  function toggle(id, payload) {
+    for (const instance of summoned) {
+      if (instance.id === id) return hide(id)
+    }
+    return summon(id, payload)
+  }
+
+  function callPlugin(id, method, argument) {
+    const instance = instanceFor(id)
+    if (instance) return String(instance.call(method, argument))
+
+    const service = shell.service(id)
+    if (service && typeof service[method] === "function") {
+      const result = service[method](argument)
+      return result === undefined ? "ok" : String(result)
+    }
+    return "not-loaded"
+  }
+
+  function registerInstance(id, instance) {
+    const next = Util.shallow(instanceMap)
+    next[id] = instance
+    instanceMap = next
+  }
+
+  function unregisterInstance(id) {
+    const next = Util.shallow(instanceMap)
+    delete next[id]
+    instanceMap = next
+  }
+
+  ShellIpc {
     target: "shell"
 
     function ping(): string {
@@ -123,6 +284,31 @@ ShellRoot {
 
     function version(): string {
       return shell.version
+    }
+
+    function debug(): string {
+      return JSON.stringify({
+        registryReady: pluginRegistry.ready,
+        plugins: pluginRegistry.plugins.length,
+        serviceModels: pluginRegistry.services().map(plugin => plugin.id),
+        keepLoadedModels: pluginRegistry.keepLoaded().map(plugin => plugin.id),
+        serviceRepeaterCount: serviceRepeater.count,
+        keepLoadedCount: keepLoadedRepeater.count,
+        summonedCount: summonedRepeater.count,
+        instances: Object.keys(shell.instanceMap),
+        openStates: Object.keys(shell.instanceMap).map(id => id + "=" + (shell.instanceMap[id].item ? (shell.instanceMap[id].item.isOpen === true ? "open" : "closed") : "noitem")),
+        services: Object.keys(shell.services),
+        barStatus: barLoader.status,
+        targets: IpcRegistry.targets()
+      })
+    }
+
+    function targets(): string {
+      return JSON.stringify(IpcRegistry.targets())
+    }
+
+    function socket(): string {
+      return shell.socketPath
     }
 
     function config(): string {
@@ -134,7 +320,29 @@ ShellRoot {
     }
 
     function widgets(): string {
-      return JSON.stringify(registry.barWidgets())
+      return JSON.stringify(pluginRegistry.barWidgets())
+    }
+
+    function services(): string {
+      return JSON.stringify(pluginRegistry.services().map(plugin => plugin.id))
+    }
+
+    function summon(id: string, payload: string): string {
+      const parsed = shell.parseJson(payload === undefined ? "{}" : payload, "summon payload")
+      return shell.summon(String(id), parsed || ({}))
+    }
+
+    function hide(id: string): string {
+      return shell.hide(String(id))
+    }
+
+    function toggle(id: string, payload: string): string {
+      const parsed = shell.parseJson(payload === undefined ? "{}" : payload, "toggle payload")
+      return shell.toggle(String(id), parsed || ({}))
+    }
+
+    function call(id: string, method: string, argument: string): string {
+      return shell.callPlugin(id, method, argument)
     }
 
     function reloadConfig(): string {
@@ -144,12 +352,12 @@ ShellRoot {
     }
 
     function reloadPlugins(): string {
-      registry.rescan()
+      pluginRegistry.rescan()
       return "ok"
     }
 
     function setTheme(themeName: string): string {
-      Theme.name = String(themeName)
+      Theme.name = themeName
       return Theme.name
     }
 
@@ -158,9 +366,24 @@ ShellRoot {
     }
   }
 
+  // The Repeater owns the instances; this maps an id back to its PluginInstance
+  // so IPC can call into a summoned plugin.
+  property var instanceMap: ({})
+
+  function instanceFor(id) {
+    return instanceMap[id] === undefined ? null : instanceMap[id]
+  }
+
+  function noteInstance(id, item) {
+    const next = Util.shallow(instanceMap)
+    if (item) next[id] = item
+    else delete next[id]
+    instanceMap = next
+  }
+
   function pluginSummary() {
     const out = []
-    for (const plugin of registry.plugins) {
+    for (const plugin of pluginRegistry.plugins) {
       out.push({
         id: plugin.id,
         name: plugin.name,
@@ -177,4 +400,9 @@ ShellRoot {
     defaultsFile.reload()
     userFile.reload()
   }
+
+
+
+
+
 }

@@ -36,7 +36,11 @@ Item {
 
   MouseArea {
     anchors.fill: parent
+    acceptedButtons: Qt.LeftButton | Qt.MiddleButton
     cursorShape: Qt.PointingHandCursor
-    onClicked: root.showAlt = !root.showAlt
+    onClicked: mouse => {
+      if (mouse.button === Qt.MiddleButton) root.showAlt = !root.showAlt
+      else if (root.host) root.host.summon("cn.clock", {})
+    }
   }
 }

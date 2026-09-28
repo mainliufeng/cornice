@@ -13,6 +13,12 @@ prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
 export CORNICE_PATH="$prefix"
 config_dir="$prefix/shell"
 qs="$bin_dir/cornice-qs"
+socket="${XDG_RUNTIME_DIR:-/tmp}/cornice-${USER:-user}.sock"
+
+# A socket left behind by a crashed shell would make the CLI talk into nothing.
+if [[ -S $socket ]] && ! timeout 1 socat -u OPEN:/dev/null "UNIX-CONNECT:$socket" 2>/dev/null; then
+  rm -f "$socket"
+fi
 
 run_shell() {
   if command -v systemd-cat >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then

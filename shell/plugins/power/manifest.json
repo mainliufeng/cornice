@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "cn.audio",
-  "name": "Audio",
+  "id": "cn.power",
+  "name": "Power",
   "version": "0.2.0",
   "author": "cornice",
-  "description": "Default sink volume and mute, left click toggles mute, right click scrolls volume",
+  "description": "Battery in the bar; battery details, power profile and session actions in a panel",
   "kinds": [
     "bar-widget",
     "panel"
@@ -14,18 +14,18 @@
     "panel": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Audio",
-    "category": "Audio",
+    "displayName": "Battery",
+    "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "step": 5
+      "showTimeRemaining": false
     },
     "schema": [
       {
-        "key": "step",
-        "type": "number",
-        "label": "Volume step in percent"
+        "key": "showTimeRemaining",
+        "type": "boolean",
+        "label": "Show time remaining"
       }
     ]
   },

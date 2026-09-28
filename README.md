@@ -8,19 +8,42 @@
 
 ## Status
 
-**P0 complete and verified.** A bar with workspaces, active window, clock,
-battery and audio; a plugin registry (manifest-driven, hot-rescannable); IPC;
-a doctor; and a headless test harness that runs the whole thing in a private
-compositor and screenshots the result.
+**P0 + P1 + P2 complete and verified** (33/33 checks in the headless harness).
 
-Verified by `test/headless-verify.sh` (exit 0), which:
-1. starts a headless mutter and a **nested Hyprland** inside it — the Wayland
-   backend, never DRM, so your real GPU and screen are untouched;
-2. creates a headless output in that compositor;
-3. runs the shell in it and asserts IPC answers, all five widgets are
-   discovered, and config merging produced the expected layout;
-4. opens a window (kitty) to prove widgets react to compositor state;
-5. screenshots the bar and checks the top strip actually painted.
+- **Bar** — workspaces, active window, media (MPRIS), clock, indicators,
+  system tray, network, bluetooth, audio, power, spacer. Config-driven layout,
+  deep-merged user config, themed through tokens.
+- **Panels** — clock/calendar, audio (sink/mic volumes, device list), network
+  (Wi-Fi list + connect), bluetooth (scan, pair, connect), power (battery,
+  power profiles, session actions), notification centre.
+- **Notifications** — the shell owns `org.freedesktop.Notifications`: popups,
+  history, do-not-disturb, action buttons, and a centre panel.
+- **OSD** — volume/microphone/brightness overlay that also follows PipeWire
+  volume changes (so volume keys show it without any wiring).
+- **Launcher** — desktop entries with live filtering, keyboard navigation and a
+  `>` run-command mode.
+- **IPC** — the shell serves its own socket (`~/.local/share/cornice` style JSON
+  line protocol) so plugins keep their own targets even though they load at
+  runtime; `cornice ipc <target> <method> [args]` plus convenience verbs.
+- **Verification** — `test/headless-verify.sh` (private compositor, never
+  touches your GPU or session) and `cornice verify` (checks the shell you are
+  looking at, inside a real Hyprland session).
+
+Not implemented yet: lock screen, polkit agent, wallpaper, clipboard overlay.
+
+Verified by `test/headless-verify.sh` (exit 0, 33 checks), which:
+1. creates a private session bus, then starts a headless mutter and a **nested
+   Hyprland** inside it — the Wayland backend, never DRM, so your real GPU,
+   screen and desktop are untouched;
+2. creates a headless output in that compositor and runs the shell there;
+3. asserts IPC over the shell's own socket, all 15 plugins, every bar widget,
+   and each of the six panels opening and closing;
+4. delivers a real notification over D-Bus and checks the popup, the history
+   and the do-not-disturb behaviour;
+5. opens a window (kitty) to prove widgets react to compositor state, types
+   into the launcher with `wtype`;
+6. screenshots the result and asserts both the bar strip and the panel/OSD
+   surfaces actually painted.
 
 The assertion is visual as well as programmatic: workspace pills 1–5 (active
 one highlighted), the focused window title, `Mon HH:MM`, and the battery
@@ -70,9 +93,13 @@ Rollback is `cornice stop` plus deleting the line you added.
 
 ```bash
 cornice start | stop | restart | status
-cornice ping | version | plugins | widgets | config | theme [name]
+cornice ping | version | plugins | widgets | targets | socket | config | theme [name]
 cornice reload | reload-plugins
-cornice doctor
+cornice panel <plugin-id> [json]   # toggle any panel
+cornice launcher | notifications | dnd [on|off]
+cornice osd volume | microphone | brightness | hide
+cornice doctor                    # environment, conflicts, config
+cornice verify                    # the running shell, in your real session
 cornice logs
 ```
 

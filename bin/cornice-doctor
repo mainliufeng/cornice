@@ -96,6 +96,28 @@ else
 fi
 [[ -f $theme_override ]] && ok "theme override: $theme_override" || true
 
+section "Shell"
+socket_path="${XDG_RUNTIME_DIR:-/tmp}/cornice-${USER:-user}.sock"
+if [[ -S $socket_path ]]; then
+  ok "ipc socket:  $socket_path"
+  if timeout 3 "$bin_dir/cornice" ipc shell targets >/dev/null 2>&1; then
+    ok "running shell targets: $(timeout 3 "$bin_dir/cornice" ipc shell targets | tr -d '[]"' )"
+  else
+    warn "a socket exists but the shell does not answer — stale socket, or a shell still starting"
+  fi
+else
+  ok "no running shell (nothing to talk to yet)"
+fi
+
+hypr_conf="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.conf"
+if [[ -r $hypr_conf ]]; then
+  if grep -qE "^\s*exec-once\s*=\s*cornice-launch" "$hypr_conf"; then
+    ok "hyprland.conf starts cornice"
+  else
+    warn "hyprland.conf does not start cornice — add: exec-once = cornice-launch"
+  fi
+fi
+
 section "Plugins"
 count=0
 for manifest in "$config_dir"/plugins/*/manifest.json "$config_dir"/plugins/*/*/manifest.json; do

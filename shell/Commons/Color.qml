@@ -30,6 +30,20 @@ QtObject {
 
   readonly property color hover: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.10)
 
+  // Opaque surface for panels, popups and the OSD: those sit on top of whatever
+  // window happens to be behind them, so a translucent card would be unreadable.
+  readonly property color panel: Qt.rgba(
+    background.r * 0.94 + foreground.r * 0.06,
+    background.g * 0.94 + foreground.g * 0.06,
+    background.b * 0.94 + foreground.b * 0.06,
+    1)
+
+  readonly property color panelAlt: Qt.rgba(
+    background.r * 0.86 + foreground.r * 0.14,
+    background.g * 0.86 + foreground.g * 0.14,
+    background.b * 0.86 + foreground.b * 0.14,
+    1)
+
   readonly property color workspaceActive: Qt.rgba(accent.r, accent.g, accent.b, 0.85)
   readonly property color workspaceActiveText: background
   readonly property color workspaceOccupied: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.25)

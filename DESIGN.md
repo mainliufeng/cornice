@@ -5,7 +5,16 @@
 
 设计稿 **v0.2**，P0 已实现并验证（见 README「Status」与 `test/headless-verify.sh`）。
 
-### P0 实测得到的三条硬约束（写代码前不知道的）
+### P0/P1/P2 实测得到的硬约束（写代码前不知道的）
+
+4. **插件里的 IpcHandler 不会被 Quickshell 的 `qs ipc` 看到**：它只枚举静态声明的树。解决方案是 shell 自己起 Unix socket（`services/IpcServer` + `Commons/IpcRegistry` + `ShellIpc` 包装），CLI 走 socat（约 5ms），omarchy 也是这么做的。
+5. **Repeater 不能直接挂在 `ShellRoot` 下**：父级不是 Item 时委托根本不会实例化（现象是"count 正确但实例为 0"）。要包一层 `Item`。
+6. **delegate 里写 `registry: registry` 会自引用**（组件自身也有同名属性）→ null。用不同 id（`pluginRegistry`）。
+7. **不能 `clone()` 持 QObject 的映射**：会遍历 parent/children 直到栈溢出；用浅拷贝。
+8. **`IpcHandler`/`ShellIpc` 的函数参数必须带类型**（`string`），否则注册时报 "cannot be used across IPC"。
+9. **`Notification.dismiss()` 不能对保存下来的旧引用调用**（包装对象会失效）；要么按 id 从 `trackedNotifications` 里找活动对象，要么只存 id。
+10. **keepLoaded 面板必须 `autoOpen: false`**，否则启动瞬间所有面板同时打开。
+11. 面板定位：只锚 `left` 并用 `margins.left = (screenWidth - width) / 2`；同时锚 left+right 会把 surface 拉满全宽。
 
 1. **QML 模块命名空间**：多目录模块必须以 `qs.` 前缀导入（`import qs.Commons`），Quickshell 只把配置根注册成 `qs`。自定义前缀（`cn.Commons`）会报 `module ... is not installed`。
 2. **`SystemClock` 是要实例化的类型**，不是全局单例；`SystemClock.date` 直接访问得到 `undefined`，必须 `SystemClock { id: clock; precision: SystemClock.Minutes }`。

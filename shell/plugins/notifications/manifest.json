@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.notifications",
+  "name": "Notifications",
+  "version": "0.2.0",
+  "author": "cornice",
+  "description": "Notification daemon (org.freedesktop.Notifications), popups, history and do-not-disturb",
+  "kinds": ["service", "panel"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "panel": "Center.qml"
+  }
+}

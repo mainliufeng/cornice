@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.indicators",
+  "name": "Indicators",
+  "version": "0.2.0",
+  "author": "cornice",
+  "description": "Notification count and do-not-disturb state",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Indicators",
+    "category": "Status",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "hideWhenZero": true
+    },
+    "schema": [
+      { "key": "hideWhenZero", "type": "boolean", "label": "Hide when there is nothing to show" }
+    ]
+  }
+}

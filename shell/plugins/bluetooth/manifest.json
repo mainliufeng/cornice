@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.bluetooth",
+  "name": "Bluetooth",
+  "version": "0.2.0",
+  "author": "cornice",
+  "description": "Bluetooth adapter state in the bar, device list and pairing in a panel",
+  "kinds": ["bar-widget", "panel"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "Widget.qml",
+    "panel": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Bluetooth",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": { "hideWhenOff": true },
+    "schema": [
+      { "key": "hideWhenOff", "type": "boolean", "label": "Hide when the adapter is off" }
+    ]
+  }
+}

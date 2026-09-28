@@ -8,15 +8,25 @@
     "layout": {
       "left": [
         { "id": "cn.workspaces" },
-        { "id": "cn.active-window" }
+        { "id": "cn.active-window" },
+        { "id": "cn.media" }
       ],
       "center": [
-        { "id": "cn.clock", "format": "ddd HH:mm" }
+        { "id": "cn.clock", "format": "ddd HH:mm", "formatAlt": "HH:mm:ss" }
       ],
       "right": [
+        { "id": "cn.indicators" },
+        { "id": "cn.tray" },
+        { "id": "cn.network" },
+        { "id": "cn.bluetooth" },
         { "id": "cn.audio" },
-        { "id": "cn.battery" }
+        { "id": "cn.power" }
       ]
     }
+  },
+  "notifications": {
+    "timeout": 6000,
+    "maxPopups": 4,
+    "historyLimit": 50
   }
 }

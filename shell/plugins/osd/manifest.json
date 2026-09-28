@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.osd",
+  "name": "On-screen display",
+  "version": "0.2.0",
+  "author": "cornice",
+  "description": "Volume, microphone and brightness overlay that follows the value",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "Osd.qml"
+  }
+}

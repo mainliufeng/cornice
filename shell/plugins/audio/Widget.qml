@@ -45,6 +45,8 @@ Item {
     onClicked: mouse => {
       if (mouse.button === Qt.LeftButton)
         Util.exec("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")
+      else if (mouse.button === Qt.RightButton && root.host)
+        root.host.summon("cn.audio", {})
       else if (mouse.button === Qt.MiddleButton)
         Util.exec("pavucontrol-qt || pavucontrol")
     }

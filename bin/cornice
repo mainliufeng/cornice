@@ -35,10 +35,17 @@ Inspecting the running shell (IPC)
   reload              Re-read config.json and theme.json
   reload-plugins      Re-scan the plugin directories
   ipc <target> <fn>   Raw IPC call, e.g. cornice ipc shell ping
+  targets             IPC targets the running shell exposes
+  panel <id> [json]   Toggle a panel plugin (e.g. cornice panel cn.audio)
+  launcher            Toggle the application launcher
+  notifications       Toggle the notification centre
+  dnd [on|off]        Toggle or set do-not-disturb
+  osd <what>          volume | microphone | brightness | hide
   logs                Follow the shell's journal (systemd only)
 
 Machine
   doctor              Check dependencies, compositor and conflicts
+  verify              Check the running shell inside your real session
   path                Print the paths cornice resolved
   help                This message
 USAGE
@@ -49,6 +56,10 @@ USAGE
 ipc_timeout="${CORNICE_IPC_TIMEOUT:-5}"
 
 shell_running() {
+  local status
+  call_via_socket shell ping >/dev/null 2>&1
+  status=$?
+  ((status == 0)) && return 0
   timeout "$ipc_timeout" "$qs" ipc -p "$config_dir" call shell ping >/dev/null 2>&1
 }
 
@@ -60,7 +71,46 @@ require_shell() {
   fi
 }
 
+# Request framing for the shell's own socket, matching services/IpcServer.qml.
+socket_path() {
+  printf '%s/cornice-%s.sock\n' "${XDG_RUNTIME_DIR:-/tmp}" "${USER:-user}"
+}
+
+call_via_socket() {
+  local sock target method
+  sock=$(socket_path)
+  [[ -S $sock ]] || return 2
+  command -v socat >/dev/null 2>&1 || return 2
+  command -v jq >/dev/null 2>&1 || return 2
+
+  target=$1
+  method=$2
+  shift 2
+  # Missing --jq args: build the array from the remaining argv.
+  local args='[]'
+  if (($#)); then
+    args=$(printf '%s\n' "$@" | jq -Rs 'split("\n") | .[0:length-1]')
+  fi
+  local request
+  request=$(jq -cn --arg t "$target" --arg m "$method" --argjson a "$args" '{target:$t, method:$m, args:$a}')
+
+  local reply
+  reply=$(printf '%s\n' "$request" | timeout "$ipc_timeout" socat - UNIX-CONNECT:"$sock" 2>/dev/null) || return 3
+  if jq -e '.ok == true' <<<"$reply" >/dev/null 2>&1; then
+    jq -r '.result' <<<"$reply"
+    return 0
+  fi
+  echo "cornice: $(jq -r '.error // "request failed"' <<<"$reply")" >&2
+  return 1
+}
+
 call() {
+  local status
+  call_via_socket "$@"
+  status=$?
+  ((status == 0)) && return 0
+  ((status == 1)) && return 1
+
   require_shell
   timeout "$ipc_timeout" "$qs" ipc -p "$config_dir" call "$@"
 }
@@ -114,6 +164,36 @@ case "$command" in
     call "$@"
     ;;
 
+  targets)
+    call shell targets
+    ;;
+
+  socket)
+    call shell socket
+    ;;
+
+  panel)
+    (($# >= 1)) || { echo "usage: cornice panel <plugin-id> [payload-json]" >&2; exit 2; }
+    call shell toggle "$1" "${2:-{\}}"
+    ;;
+
+  launcher)
+    call shell toggle cn.launcher '{}'
+    ;;
+
+  notifications)
+    call shell toggle cn.notifications '{}'
+    ;;
+
+  dnd)
+    (($# == 1)) && call notifications setDnd "$1" || call notifications toggleDnd
+    ;;
+
+  osd)
+    (($# >= 1)) || { echo "usage: cornice osd volume|microphone|brightness|hide" >&2; exit 2; }
+    call osd "$1"
+    ;;
+
   launch)
     exec "$bin_dir/cornice-launch"
     ;;
@@ -160,10 +240,15 @@ case "$command" in
     exec "$bin_dir/cornice-doctor"
     ;;
 
+  verify)
+    exec "$bin_dir/cornice-verify"
+    ;;
+
   path)
     printf 'prefix:     %s\n' "$prefix"
     printf 'config dir: %s\n' "$config_dir"
     printf 'user config: %s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+    printf 'socket:     %s\n' "$(socket_path)"
     printf 'quickshell:  %s\n' "$("$qs" --version 2>/dev/null | head -1)"
     ;;
 
