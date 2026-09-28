@@ -98,7 +98,11 @@ for _ in $(seq 1 50); do
   hyprctl -j monitors 2>/dev/null | jq -e '.[] | select(.name | startswith("HEADLESS"))' >/dev/null 2>&1 && break
   sleep 0.1
 done
-hyprctl keyword monitor "HEADLESS-1,1280x800,0x0,1" >/dev/null 2>&1
+# CORNICE_TEST_SCALE reproduces a HiDPI session: the lock surface then has a
+# different logical size than its buffer, which is exactly where positioning
+# bugs show up.
+scale=${CORNICE_TEST_SCALE:-1}
+hyprctl keyword monitor "HEADLESS-1,1280x800,0x0,$scale" >/dev/null 2>&1
 own=$(ls -t "$runtime"/wayland-* 2>/dev/null | grep -v '\.lock$' | head -1)
 export WAYLAND_DISPLAY="${own##*/}"
 pass "headless output ready (display ${WAYLAND_DISPLAY})"

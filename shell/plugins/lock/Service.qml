@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -97,15 +98,40 @@ Item {
 
     surface: Component {
       WlSessionLockSurface {
+        id: lockSurface
+
+        // width/height are read-only: Quickshell sizes a lock surface to its
+        // screen. Everything below therefore anchors to plain Items.
         color: Color.background
 
-        // Blurred screenshot of the desktop as it was when the lock engaged.
+        Component.onCompleted: console.log("CORNICE-LOCK surface "
+          + (lockSurface.screen ? lockSurface.screen.name : "?") + " "
+          + lockSurface.width + "x" + lockSurface.height)
+
+        // Everything else is plain Items, so anchoring stays well-defined.
+        Item {
+          id: layer
+
+          anchors.fill: parent
+
+        // Screenshot of the desktop as it was when the lock engaged, blurred the
+        // way hyprlock's `path = screenshot` + blur_passes did.
         Image {
+          id: shot
           anchors.fill: parent
           source: root.shotRevision > 0 ? "file://" + root.shotPath + "?v=" + root.shotRevision : ""
           fillMode: Image.PreserveAspectCrop
-          visible: root.shotRevision > 0
+          visible: false
           asynchronous: true
+        }
+
+        MultiEffect {
+          anchors.fill: parent
+          visible: root.shotRevision > 0
+          source: shot
+          blurEnabled: true
+          blur: 1.0
+          blurMax: 48
         }
 
         Rectangle {
@@ -119,8 +145,8 @@ Item {
         }
 
         Column {
-          anchors.centerIn: parent
-          anchors.verticalCenterOffset: -Math.round(parent.height * 0.08)
+          anchors.horizontalCenter: parent.horizontalCenter
+          y: Math.round(parent.height * 0.30)
           spacing: Style.space(0.6)
 
           Text {
@@ -212,6 +238,7 @@ Item {
             color: root.state === "failed" ? Color.urgent : Color.muted
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
+          }
           }
         }
       }
