@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.clipboard",
+  "name": "Clipboard",
+  "version": "0.3.0",
+  "author": "cornice",
+  "description": "Clipboard history (cliphist) with search, image previews and paste",
+  "kinds": ["overlay"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Clipboard.qml"
+  }
+}

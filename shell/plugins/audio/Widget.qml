@@ -16,13 +16,15 @@ Item {
   readonly property real volume: (sink && sink.audio) ? sink.audio.volume : 0
   readonly property int percent: Math.round(Util.clamp(volume, 0, 1.5) * 100)
 
+  // Same glyph set and order as the waybar config this replaces: percentage
+  // first, then the icon (F026 off / F027 low / F028 high).
   readonly property string icon: {
-    if (muted || percent === 0) return "\uf026"
+    if (muted || percent === 0) return "\uf0581"
     if (percent < 40) return "\uf027"
     return "\uf028"
   }
 
-  readonly property string text: muted ? "muted" : (percent + "%")
+  readonly property string text: percent + "%"
 
   // Quickshell only binds a PipeWire node's parameters (volume, mute) for
   // objects that are tracked — without this every node reports volume 0 and
@@ -38,7 +40,7 @@ Item {
   Text {
     id: label
     anchors.centerIn: parent
-    text: root.icon + " " + root.text
+    text: root.text + " " + root.icon
     color: root.muted ? Color.muted : Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize

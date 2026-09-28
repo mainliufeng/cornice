@@ -38,6 +38,8 @@ Inspecting the running shell (IPC)
   targets             IPC targets the running shell exposes
   panel <id> [json]   Toggle a panel plugin (e.g. cornice panel cn.audio)
   launcher            Toggle the application launcher
+  clipboard           Toggle the clipboard history overlay
+  emojis              Toggle the emoji picker
   notifications       Toggle the notification centre
   dnd [on|off]        Toggle or set do-not-disturb
   osd <what>          volume | microphone | brightness | hide
@@ -184,6 +186,14 @@ case "$command" in
 
   notifications)
     call shell toggle cn.notifications '{}'
+    ;;
+
+  clipboard)
+    call shell toggle cn.clipboard '{}'
+    ;;
+
+  emojis)
+    call shell toggle cn.emojis '{}'
     ;;
 
   dnd)

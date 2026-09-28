@@ -28,15 +28,17 @@ Item {
   readonly property int deviceType: activeDevice ? activeDevice.type : DeviceType.None
   readonly property bool wired: deviceType === DeviceType.Wired
 
+  // Glyphs verified against the bar font: the MDI wifi-strength set renders,
+  // while F1EB is the full-strength arc. (FAA8/FAA9 render as empty boxes.)
   readonly property string icon: {
-    if (!activeDevice) return "\uf00d"
-    if (wired) return "\uf0e8"
+    if (!activeDevice) return "\uf05e1"
+    if (wired) return "\uf0200"
     const signal = strongestSignal()
-    if (!online) return "\uf00d"
-    if (signal >= 75) return "\uf1eb"
-    if (signal >= 50) return "\ufaa8"
-    if (signal >= 25) return "\ufaa9"
-    return "\ufaa9"
+    if (!online) return "\uf05e1"
+    if (signal >= 75) return "\uf0925"
+    if (signal >= 50) return "\uf0924"
+    if (signal >= 25) return "\uf0923"
+    return "\uf0922"
   }
 
   function strongestSignal() {

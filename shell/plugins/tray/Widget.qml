@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Services.SystemTray
 import qs.Commons
+import qs.Ui
 
 // StatusNotifier tray. Icons come from the icon theme; a click activates the
 // item, a right click opens its DBusMenu.
@@ -56,6 +57,10 @@ Item {
   }
   readonly property var items: SystemTray.items ? SystemTray.items.values : []
 
+  // Which item's menu is open, and where to anchor it.
+  property var openItem: null
+  property Item openAnchor: null
+
   implicitHeight: Style.widgetHeight
   implicitWidth: row.implicitWidth
   visible: items.length > 0
@@ -66,6 +71,7 @@ Item {
     spacing: Style.space(0.4)
 
     Repeater {
+      id: trayRepeater
       model: root.items
 
       delegate: Item {
@@ -107,9 +113,12 @@ Item {
           acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
 
           onClicked: mouse => {
-            if (mouse.button === Qt.LeftButton) entry.modelData.activate()
-            else if (mouse.button === Qt.MiddleButton) entry.modelData.secondaryActivate()
-            else if (mouse.button === Qt.RightButton) menuAnchor.open()
+            const item = entry.modelData
+            // A left click on a tray item means "show me its menu" for most
+            // items (nm-applet, fcitx, bluetooth); items without one activate.
+            if (mouse.button === Qt.MiddleButton) item.secondaryActivate()
+            else if (item.hasMenu) root.showMenu(item, entry)
+            else item.activate()
           }
 
           onWheel: wheel => entry.modelData.scroll(wheel.angleDelta.y > 0 ? 1 : 0, false)
@@ -123,31 +132,82 @@ Item {
           }
         }
 
-        // The item's own D-Bus menu, anchored under the icon.
-        QsMenuAnchor {
-          id: menuAnchor
-          anchor.item: entry
-          anchor.edges: Edges.Bottom
-          menu: entry.modelData.hasMenu ? entry.modelData.menu : null
-        }
+
       }
     }
   }
+
+  // Second click on the same item toggles its menu closed.
+  function showMenu(item, anchorItem) {
+    if (openItem === item) {
+      closeMenu()
+      return
+    }
+    openItem = item
+    openAnchor = anchorItem
+    menu.handle = item.menu
+  }
+
+  MenuPopup {
+    id: menu
+    anchorX: root.openAnchor ? root.openAnchor.mapToItem(null, 0, 0).x : 0
+    onEntryChosen: root.closeMenu()
+    onOpenedChanged: {
+      if (!opened) root.openItem = null
+    }
+  }
+
+  function closeMenu() {
+    menu.handle = null
+    openItem = null
+    openAnchor = null
+  }
+
 
   // Read-only support hook: what the watcher actually handed us.
   ShellIpc {
     target: "tray"
 
+    // Diagnostics: try each activation path for an item and report what it did.
+    function invoke(id: string, method: string): string {
+      for (const item of root.items) {
+        if (String(item.id) !== id) continue
+        if (method === "activate") item.activate()
+        else if (method === "secondary") item.secondaryActivate()
+        else if (method === "display") item.display()
+        else if (method === "menu") root.showMenu(item, trayRepeater.itemAt(root.items.indexOf(item)))
+        else return "unknown-method"
+        return "ok"
+      }
+      return "unknown-item"
+    }
+
+    function menuCount(): string {
+      const openerCounts = []
+      for (let i = 0; i < root.items.length; i++) {
+        const item = root.items[i]
+        const handle = item.menu
+        openerCounts.push(String(item.id) + "=" + (handle === null || handle === undefined ? "null" : "handle"))
+      }
+      return JSON.stringify(openerCounts)
+    }
+
     function dump(): string {
       const out = []
-      for (const item of root.items) {
+      for (let i = 0; i < root.items.length; i++) {
+        const item = root.items[i]
+        const delegate = trayRepeater.itemAt(i)
+        const point = delegate ? delegate.mapToItem(null, 0, 0) : null
         out.push({
+          x: point ? Math.round(point.x) : -1,
+          width: delegate ? Math.round(delegate.width) : -1,
           id: String(item.id),
           icon: String(item.icon),
           resolved: String(root.iconSource(item)),
           title: String(item.tooltipTitle),
           status: String(item.status),
           hasMenu: item.hasMenu === true,
+          handleNull: item.menu === null || item.menu === undefined,
           category: String(item.category)
         })
       }

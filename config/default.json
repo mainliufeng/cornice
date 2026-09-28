@@ -8,6 +8,9 @@
     "layout": {
       "left": [
         {
+          "id": "cn.launcher"
+        },
+        {
           "id": "cn.workspaces"
         },
         {

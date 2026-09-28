@@ -23,7 +23,7 @@ PanelFrame {
   property string kind: "volume"
   property real value: 0
   property string label: ""
-  property string icon: "\uf028"
+  property string icon: "\uf027"
   property bool muted: false
   property bool armed: false
 
@@ -72,8 +72,9 @@ PanelFrame {
     hideTimer.restart()
   }
 
+  // Matches the bar and the old waybar config.
   function iconForVolume(percent, isMuted) {
-    if (isMuted || percent === 0) return "\uf026"
+    if (isMuted || percent === 0) return "\uf0581"
     if (percent < 40) return "\uf027"
     return "\uf028"
   }
@@ -90,7 +91,7 @@ PanelFrame {
     const isMuted = (node && node.audio) ? node.audio.muted : false
     const percent = Math.round(Util.clamp(volume, 0, 1.5) * 100)
     showValues("microphone", Util.clamp(volume, 0, 1), isMuted ? "muted" : percent + "%",
-      isMuted ? "\uf131" : "\uf130", isMuted)
+      isMuted ? "\uf036d" : "\uf036c", isMuted)
   }
 
   // Brightness has no compositor signal, so read the sysfs backlight.

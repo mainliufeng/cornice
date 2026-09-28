@@ -33,6 +33,13 @@ Item {
   readonly property var rightEntries: entriesFor("right")
 
   readonly property int surfaceHeight: Style.barHeight
+
+  // Surface/section pairs, used by the geometry IPC target.
+  property var geometryParts: []
+
+  function registerGeometry(surface, section) {
+    geometryParts = geometryParts.concat([{ surface: surface, section: section }])
+  }
   readonly property bool atBottom: position === "bottom"
 
   Variants {
@@ -63,7 +70,9 @@ Item {
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
       BarSection {
+        id: leftSection
         anchors.left: parent.left
+        Component.onCompleted: bar.registerGeometry(surface, leftSection)
         anchors.leftMargin: Style.padding
         anchors.verticalCenter: parent.verticalCenter
         host: bar.host
@@ -73,7 +82,9 @@ Item {
       }
 
       BarSection {
+        id: centerSection
         anchors.centerIn: parent
+        Component.onCompleted: bar.registerGeometry(surface, centerSection)
         host: bar.host
         registry: bar.registry
         entries: bar.centerEntries
@@ -81,7 +92,9 @@ Item {
       }
 
       BarSection {
+        id: rightSection
         anchors.right: parent.right
+        Component.onCompleted: bar.registerGeometry(surface, rightSection)
         anchors.rightMargin: Style.padding
         anchors.verticalCenter: parent.verticalCenter
         host: bar.host
@@ -102,4 +115,28 @@ Item {
     }
   }
 
+
+  // Where every widget actually is, in bar coordinates — the only reliable way
+  // to answer "which icon did I just click?".
+  ShellIpc {
+    target: "bar"
+
+    function geometry(): string {
+      const out = []
+      for (const part of bar.geometryParts) {
+        if (!part.surface || !part.section) continue
+        for (const child of part.section.children) {
+          if (!child || child.entry === undefined) continue
+          const point = child.mapToItem(part.surface.contentItem, 0, 0)
+          out.push({
+            id: child.entry.id,
+            x: Math.round(point.x),
+            width: Math.round(child.width),
+            section: part.section.section
+          })
+        }
+      }
+      return JSON.stringify(out)
+    }
+  }
 }

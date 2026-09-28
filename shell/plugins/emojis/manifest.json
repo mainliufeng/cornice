@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.emojis",
+  "name": "Emoji picker",
+  "version": "0.3.0",
+  "author": "cornice",
+  "description": "Searchable emoji grid that copies the choice to the clipboard",
+  "kinds": ["overlay"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Emojis.qml"
+  }
+}

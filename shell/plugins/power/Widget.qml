@@ -15,15 +15,18 @@ Item {
   readonly property int percent: Math.round(fraction * 100)
 
   readonly property bool charging: present && device.state === UPowerDeviceState.Charging
-  readonly property bool full: present && device.state === UPowerDeviceState.FullyCharged
+  readonly property bool full: present && (device.state === UPowerDeviceState.FullyCharged
+    || device.state === UPowerDeviceState.PendingCharge || percent >= 100)
   readonly property bool critical: present && percent <= 10
 
+  // waybar's set: F240 full … F244 empty, F0E7 charging, F1E6 plugged.
   readonly property string icon: {
     if (charging) return "\uf0e7"
-    if (percent >= 95) return "\uf240"
+    if (full) return "\uf1e6"
+    if (percent >= 90) return "\uf240"
     if (percent >= 70) return "\uf241"
-    if (percent >= 45) return "\uf242"
-    if (percent >= 20) return "\uf243"
+    if (percent >= 50) return "\uf242"
+    if (percent >= 25) return "\uf243"
     return "\uf244"
   }
 
@@ -43,8 +46,8 @@ Item {
   Text {
     id: label
     anchors.centerIn: parent
-    text: root.icon + " " + root.percent + "%" + (
-      root.showRemaining && root.remaining !== "" ? " " + root.remaining : "")
+    text: root.percent + "% " + root.icon + (
+      root.showRemaining && root.remaining !== "" ? "  " + root.remaining : "")
     color: root.critical && !root.charging ? Color.urgent : Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
