@@ -59,6 +59,12 @@ compositor_alive() {
   fi
 ) &
 
+# Already running? Then this launch is a duplicate (they happen when a restart
+# races a watchdog relaunch) — leave the live shell alone.
+if timeout 3 "$bin_dir/cornice" ping >/dev/null 2>&1; then
+  exit 0
+fi
+
 terminating=0
 shell_pid=""
 stop() { terminating=1; [[ -n $shell_pid ]] && kill -TERM "$shell_pid" 2>/dev/null; return 0; }
