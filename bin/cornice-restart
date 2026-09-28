@@ -13,6 +13,18 @@ export CORNICE_PATH="$prefix"
 config_dir="$prefix/shell"
 qs="$bin_dir/cornice-qs"
 
+# Restarting while the session lock is secure would kill the only lock client
+# and can strand the user behind the compositor's failsafe. Refuse, and tell
+# them what to do instead.
+if [[ -S ${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/cornice-${USER:-user}.sock ]]; then
+  lock_state=$(timeout 3 "$bin_dir/cornice" ipc lock status 2>/dev/null | jq -r '.secure // false' 2>/dev/null || echo false)
+  if [[ $lock_state == "true" ]]; then
+    echo "cornice: refusing to restart while the session is locked." >&2
+    echo "  unlock first, or from another TTY: cornice lock emergency-unlock" >&2
+    exit 1
+  fi
+fi
+
 while "$qs" kill -p "$config_dir" --any-display >/dev/null 2>&1; do :; done
 
 # Absolute path on purpose: the compositor's PATH does not necessarily contain

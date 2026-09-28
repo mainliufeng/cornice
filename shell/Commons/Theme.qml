@@ -20,7 +20,11 @@ QtObject {
   // Set by shell.qml from config.theme.
   property string name: "mono"
 
-  readonly property string userPath: home + "/.config/cornice/theme.json"
+  readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME") !== undefined && Quickshell.env("XDG_CONFIG_HOME") !== ""
+    ? Quickshell.env("XDG_CONFIG_HOME")
+    : home + "/.config"
+
+  readonly property string userPath: configHome + "/cornice/theme.json"
   readonly property string builtinPath: prefix + "/themes/" + name + "/theme.json"
 
   readonly property var fallback: ({

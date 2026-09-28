@@ -22,8 +22,12 @@ ShellRoot {
   // Keep this identical to the path bin/cornice computes.
   readonly property string socketPath: runtimeDir + "/cornice-" + userName + ".sock"
 
+  readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME") !== undefined && Quickshell.env("XDG_CONFIG_HOME") !== ""
+    ? Quickshell.env("XDG_CONFIG_HOME")
+    : home + "/.config"
+
   readonly property string defaultsPath: prefix + "/config/default.json"
-  readonly property string userConfigPath: home + "/.config/cornice/config.json"
+  readonly property string userConfigPath: configHome + "/cornice/config.json"
 
   // Effective configuration: defaults deep-merged with the user's file. A user
   // file is never required — write only what you want to differ.

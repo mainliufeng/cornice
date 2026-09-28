@@ -43,6 +43,7 @@ Inspecting the running shell (IPC)
   notifications       Toggle the notification centre
   dnd [on|off]        Toggle or set do-not-disturb
   osd <what>          volume | microphone | brightness | hide
+  lock [cmd]          lock now; status; try <password>; emergency-unlock (stuck session)
   logs                Follow the shell's journal (systemd only)
 
 Machine
@@ -76,7 +77,11 @@ require_shell() {
 
 # Request framing for the shell's own socket, matching services/IpcServer.qml.
 socket_path() {
-  printf '%s/cornice-%s.sock\n' "${XDG_RUNTIME_DIR:-/tmp}" "${USER:-user}"
+  # A TTY (where the emergency unlock is used from) has no XDG_RUNTIME_DIR, so
+  # fall back to the user's own runtime dir before /tmp.
+  local dir="${XDG_RUNTIME_DIR:-}"
+  if [[ -z $dir && -d /run/user/$(id -u) ]]; then dir="/run/user/$(id -u)"; fi
+  printf '%s/cornice-%s.sock\n' "${dir:-/tmp}" "${USER:-user}"
 }
 
 call_via_socket() {
@@ -203,6 +208,22 @@ case "$command" in
   osd)
     (($# >= 1)) || { echo "usage: cornice osd volume|microphone|brightness|hide" >&2; exit 2; }
     call osd "$1"
+    ;;
+
+  lock)
+    case "${1:-lock}" in
+      lock) call lock lock ;;
+      status) call lock status ;;
+      try) (($# >= 2)) || { echo "usage: cornice lock try <password>" >&2; exit 2; }; call lock attempt "$2" ;;
+      emergency-unlock)
+        echo "cornice: releasing the session lock WITHOUT authentication" >&2
+        call lock emergencyUnlock
+        ;;
+      *)
+        echo "usage: cornice lock [lock|status|try <password>|emergency-unlock]" >&2
+        exit 2
+        ;;
+    esac
     ;;
 
   launch)

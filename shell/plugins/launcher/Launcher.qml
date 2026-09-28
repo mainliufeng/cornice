@@ -244,4 +244,17 @@ PanelFrame {
       }
     }
   }
+
+  ShellIpc {
+    target: "launcher"
+
+    function debug(): string {
+      return JSON.stringify({
+        query: query,
+        selected: selected,
+        results: results.length,
+        first: results.length > 0 ? String(results[0].name) : ""
+      })
+    }
+  }
 }

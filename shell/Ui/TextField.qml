@@ -71,6 +71,15 @@ FocusScope {
       } else if (event.key === Qt.Key_Up) {
         root.moved(-1)
         event.accepted = true
+      } else if (event.modifiers & Qt.ControlModifier) {
+        // vi-style navigation: Ctrl+J/K (and the emacs-ish Ctrl+N/P).
+        if (event.key === Qt.Key_J || event.key === Qt.Key_N) {
+          root.moved(1)
+          event.accepted = true
+        } else if (event.key === Qt.Key_K || event.key === Qt.Key_P) {
+          root.moved(-1)
+          event.accepted = true
+        }
       }
     }
   }
