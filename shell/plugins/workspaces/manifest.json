@@ -5,7 +5,9 @@
   "version": "0.1.0",
   "author": "cornice",
   "description": "Hyprland workspaces, click to switch",
-  "kinds": ["bar-widget"],
+  "kinds": [
+    "bar-widget"
+  ],
   "entryPoints": {
     "barWidget": "Widget.qml"
   },
@@ -15,10 +17,14 @@
     "allowMultiple": false,
     "defaultSection": "left",
     "defaults": {
-      "minCount": 5
+      "minCount": 10
     },
     "schema": [
-      { "key": "minCount", "type": "number", "label": "Always show at least this many workspaces" }
+      {
+        "key": "minCount",
+        "type": "number",
+        "label": "Always show at least this many workspaces"
+      }
     ]
   }
 }
