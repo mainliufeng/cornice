@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import qs.Commons
 import "services"
 
@@ -408,9 +409,27 @@ ShellRoot {
     return out
   }
 
+  // Hyprland only reports the focused toplevel through focus *events*. A shell
+  // that starts into an already-focused session therefore has no active window
+  // (and shows an empty title) until something steals focus. Ask once at
+  // startup, and once more after the session has settled.
+  Timer {
+    interval: 1500
+    repeat: false
+    running: true
+    onTriggered: shell.refreshHyprlandState()
+  }
+
+  function refreshHyprlandState() {
+    if (Hyprland.refreshToplevels) Hyprland.refreshToplevels()
+    if (Hyprland.refreshWorkspaces) Hyprland.refreshWorkspaces()
+    if (Hyprland.refreshMonitors) Hyprland.refreshMonitors()
+  }
+
   Component.onCompleted: {
     defaultsFile.reload()
     userFile.reload()
+    refreshHyprlandState()
   }
 
 
