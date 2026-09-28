@@ -19,6 +19,27 @@ PanelFrame {
   property string query: ""
   property int selected: 0
 
+  // Terminal-running configuration:
+  //   { "terminal": "kitty", "terminalApps": ["paseo", "codex"] }
+  // Entries listed by desktop id or name (case-insensitive) are started inside
+  // the terminal, as are entries whose .desktop file sets Terminal=true.
+  readonly property var launcherConfig: host && host.config ? Util.option(host.config, "launcher", ({})) : ({})
+  readonly property string terminal: Util.option(launcherConfig, "terminal", "kitty")
+  readonly property var terminalApps: Util.option(launcherConfig, "terminalApps", [])
+
+  function wantsTerminal(entry, force) {
+    if (force) return true
+    if (!entry) return false
+    if (entry.runInTerminal === true) return true
+    const id = String(entry.id || "").toLowerCase()
+    const name = String(entry.name || "").toLowerCase()
+    for (const candidate of terminalApps) {
+      const needle = String(candidate).toLowerCase()
+      if (needle === id || needle === name) return true
+    }
+    return false
+  }
+
   readonly property var applications: DesktopEntries.applications ? DesktopEntries.applications.values : []
 
   function commandMode() {
@@ -53,6 +74,9 @@ PanelFrame {
   }
 
   onOpened: {
+    // The TextField owns the text; clearing only `query` left the previous
+    // search sitting in the box the next time the launcher opened.
+    field.text = ""
     query = ""
     selected = 0
     focusTimer.restart()
@@ -69,12 +93,17 @@ PanelFrame {
     selected = ((selected + delta) % results.length + results.length) % results.length
   }
 
-  function accept() {
+  function accept(forceTerminal) {
     if (results.length === 0) return
     const item = results[Math.max(0, Math.min(selected, results.length - 1))]
-    if (item.command !== undefined) Util.exec(item.command)
-    else if (item.entry) launch(item.entry)
+    if (item.command !== undefined) runInTerminal(item.command)
+    else if (item.entry) launch(item.entry, forceTerminal)
     close()
+  }
+
+  function runInTerminal(command) {
+    if (command === undefined || String(command).trim() === "") return
+    Util.exec(terminal + " -e sh -c " + JSON.stringify(String(command)))
   }
 
   // .desktop Exec lines carry field codes (%U, %F, %c, %k, %i, ...). We have no
@@ -93,10 +122,10 @@ PanelFrame {
       .trim()
   }
 
-  function launch(entry) {
+  function launch(entry, forceTerminal) {
     const command = "PATH=\"$HOME/.local/bin:$PATH\" " + sanitizedCommand(entry)
     if (command.trim() === "") return
-    if (entry.runInTerminal === true) Util.exec("kitty -e sh -c " + JSON.stringify(command))
+    if (wantsTerminal(entry, forceTerminal)) runInTerminal(command)
     else Quickshell.execDetached(["sh", "-c", command])
   }
 
@@ -109,9 +138,25 @@ PanelFrame {
       width: parent.width
       placeholder: "Search applications, or > to run a command"
       onTextChanged: root.query = text
-      onAccepted: root.accept()
+      onAccepted: root.accept(false)
+      onShiftAccepted: root.accept(true)
       onCanceled: root.close()
       onMoved: delta => root.move(delta)
+    }
+
+    Text {
+      width: parent.width
+      text: {
+        const item = root.results[Math.max(0, Math.min(root.selected, root.results.length - 1))]
+        const terminal = item !== undefined && (item.command !== undefined || root.wantsTerminal(item.entry, false))
+        const base = "Enter: open   Shift+Enter: run in a terminal   Esc: close"
+        if (item === undefined) return base
+        return terminal ? base + "        this entry runs in " + root.terminal : base
+      }
+      color: Color.muted
+      elide: Text.ElideRight
+      font.family: Style.fontFamily
+      font.pixelSize: Style.smallFontSize
     }
 
     Text {
@@ -174,10 +219,14 @@ PanelFrame {
 
             Text {
               width: parent.width
-              text: modelData.comment || ""
+              text: {
+                const base = modelData.comment || ""
+                const terminal = modelData.command !== undefined || root.wantsTerminal(modelData.entry, false)
+                return terminal ? (base === "" ? "runs in " + root.terminal : base + "  ·  runs in " + root.terminal) : base
+              }
               color: Color.muted
               elide: Text.ElideRight
-              visible: (modelData.comment || "") !== ""
+              visible: text !== ""
               font.family: Style.fontFamily
               font.pixelSize: Style.smallFontSize
             }
@@ -189,7 +238,7 @@ PanelFrame {
           cursorShape: Qt.PointingHandCursor
           onClicked: {
             root.selected = index
-            root.accept()
+            root.accept(false)
           }
         }
       }

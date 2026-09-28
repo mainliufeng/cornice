@@ -2,8 +2,14 @@ import QtQuick
 import Quickshell.Hyprland
 import qs.Commons
 
-// Workspace pills. Slots 1..N always exist so the bar does not reflow when a
-// workspace is created; N is the highest workspace in use, at least minCount.
+// Workspace pills.
+//
+// Ten slots by default, all the same width so the row never shifts as the
+// numbers change width. States follow what other bars do:
+//   active    — filled accent pill, contrasting text
+//   occupied  — normal text with a dot underneath (has windows)
+//   empty     — dimmed number, no marker
+//   hover     — faint fill so the click target is visible
 Item {
   id: root
 
@@ -11,7 +17,8 @@ Item {
   property var plugin: null
   property var widgetConfig: ({})
 
-  readonly property int minCount: Util.option(widgetConfig, "minCount", 5)
+  readonly property int minCount: Util.option(widgetConfig, "minCount", 10)
+  readonly property bool showDot: Util.option(widgetConfig, "showDot", true)
 
   readonly property var workspaces: Hyprland.workspaces ? Hyprland.workspaces.values : []
   readonly property var focusedId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 1
@@ -26,13 +33,33 @@ Item {
     for (let id = 1; id <= highest; id++) {
       let occupied = false
       for (const workspace of list) if (workspace.id === id) occupied = true
-      out.push({ id: id, occupied: occupied, label: String(id) })
+      out.push({
+        id: id,
+        label: String(id),
+        occupied: occupied,
+        active: id === focused
+      })
     }
     return out
   }
 
+  // Width of the widest label, so every slot matches.
+  readonly property int highestId: slots.length > 0 ? slots[slots.length - 1].id : minCount
+
+  readonly property real slotWidth: metrics.width + Style.space(1.1)
+
   implicitHeight: Style.widgetHeight
   implicitWidth: row.implicitWidth
+
+  // Invisible ruler used to size the slots.
+  Text {
+    id: metrics
+    visible: false
+    text: String(root.highestId)
+    font.family: Style.fontFamily
+    font.pixelSize: Style.fontSize
+    font.bold: true
+  }
 
   Row {
     id: row
@@ -47,39 +74,62 @@ Item {
 
         required property var modelData
 
-        readonly property bool active: modelData.id === root.focusedId
-
-        implicitWidth: Math.max(label.implicitWidth + Style.space(1.2), Style.space(2))
+        implicitWidth: root.slotWidth
         implicitHeight: Style.widgetHeight
+
+        property bool hovered: false
 
         Rectangle {
           anchors.fill: parent
-          anchors.margins: Math.round(Style.gap * 0.3)
+          anchors.margins: Math.round(Style.gap * 0.25)
           radius: Style.radius
-          color: slot.active ? Color.workspaceActive
-               : slot.modelData.occupied ? Color.workspaceOccupied
+          color: slot.modelData.active ? Color.workspaceActive
+               : slot.hovered ? Color.hover
                : "transparent"
-          border.width: 0
 
           Behavior on color {
-            ColorAnimation { duration: 120 }
+            ColorAnimation { duration: 110 }
           }
         }
 
         Text {
           id: label
+
           anchors.centerIn: parent
+          anchors.verticalCenterOffset: root.showDot && slot.modelData.occupied && !slot.modelData.active ? -1 : 0
           text: slot.modelData.label
-          color: slot.active ? Color.workspaceActiveText : Color.barForeground
+          color: slot.modelData.active ? Color.workspaceActiveText
+               : slot.modelData.occupied ? Color.barForeground
+               : Color.muted
           font.family: Style.fontFamily
           font.pixelSize: Style.fontSize
-          font.bold: slot.active
+          font.bold: slot.modelData.active
+        }
+
+        // Occupied marker: makes "has windows" readable without shouting.
+        Rectangle {
+          anchors.horizontalCenter: parent.horizontalCenter
+          anchors.bottom: parent.bottom
+          anchors.bottomMargin: Style.space(0.35)
+          width: Math.max(3, Math.round(Style.gap * 0.5))
+          height: Math.max(2, Math.round(Style.gap * 0.25))
+          radius: height / 2
+          visible: root.showDot && slot.modelData.occupied && !slot.modelData.active
+          color: Color.accent
+          opacity: 0.9
         }
 
         MouseArea {
           anchors.fill: parent
           cursorShape: Qt.PointingHandCursor
+          hoverEnabled: true
+          onEntered: slot.hovered = true
+          onExited: slot.hovered = false
           onClicked: Hyprland.dispatch("workspace " + slot.modelData.id)
+          onWheel: wheel => {
+            const target = slot.modelData.id + (wheel.angleDelta.y > 0 ? -1 : 1)
+            if (target >= 1) Hyprland.dispatch("workspace " + target)
+          }
         }
       }
     }

@@ -11,6 +11,7 @@ FocusScope {
   property bool selectAllOnFocus: true
 
   signal accepted()
+  signal shiftAccepted()
   signal canceled()
   signal moved(int delta)
 
@@ -61,7 +62,8 @@ FocusScope {
         root.canceled()
         event.accepted = true
       } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-        root.accepted()
+        if (event.modifiers & Qt.ShiftModifier) root.shiftAccepted()
+        else root.accepted()
         event.accepted = true
       } else if (event.key === Qt.Key_Down) {
         root.moved(1)

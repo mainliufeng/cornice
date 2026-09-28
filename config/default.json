@@ -7,20 +7,42 @@
     "transparent": false,
     "layout": {
       "left": [
-        { "id": "cn.workspaces" },
-        { "id": "cn.active-window" },
-        { "id": "cn.media" }
+        {
+          "id": "cn.workspaces"
+        },
+        {
+          "id": "cn.active-window"
+        },
+        {
+          "id": "cn.media"
+        }
       ],
       "center": [
-        { "id": "cn.clock", "format": "ddd HH:mm", "formatAlt": "HH:mm:ss" }
+        {
+          "id": "cn.clock",
+          "format": "ddd HH:mm",
+          "formatAlt": "HH:mm:ss"
+        }
       ],
       "right": [
-        { "id": "cn.indicators" },
-        { "id": "cn.tray" },
-        { "id": "cn.network" },
-        { "id": "cn.bluetooth" },
-        { "id": "cn.audio" },
-        { "id": "cn.power" }
+        {
+          "id": "cn.indicators"
+        },
+        {
+          "id": "cn.tray"
+        },
+        {
+          "id": "cn.network"
+        },
+        {
+          "id": "cn.bluetooth"
+        },
+        {
+          "id": "cn.audio"
+        },
+        {
+          "id": "cn.power"
+        }
       ]
     }
   },
@@ -28,5 +50,9 @@
     "timeout": 6000,
     "maxPopups": 4,
     "historyLimit": 50
+  },
+  "launcher": {
+    "terminal": "kitty",
+    "terminalApps": []
   }
 }
