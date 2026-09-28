@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.battery",
+  "name": "Battery",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Battery percentage and charge state via UPower",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Battery",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showTimeRemaining": false
+    },
+    "schema": [
+      { "key": "showTimeRemaining", "type": "boolean", "label": "Show time remaining" }
+    ]
+  }
+}

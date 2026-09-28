@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.clock",
+  "name": "Clock",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Date and time, click to toggle an alternate format",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Clock",
+    "category": "Time",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "format": "ddd HH:mm",
+      "formatAlt": "HH:mm:ss"
+    },
+    "schema": [
+      { "key": "format", "type": "string", "label": "Qt date format" },
+      { "key": "formatAlt", "type": "string", "label": "Alternate format (click)" }
+    ]
+  }
+}

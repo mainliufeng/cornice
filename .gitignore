@@ -1,0 +1,7 @@
+# runtime artifacts
+*.png
+*.log
+
+# editor / OS noise
+.DS_Store
+*.swp

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.audio",
+  "name": "Audio",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Default sink volume and mute, left click toggles mute, right click scrolls volume",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Audio",
+    "category": "Audio",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "step": 5
+    },
+    "schema": [
+      { "key": "step", "type": "number", "label": "Volume step in percent" }
+    ]
+  }
+}

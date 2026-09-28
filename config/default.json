@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "theme": "mono",
+  "bar": {
+    "id": "cn.bar",
+    "position": "top",
+    "transparent": false,
+    "layout": {
+      "left": [
+        { "id": "cn.workspaces" },
+        { "id": "cn.active-window" }
+      ],
+      "center": [
+        { "id": "cn.clock", "format": "ddd HH:mm" }
+      ],
+      "right": [
+        { "id": "cn.audio" },
+        { "id": "cn.battery" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Start the Cornice shell with a watchdog.
+#
+# Why this exists: a shell that dies silently leaves you with no bar and no
+# explanation. This wrapper keeps the log in the journal (Quickshell only logs
+# to its runtime dir, which is tmpfs) and relaunches after a crash — but gives
+# up when the whole session is going away, or when it is crash-looping.
+set -uo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+bin_dir=$(dirname "$self")
+prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
+export CORNICE_PATH="$prefix"
+config_dir="$prefix/shell"
+qs="$bin_dir/cornice-qs"
+
+run_shell() {
+  if command -v systemd-cat >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
+    QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 \
+      systemd-cat -t cornice -- "$qs" -n -p "$config_dir" &
+  else
+    QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 "$qs" -n -p "$config_dir" &
+  fi
+  shell_pid=$!
+  wait "$shell_pid"
+  return $?
+}
+
+# A compositor busy reconfiguring outputs can miss a query without being gone.
+compositor_alive() {
+  for _ in 1 2 3; do
+    hyprctl -j monitors >/dev/null 2>&1 && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+terminating=0
+shell_pid=""
+stop() { terminating=1; [[ -n $shell_pid ]] && kill -TERM "$shell_pid" 2>/dev/null; return 0; }
+trap stop HUP INT TERM
+
+attempts=0
+window_started=$SECONDS
+
+while true; do
+  ((terminating)) && exit 0
+  run_shell
+  status=$?
+  ((terminating)) && exit 0
+  ((status == 0)) && exit 0
+
+  compositor_alive || exit 0
+
+  if ((SECONDS - window_started > 60)); then
+    attempts=0
+    window_started=$SECONDS
+  fi
+
+  if ((++attempts > 5)); then
+    logger -t cornice "Giving up after $attempts relaunches in under a minute." 2>/dev/null || true
+    exit 1
+  fi
+
+  logger -t cornice "Shell exited with status $status; relaunching." 2>/dev/null || true
+  sleep 1
+done

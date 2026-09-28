@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.bar",
+  "name": "Cornice bar",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "The built-in bar: three sections, one layer-shell surface per screen",
+  "kinds": ["bar"],
+  "entryPoints": {
+    "bar": "Bar.qml"
+  }
+}

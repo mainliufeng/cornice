@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# cornice doctor — why isn't it working, and what will it conflict with?
+#
+# Read-only. Never edits a config, never restarts anything.
+set -uo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+bin_dir=$(dirname "$self")
+prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
+export CORNICE_PATH="$prefix"
+config_dir="$prefix/shell"
+qs="$bin_dir/cornice-qs"
+
+fail=0
+ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
+warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
+bad()  { printf '  \033[31mfail\033[0m  %s\n' "$1"; fail=1; }
+section() { printf '\n%s\n' "$1"; }
+
+section "Paths"
+ok "prefix:      $prefix"
+ok "shell:       $config_dir"
+ok "user config: ${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+
+section "Dependencies"
+if version=$("$qs" --version 2>/dev/null | head -1); then
+  ok "quickshell:  $version"
+  if [[ -z ${CORNICE_QS:-} ]] && ! command -v quickshell >/dev/null 2>&1; then
+    warn "using the user-local vendor tree; install the package for daily use: sudo pacman -S quickshell"
+  fi
+else
+  bad "quickshell not found — sudo pacman -S quickshell (or set CORNICE_QS)"
+fi
+command -v jq >/dev/null 2>&1 && ok "jq:          $(jq --version)" \
+  || { command -v python3 >/dev/null 2>&1 && warn "no jq; using python3 to read manifests" || bad "need jq or python3 to read plugin manifests"; }
+if command -v hyprctl >/dev/null 2>&1; then
+  ok "hyprctl:     $(command -v hyprctl)"
+else
+  bad "hyprctl not found (Cornice targets Hyprland)"
+fi
+
+section "Session"
+if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+  ok "Hyprland:    running ($HYPRLAND_INSTANCE_SIGNATURE)"
+else
+  warn "no Hyprland session in this environment — widgets will not show, IPC will not answer"
+fi
+if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+  ok "Wayland:     $WAYLAND_DISPLAY"
+else
+  warn "WAYLAND_DISPLAY is empty — Quickshell needs a Wayland session"
+fi
+
+section "Fonts"
+fonts=$(fc-list 2>/dev/null || true)
+if grep -qi "nerd font" <<<"$fonts"; then
+  ok "Nerd Font:   $(grep -i 'nerd font' <<<"$fonts" | head -1 | cut -d: -f2 | sed 's/^ *//')"
+else
+  warn "no Nerd Font found — bar icons will render as boxes"
+fi
+
+section "Conflicts"
+for proc in waybar mako dunst swayosd-server hyprlock; do
+  if pgrep -x "$proc" >/dev/null 2>&1; then
+    case $proc in
+      hyprlock) warn "$proc is running (Cornice has no lock screen yet — unrelated)" ;;
+      *) warn "$proc is running: it will overlap the bar or fight over notifications" ;;
+    esac
+  fi
+done
+if command -v busctl >/dev/null 2>&1; then
+  owner=$(busctl --user --timeout=1s call org.freedesktop.DBus /org/freedesktop/DBus \
+    org.freedesktop.DBus GetNameOwner s org.freedesktop.Notifications 2>/dev/null || true)
+  if [[ -n $owner ]]; then
+    warn "an existing notification daemon owns org.freedesktop.Notifications (Cornice does not take it over yet)"
+  else
+    ok "org.freedesktop.Notifications is free"
+  fi
+fi
+pgrep -x waybar >/dev/null 2>&1 && warn "waybar is in your exec-once: comment it out before switching"
+
+section "Configuration"
+defaults="$prefix/config/default.json"
+user_config="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+theme_override="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/theme.json"
+if [[ -f $defaults ]]; then
+  jq -e . "$defaults" >/dev/null 2>&1 && ok "defaults:    valid JSON ($defaults)" || bad "invalid JSON: $defaults"
+else
+  bad "missing $defaults"
+fi
+if [[ -f $user_config ]]; then
+  jq -e . "$user_config" >/dev/null 2>&1 && ok "user config: valid JSON ($user_config)" || bad "invalid JSON: $user_config"
+  ok "user config overrides: $(jq -c 'paths(scalars) | join(".")' "$user_config" 2>/dev/null | paste -sd, - || echo "(none)")"
+else
+  ok "user config: none yet — defaults in use (write only what you want to differ)"
+fi
+[[ -f $theme_override ]] && ok "theme override: $theme_override" || true
+
+section "Plugins"
+count=0
+for manifest in "$config_dir"/plugins/*/manifest.json "$config_dir"/plugins/*/*/manifest.json; do
+  [[ -f $manifest ]] || continue
+  count=$((count + 1))
+  if jq -e . "$manifest" >/dev/null 2>&1; then
+    id=$(jq -r '.id // "?"' "$manifest")
+    ok "$id  (${manifest%/manifest.json})"
+  else
+    bad "invalid manifest: $manifest"
+  fi
+done
+((count == 0)) && bad "no plugins found under $config_dir/plugins"
+
+section "Snippet for hyprland.conf"
+printf '  exec-once = cornice-launch          # needs %s on PATH\n' "$bin_dir"
+
+[[ $fail == 0 ]] && printf '\nall checks passed\n' || printf '\nsomething failed above\n'
+exit "$fail"

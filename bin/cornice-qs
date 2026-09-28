@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Locate a usable quickshell binary.
+#
+# Order: $CORNICE_QS, the packaged `quickshell`, then the user-local vendor tree
+# (~/.local/share/cornice/vendor) that lets the shell be developed and tested
+# without sudo. Nothing here requires root.
+set -euo pipefail
+
+if [[ -n ${CORNICE_QS:-} && -x ${CORNICE_QS} ]]; then
+  exec "$CORNICE_QS" "$@"
+fi
+
+if command -v quickshell >/dev/null 2>&1; then
+  exec quickshell "$@"
+fi
+
+vendor="${CORNICE_VENDOR:-$HOME/.local/share/cornice/vendor/root}"
+if [[ -x $vendor/usr/bin/quickshell ]]; then
+  export LD_LIBRARY_PATH="$vendor/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export QML_IMPORT_PATH="$vendor/usr/lib/qt6/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
+  exec "$vendor/usr/bin/quickshell" "$@"
+fi
+
+echo "cornice: quickshell not found." >&2
+echo "  Install it:  sudo pacman -S quickshell" >&2
+echo "  Or set CORNICE_QS=/path/to/quickshell" >&2
+exit 127

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Restart the Cornice shell.
+#
+# Kills every instance of this config path (not other Quickshell shells), then
+# starts a fresh one. Spawns through Hyprland when possible so the new process
+# inherits the session environment rather than a terminal's.
+set -euo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+bin_dir=$(dirname "$self")
+prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
+export CORNICE_PATH="$prefix"
+config_dir="$prefix/shell"
+qs="$bin_dir/cornice-qs"
+
+while "$qs" kill -p "$config_dir" --any-display >/dev/null 2>&1; do :; done
+
+if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && command -v hyprctl >/dev/null 2>&1; then
+  hyprctl dispatch "exec cornice-launch" >/dev/null 2>&1 || setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
+else
+  setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
+fi
+disown || true
+
+for _ in $(seq 1 50); do
+  if timeout 5 "$qs" ipc -p "$config_dir" call shell ping >/dev/null 2>&1; then
+    echo "cornice: shell restarted"
+    exit 0
+  fi
+  sleep 0.1
+done
+
+echo "cornice: shell did not answer after 5s" >&2
+exit 1

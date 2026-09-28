@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.active-window",
+  "name": "Active window",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Title of the focused window",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Active window",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "left",
+    "defaults": {
+      "maxWidth": 420
+    },
+    "schema": [
+      { "key": "maxWidth", "type": "number", "label": "Maximum width in pixels" }
+    ]
+  }
+}

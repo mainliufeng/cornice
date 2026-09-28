@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# cornice — talk to the running Cornice shell.
+#
+# The shell is its own long-running process; this CLI never starts it (except
+# for `launch`, `restart` and `start`). Every other command forwards an IPC
+# call and fails loudly when no shell is running.
+set -euo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+bin_dir=$(dirname "$self")
+prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
+export CORNICE_PATH="$prefix"
+
+qs="$bin_dir/cornice-qs"
+config_dir="$prefix/shell"
+
+usage() {
+  cat <<'USAGE'
+Usage: cornice <command> [args...]
+
+Shell lifecycle
+  launch              Start the shell in the foreground (watchdog loops)
+  start               Start the shell in the background
+  restart             Kill every instance of this config and start a fresh one
+  stop                Kill every instance of this config
+  status              Is a shell running, and what does it answer?
+
+Inspecting the running shell (IPC)
+  ping                Health check
+  version             Shell version
+  plugins             Installed plugins
+  widgets             Available bar widgets
+  config              Effective configuration (defaults merged with yours)
+  theme [name]        Print the active theme, or switch to <name>
+  reload              Re-read config.json and theme.json
+  reload-plugins      Re-scan the plugin directories
+  ipc <target> <fn>   Raw IPC call, e.g. cornice ipc shell ping
+  logs                Follow the shell's journal (systemd only)
+
+Machine
+  doctor              Check dependencies, compositor and conflicts
+  path                Print the paths cornice resolved
+  help                This message
+USAGE
+}
+
+# Qt's IPC client waits forever when a shell is starting or wedged; every call
+# here is bounded so the CLI can never hang a script that uses it.
+ipc_timeout="${CORNICE_IPC_TIMEOUT:-5}"
+
+shell_running() {
+  timeout "$ipc_timeout" "$qs" ipc -p "$config_dir" call shell ping >/dev/null 2>&1
+}
+
+require_shell() {
+  if ! shell_running; then
+    echo "cornice: no running shell for $config_dir" >&2
+    echo "  start it with: cornice start   (or: cornice launch)" >&2
+    exit 1
+  fi
+}
+
+call() {
+  require_shell
+  timeout "$ipc_timeout" "$qs" ipc -p "$config_dir" call "$@"
+}
+
+command="${1:-help}"
+shift || true
+
+case "$command" in
+  help | -h | --help)
+    usage
+    ;;
+
+  ping)
+    call shell ping
+    ;;
+
+  version)
+    call shell version
+    ;;
+
+  plugins)
+    call shell plugins
+    ;;
+
+  widgets)
+    call shell widgets
+    ;;
+
+  config)
+    call shell config
+    ;;
+
+  theme)
+    if (($#)); then
+      call shell setTheme "$1"
+    else
+      call shell theme
+    fi
+    ;;
+
+  reload)
+    call shell reloadConfig
+    ;;
+
+  reload-plugins)
+    call shell reloadPlugins
+    ;;
+
+  ipc)
+    (($# >= 2)) || { echo "usage: cornice ipc <target> <function> [args...]" >&2; exit 2; }
+    call "$@"
+    ;;
+
+  launch)
+    exec "$bin_dir/cornice-launch"
+    ;;
+
+  start)
+    setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
+    disown || true
+    for _ in $(seq 1 50); do
+      if shell_running; then
+        echo "cornice: shell running"
+        exit 0
+      fi
+      sleep 0.1
+    done
+    echo "cornice: shell did not answer after 5s — check: journalctl --user -t cornice -n 50" >&2
+    exit 1
+    ;;
+
+  restart)
+    exec "$bin_dir/cornice-restart"
+    ;;
+
+  stop)
+    stopped=0
+    while "$qs" kill -p "$config_dir" --any-display >/dev/null 2>&1; do
+      stopped=1
+    done
+    if ((stopped)); then echo "cornice: shell stopped"; else echo "cornice: no shell was running"; fi
+    ;;
+
+  status)
+    if shell_running; then
+      echo "running: $("$qs" ipc -p "$config_dir" call shell ping)"
+    else
+      echo "not running (config: $config_dir)"
+    fi
+    ;;
+
+  logs)
+    journalctl --user -t cornice -f
+    ;;
+
+  doctor)
+    exec "$bin_dir/cornice-doctor"
+    ;;
+
+  path)
+    printf 'prefix:     %s\n' "$prefix"
+    printf 'config dir: %s\n' "$config_dir"
+    printf 'user config: %s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+    printf 'quickshell:  %s\n' "$("$qs" --version 2>/dev/null | head -1)"
+    ;;
+
+  *)
+    echo "cornice: unknown command '$command'" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
