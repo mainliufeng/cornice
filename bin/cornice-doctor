@@ -6,6 +6,15 @@ set -uo pipefail
 
 self=$(readlink -f "${BASH_SOURCE[0]}")
 bin_dir=$(dirname "$self")
+
+# --log: keep a copy of the report in the state dir (used by cornice-launch to
+# record the state of every session, and by `cornice health` to read it back).
+log_to=""
+if [[ ${1:-} == "--log" ]]; then
+  log_to="${XDG_STATE_HOME:-$HOME/.local/state}/cornice/doctor-last.txt"
+  mkdir -p "$(dirname "$log_to")"
+  exec > >(tee "$log_to") 2>&1
+fi
 prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
 export CORNICE_PATH="$prefix"
 config_dir="$prefix/shell"
@@ -72,7 +81,11 @@ if command -v busctl >/dev/null 2>&1; then
   owner=$(busctl --user --timeout=1s call org.freedesktop.DBus /org/freedesktop/DBus \
     org.freedesktop.DBus GetNameOwner s org.freedesktop.Notifications 2>/dev/null || true)
   if [[ -n $owner ]]; then
-    warn "an existing notification daemon owns org.freedesktop.Notifications (Cornice does not take it over yet)"
+    if [[ ${XDG_CURRENT_DESKTOP:-} == *Hyprland* ]]; then
+      warn "another notification daemon owns org.freedesktop.Notifications — stop it or cornice will not receive notifications"
+    else
+      warn "another notification daemon owns org.freedesktop.Notifications (expected: this is not a Hyprland session)"
+    fi
   else
     ok "org.freedesktop.Notifications is free"
   fi
@@ -111,7 +124,7 @@ fi
 
 hypr_conf="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.conf"
 if [[ -r $hypr_conf ]]; then
-  if grep -qE "^\s*exec-once\s*=\s*cornice-launch" "$hypr_conf"; then
+  if grep -qE "^\s*exec-once\s*=.*cornice-launch" "$hypr_conf"; then
     ok "hyprland.conf starts cornice"
   else
     warn "hyprland.conf does not start cornice — add: exec-once = cornice-launch"

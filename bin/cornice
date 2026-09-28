@@ -45,6 +45,7 @@ Inspecting the running shell (IPC)
 
 Machine
   doctor              Check dependencies, compositor and conflicts
+  health              Print the health report saved at the last shell start
   verify              Check the running shell inside your real session
   path                Print the paths cornice resolved
   help                This message
@@ -237,11 +238,22 @@ case "$command" in
     ;;
 
   doctor)
-    exec "$bin_dir/cornice-doctor"
+    exec "$bin_dir/cornice-doctor" "$@"
     ;;
 
   verify)
-    exec "$bin_dir/cornice-verify"
+    exec "$bin_dir/cornice-verify" "$@"
+    ;;
+
+  health)
+    report="${XDG_STATE_HOME:-$HOME/.local/state}/cornice/doctor-last.txt"
+    if [[ -f $report ]]; then
+      echo "# $report"
+      cat "$report"
+    else
+      echo "cornice: no saved health report yet (it is written on the next shell start)"
+      echo "  run it now: cornice doctor"
+    fi
     ;;
 
   path)
