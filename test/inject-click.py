@@ -51,6 +51,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--at", nargs=2, type=int, required=True, metavar=("X", "Y"))
     parser.add_argument("--button", choices=("left", "right", "middle"), default="left")
+    parser.add_argument("--move-only", action="store_true",
+                        help="move the pointer there and stop (for hover checks)")
     parser.add_argument("--settle", type=float, default=0.06)
     parser.add_argument("--iterations", type=int, default=20)
     args = parser.parse_args()
@@ -114,6 +116,13 @@ def main():
         print(f"cursor now: {landed} (target {target})")
         if landed is None or abs(landed[0] - target[0]) > 3 or abs(landed[1] - target[1]) > 3:
             print("warning: pointer is not on target; click may miss", file=sys.stderr)
+
+        if args.move_only:
+            # Hover checks need the pointer on the widget without pressing it
+            # (clicking the volume widget would mute, for instance).
+            time.sleep(0.3)
+            fcntl.ioctl(dev, UI_DEV_DESTROY)
+            return 0
 
         write_event(dev, EV_KEY, button, 1)
         write_event(dev, EV_SYN, SYN_REPORT, 0)

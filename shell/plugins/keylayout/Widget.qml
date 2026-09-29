@@ -17,7 +17,7 @@ Item {
 
   readonly property var settings: widgetConfig || ({})
   readonly property string textFormat: Util.option(settings, "format", "{layout}")
-  readonly property bool hideWhenSingle: Util.option(settings, "hideWhenSingle", false)
+  readonly property bool hideWhenSingle: Util.option(settings, "hideWhenSingle", true)
 
   property string layoutCode: ""
   property string layoutName: ""

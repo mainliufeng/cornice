@@ -16,15 +16,17 @@ Item {
   readonly property real volume: (sink && sink.audio) ? sink.audio.volume : 0
   readonly property int percent: Math.round(Util.clamp(volume, 0, 1.5) * 100)
 
-  // Same glyph set and order as the waybar config this replaces: percentage
-  // first, then the icon (F026 off / F027 low / F028 high).
+  // The icon carries the level on its own (FontAwesome: mute / low / high), and
+  // the percentage only appears while the pointer is over the widget — the bar
+  // stays quiet, and the number is one hover away.
   readonly property string icon: {
-    if (muted || percent === 0) return "\u{F0581}"
+    if (muted || percent === 0) return "\uf026"
     if (percent < 40) return "\uf027"
     return "\uf028"
   }
 
-  readonly property string text: percent + "%"
+  property bool hovered: false
+  readonly property string text: hovered ? (percent + "%") : ""
 
   // Quickshell only binds a PipeWire node's parameters (volume, mute) for
   // objects that are tracked — without this every node reports volume 0 and
@@ -40,7 +42,7 @@ Item {
   Text {
     id: label
     anchors.centerIn: parent
-    text: root.text + " " + root.icon
+    text: root.icon + (root.text === "" ? "" : "  " + root.text)
     color: root.muted ? Color.muted : Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
@@ -50,6 +52,9 @@ Item {
     anchors.fill: parent
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
     cursorShape: Qt.PointingHandCursor
+    hoverEnabled: true
+    onEntered: root.hovered = true
+    onExited: root.hovered = false
 
     onClicked: mouse => {
       if (mouse.button === Qt.LeftButton)

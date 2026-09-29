@@ -43,11 +43,17 @@ Item {
   implicitWidth: label.implicitWidth + Style.space(1)
   visible: present
 
+  // The icon shows the level (it changes as the battery drains); the percentage
+  // and the remaining time appear only while hovering.
+  property bool hovered: false
+
   Text {
     id: label
     anchors.centerIn: parent
-    text: root.percent + "% " + root.icon + (
-      root.showRemaining && root.remaining !== "" ? "  " + root.remaining : "")
+    text: root.icon + (root.hovered
+      ? "  " + root.percent + "%" + (root.showRemaining && root.remaining !== ""
+          ? "  " + root.remaining : "")
+      : "")
     color: root.critical && !root.charging ? Color.urgent : Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
@@ -56,6 +62,9 @@ Item {
   MouseArea {
     anchors.fill: parent
     cursorShape: Qt.PointingHandCursor
+    hoverEnabled: true
+    onEntered: root.hovered = true
+    onExited: root.hovered = false
     onClicked: if (root.host) root.host.toggle("cn.power", {})
   }
 }
