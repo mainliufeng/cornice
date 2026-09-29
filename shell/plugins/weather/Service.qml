@@ -40,13 +40,21 @@ Item {
   // The older single-place keys (city/latitude/longitude/place) still work and
   // are treated as one entry, so existing configs keep behaving the same.
   readonly property var locations: {
+    // One place only: `weather.place`. The older list form still works and is
+    // reduced to its first entry.
+    const single = Util.option(settings, "place", null)
+    if (single && single.name) return [single]
     const configured = Util.option(settings, "locations", null)
-    if (configured && configured.length > 0) return configured
+    if (configured && configured.length > 0) return [configured[0]]
+    const legacyCity = Util.option(settings, "city", "")
+    const legacyLat = Util.option(settings, "latitude", null)
+    // Nothing configured at all: an empty list, not a nameless placeholder (the
+    // service then locates itself by timezone/IP).
+    if (legacyCity === "" && legacyLat === null) return []
     return [{
-      name: Util.option(settings, "place", ""),
-      city: Util.option(settings, "city", ""),
-      place: Util.option(settings, "place", ""),
-      latitude: Util.option(settings, "latitude", null),
+      name: Util.option(settings, "place", "") !== "" ? Util.option(settings, "place", "") : legacyCity,
+      city: legacyCity,
+      latitude: legacyLat,
       longitude: Util.option(settings, "longitude", null)
     }]
   }
@@ -313,6 +321,8 @@ Item {
             name: String(entry.name || ""),
             region: String(entry.admin1 || ""),
             country: String(entry.country || entry.country_code || ""),
+            // The clock editor reuses this search: a city result carries its zone.
+            timezone: String(entry.timezone || ""),
             latitude: Number(entry.latitude),
             longitude: Number(entry.longitude),
             label: [entry.name, entry.admin1, entry.country_code || entry.country]

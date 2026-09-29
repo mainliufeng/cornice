@@ -165,41 +165,75 @@ PanelFrame {
       }
     }
 
-    EditList {
-      width: parent.width
-      visible: root.editing
-      allowAdd: false // adding only through the picker below: select, never type
-      rows: (root.service && root.service.locations ? root.service.locations : []).map(entry => [entry.name, entry.city])
-      fields: [I18n.t("editor.name"), I18n.t("weather.placeCity")]
-      error: root.editError
-      onAddRequested: values => root.runCommand(
-        values[1] === "" ? "place add " + Util.shellQuote(values[0])
-                         : "place add " + Util.shellQuote(values[0]) + " --city " + Util.shellQuote(values[1]))
-      onUpdateRequested: (index, values) => root.runCommand(
-        "place set " + index + " --name " + Util.shellQuote(values[0]) + " --city " + Util.shellQuote(values[1]))
-      onRemoveRequested: index => root.runCommand("place remove " + index)
-    }
 
     // Adding a place: search, then pick. The coordinates come with the picked
     // result, so nothing has to be typed from memory.
-    PickerList {
-      id: placePicker
+
+    // ---- place editor ------------------------------------------------------
+    // Exactly one place, chosen from the search list — nothing is typed.
+    Column {
       width: parent.width
       visible: root.editing
-      placeholder: I18n.t("weather.searchCity")
-      emptyText: I18n.t("weather.noResults")
-      busy: !!root.service && root.service.searching
-      items: (root.service && root.service.searchResults ? root.service.searchResults : [])
-        .map(entry => ({ label: entry.label, detail: entry.detail }))
+      spacing: Style.space(0.6)
 
-      onQueryChanged: if (root.service) root.service.search(query)
+      Row {
+        width: parent.width
+        spacing: Style.space(0.6)
 
-      onPicked: index => {
-        const entry = root.service ? root.service.searchResults[index] : null
-        if (!entry) return
-        root.runCommand("place add " + Util.shellQuote(entry.label)
-          + " --lat " + entry.latitude + " --lon " + entry.longitude)
-        placePicker.clear()
+        Text {
+          width: parent.width - clearPlace.width
+          text: {
+            const list = root.service && root.service.locations ? root.service.locations : []
+            if (list.length === 0) return I18n.t("weather.noPlace")
+            return (list[0].name || "") + "   " + (list[0].city || "")
+          }
+          color: Color.foreground
+          elide: Text.ElideRight
+          font.family: Style.fontFamily
+          font.pixelSize: Style.fontSize
+        }
+
+        Item {
+          id: clearPlace
+          width: Style.space(2.4)
+          height: Style.space(2.4)
+
+          Text {
+            anchors.centerIn: parent
+            text: "\u{F0156}" // Material: delete
+            color: clearPlaceArea.containsMouse ? Color.accent : Color.muted
+            font.family: Style.fontFamily
+            font.pixelSize: Style.fontSize
+          }
+
+          MouseArea {
+            id: clearPlaceArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.runCommand("place clear")
+          }
+        }
+      }
+
+      PickerList {
+        id: placePicker
+        width: parent.width
+        placeholder: I18n.t("weather.searchCity")
+        emptyText: I18n.t("weather.noResults")
+        busy: !!root.service && root.service.searching
+        items: (root.service && root.service.searchResults ? root.service.searchResults : [])
+          .map(entry => ({ label: entry.label, detail: entry.detail }))
+
+        onQueryChanged: if (root.service) root.service.search(query)
+
+        onPicked: index => {
+          const entry = root.service ? root.service.searchResults[index] : null
+          if (!entry) return
+          root.runCommand("place use " + Util.shellQuote(entry.name)
+            + " --lat " + entry.latitude + " --lon " + entry.longitude)
+          placePicker.clear()
+        }
       }
     }
 

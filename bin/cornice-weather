@@ -184,6 +184,39 @@ case "$command" in
     echo "cornice weather: place $index moved $where"
     ;;
 
+  use)
+    # The place model is a single item now; picking replaces it.
+    need_jq
+    name="${1:-}"; shift || true
+    city=""; lat=""; lon=""
+    while (($#)); do
+      case "$1" in
+        --name) name="${2:-}"; shift 2 ;;
+        --city) city="${2:-}"; shift 2 ;;
+        --lat) lat="${2:-}"; shift 2 ;;
+        --lon) lon="${2:-}"; shift 2 ;;
+        *) die "unknown option '$1'" ;;
+      esac
+    done
+    [[ -n $name ]] || die "usage: cornice weather place use <name> [--city C | --lat L --lon N]"
+    if [[ -z $city && ( -z $lat || -z $lon ) ]]; then city="$name"; fi
+    entry=$(jq -cn --arg name "$name" --arg city "$city" --arg lat "$lat" --arg lon "$lon" '
+      { name: $name }
+      + (if $city != "" then { city: $city } else {} end)
+      + (if $lat != "" then { latitude: ($lat | tonumber) } else {} end)
+      + (if $lon != "" then { longitude: ($lon | tonumber) } else {} end)')
+    cornice_config_edit '.weather = ((.weather // {}) + {place: $entry}) | del(.weather.locations)' \
+      --argjson entry "$entry" || die "could not write $(cornice_config_file)"
+    echo "cornice weather: place is now $(describe <<<"$entry")"
+    ;;
+
+  clear)
+    need_jq
+    cornice_config_edit 'del(.weather.place, .weather.locations, .weather.city, .weather.latitude, .weather.longitude)' \
+      || die "could not write $(cornice_config_file)"
+    echo "cornice weather: place cleared"
+    ;;
+
   select)
     need_jq
     index="${1:-}"

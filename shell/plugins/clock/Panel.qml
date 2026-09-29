@@ -14,6 +14,9 @@ PanelFrame {
 
   // The world-clock section reads offsets from the clock service.
   readonly property var service: (host && host.services) ? host.services["cn.clock"] : null
+  // The zone picker reuses the weather plugin's city search: a city result
+  // carries its timezone and a name already localized to the configured language.
+  readonly property var citySearch: (host && host.services) ? (host.services["cn.weather"] || null) : null
 
   // Inline editing of the world clocks; every change goes through the CLI.
   readonly property bool editing: !!service && service.editorOpen
@@ -171,7 +174,6 @@ PanelFrame {
     // ---- world clocks ------------------------------------------------------
     Column {
       width: parent.width
-      visible: !!root.service && root.service.rows.length > 0
       spacing: Style.space(0.6)
 
       readonly property int revision: root.service ? root.service.revision : 0
@@ -219,18 +221,69 @@ PanelFrame {
         }
       }
 
-      EditList {
+
+      Row {
         width: parent.width
         visible: root.editing
-        rows: (root.service ? root.service.rows : []).map(row => [row.name, row.zone])
-        fields: [I18n.t("editor.name"), I18n.t("clock.zoneId")]
-        error: root.editError
-        onAddRequested: values => root.runCommand(
-          values[0] === "" ? "zone add " + Util.shellQuote(values[1])
-                           : "zone add " + Util.shellQuote(values[0]) + " " + Util.shellQuote(values[1]))
-        onUpdateRequested: (index, values) => root.runCommand(
-          "zone set " + index + " " + Util.shellQuote(values[1]) + " --name " + Util.shellQuote(values[0]))
-        onRemoveRequested: index => root.runCommand("zone remove " + index)
+        spacing: Style.space(0.6)
+
+        Text {
+          width: parent.width - clearZone.width
+          text: {
+            const rows = root.service ? root.service.rows : []
+            return rows.length > 0 ? rows[0].name + "   " + rows[0].zone : I18n.t("clock.noZones")
+          }
+          color: Color.foreground
+          elide: Text.ElideRight
+          font.family: Style.fontFamily
+          font.pixelSize: Style.fontSize
+        }
+
+        Item {
+          id: clearZone
+          width: Style.space(2.4)
+          height: Style.space(2.4)
+
+          Text {
+            anchors.centerIn: parent
+            text: "\u{F0156}"
+            color: clearZoneArea.containsMouse ? Color.accent : Color.muted
+            font.family: Style.fontFamily
+            font.pixelSize: Style.fontSize
+          }
+
+          MouseArea {
+            id: clearZoneArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.runCommand("zone clear")
+          }
+        }
+      }
+
+      PickerList {
+        id: zonePicker
+        width: parent.width
+        visible: root.editing
+        placeholder: I18n.t("clock.searchZone")
+        emptyText: I18n.t("editor.noMatches")
+        busy: !!root.citySearch && root.citySearch.searching
+        // Same city search as the weather panel: every result carries a timezone,
+        // and the name is already localized by the configured language.
+        items: (root.citySearch && root.citySearch.searchResults ? root.citySearch.searchResults : [])
+          .filter(entry => entry.timezone !== "")
+          .map(entry => ({ label: entry.name + " — " + entry.timezone, detail: entry.country }))
+
+        onQueryChanged: if (root.citySearch) root.citySearch.search(query)
+
+        onPicked: index => {
+          const list = root.citySearch ? root.citySearch.searchResults.filter(entry => entry.timezone !== "") : []
+          const entry = list[index]
+          if (!entry) return
+          root.runCommand("zone use " + Util.shellQuote(entry.name) + " " + Util.shellQuote(entry.timezone))
+          zonePicker.clear()
+        }
       }
 
       Repeater {

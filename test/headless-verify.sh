@@ -404,31 +404,27 @@ else
 fi
 
 
-section "multiple places"
-if [[ -n $(cornice ipc weather status 2>/dev/null) ]]; then
-  count=$(cornice ipc weather locations 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
-  if [[ $count -ge 1 ]]; then
-    pass "weather exposes $count configured place(s)"
-  else
-    fail "weather reported no places"
-  fi
-  if [[ $count -ge 2 ]]; then
-    before=$(cornice ipc weather status 2>/dev/null | jq -r .activeName)
-    cornice ipc weather select 1 >/dev/null 2>&1
-    sleep 1
-    after=$(cornice ipc weather status 2>/dev/null | jq -r .activeName)
-    if [[ $before != "$after" ]]; then
-      pass "switching place changes the active one ($before -> $after)"
-    else
-      fail "switching place did not change anything (still '$before')"
-    fi
-    cornice ipc weather select 0 >/dev/null 2>&1
-  else
-    pass "single place configured, switching not applicable"
-  fi
-else
-  fail "weather service did not answer"
-fi
+section "editing the place and the zone"
+cornice weather place use "改名了" --lat 12.34 --lon 56.78 >/dev/null 2>&1
+sleep 1
+after=$(cornice ipc weather status 2>/dev/null | jq -r .activeName)
+if [[ $after == "改名了" ]]; then pass "picking a place replaces it (中文名持久化)"
+else fail "the picked place did not stick (got '$after')"; fi
+cornice weather place clear >/dev/null 2>&1
+sleep 1
+cleared=$(cornice ipc weather locations 2>/dev/null | jq -c '[.[].name]')
+if [[ $(jq 'length' <<<"$cleared") == 0 ]]; then pass "clearing the place empties it"
+else fail "clearing the place left something behind (still $cleared; file: $(jq -c '.weather' "$XDG_CONFIG_HOME/cornice/config.json"))"; fi
+cornice clock zone use "测试" Asia/Tokyo >/dev/null 2>&1
+sleep 1
+if [[ $(cornice ipc clock status 2>/dev/null | jq -r '.zones | length') == 1 ]]; then pass "picking a world clock replaces the previous one"
+else fail "the world clock list is not a single entry"; fi
+if cornice clock zone use "Bad" Nowhere/Nothing >/dev/null 2>&1; then fail "an unknown timezone was accepted"
+else pass "an unknown timezone is rejected"; fi
+cornice clock zone clear >/dev/null 2>&1
+sleep 1
+if [[ $(cornice ipc clock status 2>/dev/null | jq -r '.zones | length') == 0 ]]; then pass "clearing the world clock empties it"
+else fail "clearing the world clock left something behind"; fi
 
 section "panels open"
 # The editors live in panels, and a QML mistake there does not show up anywhere
@@ -442,6 +438,11 @@ for panel in cn.weather cn.clock cn.audio cn.media cn.notifications cn.bar-edito
     pass "$panel opens"
   else
     fail "$panel did not open (state: ${state:-none})"
+  fi
+  if [[ $state != "true" ]]; then
+    # Surface the reason straight away: the panel's QML error is in the shell log.
+    cp -f "$runtime/shell.log" /tmp/sandbox-shell.log 2>/dev/null || true
+    warn "shell log saved to /tmp/sandbox-shell.log"
   fi
   cornice ipc shell hide "$panel" >/dev/null 2>&1
 done
@@ -458,67 +459,6 @@ else
 fi
 cornice ipc weather editor off >/dev/null 2>&1
 cornice ipc shell hide cn.weather >/dev/null 2>&1
-
-section "editing places and zones"
-# These are the exact commands the panel editors run, so a broken CLI would take
-# the in-panel editing down with it.
-before=$(cornice ipc weather locations 2>/dev/null | jq 'length')
-cornice weather place add "Panel City" >/dev/null 2>&1
-sleep 1
-after=$(cornice ipc weather locations 2>/dev/null | jq 'length')
-if [[ ${after:-0} -eq $((before + 1)) ]]; then
-  pass "adding a place from the CLI reaches the shell ($before -> $after)"
-else
-  fail "adding a place did not change the list ($before -> $after)"
-fi
-cornice weather place rename $((after - 1)) "改名了" >/dev/null 2>&1
-sleep 1
-name=$(cornice ipc weather locations 2>/dev/null | jq -r ".[$((after - 1))].name")
-if [[ $name == "改名了" ]]; then
-  pass "renaming a place keeps the language (中文名持久化)"
-else
-  fail "rename did not stick (got '$name')"
-fi
-cornice weather place remove $((after - 1)) >/dev/null 2>&1
-sleep 1
-back=$(cornice ipc weather locations 2>/dev/null | jq 'length')
-if [[ ${back:-0} -eq $before ]]; then
-  pass "removing a place restores the list"
-else
-  fail "removing a place left $back entries, expected $before"
-fi
-
-# The bar widget's zones and the panel's world clocks use the same list.
-cornice clock zone add "测试" Asia/Tokyo >/dev/null 2>&1
-sleep 1
-if [[ $(cornice ipc clock status 2>/dev/null | jq -r '[.zones[] | select(.name == "测试")] | length') == 1 ]]; then
-  pass "adding a world clock reaches the shell"
-else
-  fail "the added world clock is missing"
-fi
-if cornice clock zone add "Bad" Nowhere/Nothing >/dev/null 2>&1; then
-  fail "an unknown timezone was accepted"
-else
-  pass "an unknown timezone is rejected"
-fi
-cornice clock zone remove 0 >/dev/null 2>&1
-sleep 1
-if [[ $(cornice ipc clock status 2>/dev/null | jq '[.zones[] | select(.name == "测试")] | length') == 1 ]]; then
-  pass "world clocks survive removing another one"
-else
-  fail "removing one zone lost the other"
-fi
-
-# The editors are driven by the service, which is what the panels bind to.
-cornice ipc weather editor on >/dev/null 2>&1
-sleep 1
-state=$(cornice ipc weather status 2>/dev/null | jq -r .editorOpen)
-cornice ipc weather editor off >/dev/null 2>&1
-if [[ $state == "true" ]]; then
-  pass "the weather editor opens through the IPC the panel uses"
-else
-  fail "weather editor state did not stick (got '$state')"
-fi
 
 section "localized application search"
 # Chinese app names come from the desktop files (Name[zh_CN]); the launcher

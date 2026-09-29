@@ -46,6 +46,9 @@ Item {
   }
 
   function render(date, fmt) {
+    // With a configured world clock the widget renders that zone, named.
+    const configured = service && service.rows.length > 0 ? service.rows[0].zone : ""
+    const timezone = configured !== "" ? configured : root.timezone
     if (timezone === "" || !service) return I18n.dateTime(date, fmt)
     service.revision // dependency: re-render when offsets are re-resolved
     const text = service.zoneTimeAt(timezone, fmt, date.getTime())
@@ -82,6 +85,8 @@ Item {
     text: {
       const fmt = root.showAlt ? root.formatAlt : root.format
       if (root.world) return root.worldText(clock.date, root.worldFormat)
+      const zone = root.service && root.service.rows.length > 0 ? root.service.rows[0] : null
+      if (zone) return zone.name + " " + root.render(clock.date, fmt)
       return (root.zoneLabel !== "" ? root.zoneLabel + " " : "") + root.render(clock.date, fmt)
     }
     color: Color.barForeground

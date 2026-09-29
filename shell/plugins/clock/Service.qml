@@ -19,9 +19,13 @@ Item {
   // "worldClocks": [ { "name": "东京", "zone": "Asia/Tokyo" },
   //                  { "name": "Oslo", "zone": "Europe/Oslo" } ]
   readonly property var rows: {
+    // One world clock only. `clock.zone` is the model; an older `worldClocks`
+    // list is reduced to its first entry so nothing is lost on upgrade.
+    const single = Util.option(settings, "zone", null)
+    if (single && single.zone) return [{ index: 0, name: String(single.name || single.zone), zone: String(single.zone) }]
     const configured = Util.option(settings, "worldClocks", [])
     if (!configured || configured.length === undefined) return []
-    return configured.map((entry, index) => ({
+    return configured.slice(0, 1).map((entry, index) => ({
       index: index,
       name: String(entry.name || entry.label || entry.zone || ("zone " + (index + 1))),
       zone: String(entry.zone || entry.timezone || "")

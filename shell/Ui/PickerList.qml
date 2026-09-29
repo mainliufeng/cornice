@@ -18,11 +18,15 @@ Item {
 
   signal picked(int index)
 
+  // Callers pass an expression that can evaluate to undefined while a service is
+  // still loading; never let that reach a .length or a model.
+  readonly property var rows: (items === undefined || items === null) ? [] : items
+
   readonly property real rowHeight: Style.space(2.6)
 
   implicitWidth: 320
   implicitHeight: field.implicitHeight + Style.space(0.5)
-    + Math.min(maxVisible, Math.max(1, items.length)) * rowHeight
+    + Math.min(maxVisible, Math.max(1, rows.length)) * rowHeight
 
   function clear() {
     field.text = ""
@@ -48,7 +52,7 @@ Item {
     width: parent.width
     height: root.implicitHeight - field.implicitHeight - Style.space(0.5)
     clip: true
-    model: root.items
+    model: root.rows
     boundsBehavior: Flickable.StopAtBounds
 
     delegate: Rectangle {
@@ -99,7 +103,7 @@ Item {
     anchors.top: field.bottom
     anchors.topMargin: Style.space(1)
     width: parent.width
-    visible: root.items.length === 0
+    visible: root.rows.length === 0
     text: root.busy ? I18n.t("editor.searching") : root.emptyText
     color: Color.muted
     font.family: Style.fontFamily

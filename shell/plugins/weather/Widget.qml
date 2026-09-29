@@ -23,6 +23,12 @@ Item {
   readonly property string glyph: ready ? service.glyph : "\u{F0590}"
   readonly property string temperature: ready ? service.temperatureLabel : "--"
   readonly property string place: ready ? (service.place || "") : ""
+  // The configured name, localized (the picker stores what the search returned
+  // in the configured language).
+  readonly property string placeName: {
+    if (!service || !service.locations || service.locations.length === 0) return ""
+    return String(service.locations[0].name || "")
+  }
   readonly property string label: ready ? service.label : (service && service.status === "error" ? "unavailable" : "loading")
 
   readonly property string text: textFormat

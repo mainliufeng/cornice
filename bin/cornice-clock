@@ -89,6 +89,24 @@ case "$command" in
     echo "cornice clock: added $name ($zone)"
     ;;
 
+  use)
+    # One world clock only: picking replaces it.
+    need_jq
+    name="${1:-}"; zone="${2:-}"
+    if [[ -z $zone && -n $name ]]; then zone="$name"; name="${name##*/}"; fi
+    [[ -n $name && -n $zone ]] || die "usage: cornice clock zone use <name> <zone>"
+    check_zone "$zone"
+    cornice_config_edit '.clock = ((.clock // {}) + {zone: {name: $name, zone: $zone}}) | del(.clock.worldClocks)' \
+      --arg name "$name" --arg zone "$zone" || die "could not write $(cornice_config_file)"
+    echo "cornice clock: zone is now $name ($zone)"
+    ;;
+
+  clear)
+    need_jq
+    cornice_config_edit 'del(.clock.zone, .clock.worldClocks)' || die "could not write $(cornice_config_file)"
+    echo "cornice clock: zone cleared"
+    ;;
+
   set)
     need_jq
     index="${1:-}"; shift || true
