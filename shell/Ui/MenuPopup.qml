@@ -85,6 +85,9 @@ Item {
             id: row
 
             required property var modelData
+            // A Repeater delegate that uses required properties must declare the
+            // index itself, otherwise row.index is undefined.
+            required property int index
 
             width: column.width
             height: modelData.isSeparator ? Math.round(Style.gap * 0.6) : Style.widgetHeight
@@ -169,6 +172,11 @@ Item {
                     const quote = value => "'" + String(value).replace(/'/g, "'\\''") + "'"
                     const command = "cornice-tray-activate --id " + quote(root.ownerId)
                       + " --label " + quote(entry.text)
+                      // Menus repeat labels ("More" twice in ChatGPT's), so say
+                      // which occurrence this row is — the helper resolves that
+                      // against the menu it fetches.
+                      + " --index " + String(root.entries().slice(0, row.index)
+                          .filter(candidate => candidate.text === entry.text).length)
                     // Logged on purpose: if the helper is missing from PATH the
                     // click would otherwise fail silently (it did once).
                     console.log("cornice: tray menu activate → " + command)

@@ -19,12 +19,20 @@ set -uo pipefail
 title=""
 ident=""
 label=""
+index=0
+dry=0
 list=0
 while (($#)); do
   case "$1" in
     --title) title="${2:-}"; shift 2 ;;
     --id) ident="${2:-}"; shift 2 ;;
     --label) label="${2:-}"; shift 2 ;;
+    --index)
+      index="${2:-0}"
+      [[ $index =~ ^[0-9]+$ ]] || index=0
+      shift 2
+      ;;
+    --dry-run) dry=1; shift ;;
     --list) list=1; shift ;;
     -h | --help) sed -n '2,20p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "cornice-tray-activate: unknown option '$1'" >&2; exit 2 ;;
@@ -111,23 +119,43 @@ trap 'rm -f "$layout_file"' EXIT
 gdbus call --session --dest "$match_service" --object-path "$menu" \
   --method com.canonical.dbusmenu.GetLayout 0 2 "['label']" >"$layout_file" 2>/dev/null
 
-item_id=$(python3 - "$layout_file" "$label" <<'PY'
+# Menus can repeat a label (ChatGPT's has two "More" rows), so the caller says
+# which occurrence of that label it clicked.
+item_id=$(python3 - "$layout_file" "$label" "$index" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
 wanted = sys.argv[2].strip().lower()
+want_index = int(sys.argv[3])
+seen = 0
 for raw_id, props in re.findall(r"\((\d+), \{(.*?)\}, @av", text):
-    found = re.search(r"<'([^']*)'>", props)
-    if found and found.group(1).strip().lower() == wanted:
+    found = re.search(r"<'(.*?)'>", props)
+    if not found or found.group(1).strip().lower() != wanted:
+        continue
+    if seen == want_index:
         print(raw_id)
         break
+    seen += 1
 PY
 )
 
-[[ -n $item_id ]] || { echo "cornice-tray-activate: no entry labelled '$label' in $title's menu" >&2; exit 1; }
+if [[ -z $item_id ]]; then
+  message="no entry labelled '$label' (occurrence $index) in the menu of $match_service"
+  echo "cornice-tray-activate: $message" >&2
+  logger -t cornice "tray activate failed: $message" 2>/dev/null || true
+  exit 1
+fi
+
+if ((dry)); then
+  echo "would activate id=$item_id label='$label' index=$index in $match_service"
+  exit 0
+fi
 
 stamp=$(( $(date +%s%3N) ))
 timeout 10 gdbus call --session --dest "$match_service" --object-path "$menu" \
   --method com.canonical.dbusmenu.Event "$item_id" clicked "<''>" "$stamp" >/dev/null 2>&1
 status=$?
-[[ $status == 0 ]] || echo "cornice-tray-activate: the app did not answer the click (exit $status)" >&2
+if [[ $status != 0 ]]; then
+  echo "cornice-tray-activate: the app did not answer the click (exit $status)" >&2
+  logger -t cornice "tray activate: $match_service did not answer the click (id=$item_id, exit $status)" 2>/dev/null || true
+fi
 exit $status
