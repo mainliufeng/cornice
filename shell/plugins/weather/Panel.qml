@@ -28,7 +28,14 @@ PanelFrame {
     Util.exec("cornice weather " + command)
   }
 
-  onOpened: if (service && typeof service.refresh === "function") service.refresh(false)
+  onOpened: {
+    // Always open in the normal view: the editor state lives in the service so
+    // the IPC can drive it, and a leftover "on" would greet the user with an
+    // editor they did not ask for (and, if that editor failed to build, a panel
+    // that looks completely unresponsive).
+    if (service) service.editorOpen = false
+    if (service && typeof service.refresh === "function") service.refresh(false)
+  }
 
   function refresh() {
     if (service && typeof service.refresh === "function") service.refresh(true)
