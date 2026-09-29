@@ -133,6 +133,11 @@ sleep 1.5
 status=$(lock_status)
 expect_eq "lock reports locked" "true" "$(jq -r '.locked' <<<"$status")"
 expect_eq "lock surface is secure" "true" "$(jq -r '.secure' <<<"$status")"
+# Regression guard: right after locking, nobody is being authenticated yet, so
+# the state must be "locked". Reporting "authenticating" here disabled the
+# password field and locked the user out of their own machine (the prompt showed
+# "authenticating…" and could never accept input).
+expect_eq "state waits for input, not authenticating" "locked" "$(jq -r '.state' <<<"$status")"
 expect_eq "compositor reports the session locked" "true" "$(hypr_locked)"
 if timeout 10 grim "$runtime/locked.png" >/dev/null 2>&1; then pass "locked screen captured"; else fail "grim failed while locked"; fi
 

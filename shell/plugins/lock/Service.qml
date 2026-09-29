@@ -45,7 +45,9 @@ Item {
   property bool pamAvailable: false
   property bool compositorLocked: false
   property bool pamChecked: false
-  property string state: "idle"          // idle | authenticating | failed | unlocking
+  // idle (unlocked) | locked (waiting for the password) | authenticating (a PAM
+  // attempt is in flight) | failed | unlocking
+  property string state: "idle"
   property string message: ""
   property string password: ""
   property string pendingPassword: ""
@@ -93,7 +95,10 @@ Item {
 
     onSecureChanged: {
       root.secure = secure
-      if (secure) root.state = "authenticating"
+      // Do NOT flip to "authenticating" here. Nothing is being authenticated yet,
+      // and that state disables the password field — which locked the user out
+      // with a "authenticating…" prompt that could never accept input.
+      if (secure && root.state === "idle") root.state = "locked"
     }
 
     surface: Component {
@@ -197,14 +202,16 @@ Item {
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize * 1.3
               focus: true
-              enabled: root.state !== "authenticating"
+              // Enabled unless an attempt is really in flight: tying this to the
+              // state alone is what made the prompt untypable.
+              enabled: !pam.active && root.state !== "unlocking"
 
               Component.onCompleted: forceActiveFocus()
 
               onTextChanged: {
                 root.password = text
                 if (root.state === "failed") {
-                  root.state = "authenticating"
+                  root.state = "locked"
                   root.message = ""
                 }
               }
@@ -224,7 +231,7 @@ Item {
             Text {
               anchors.centerIn: parent
               visible: input.text === ""
-              text: root.state === "authenticating" ? "authenticating…" : "Password"
+              text: (root.state === "authenticating" || pam.active) ? "authenticating…" : "Password"
               color: Color.muted
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize * 1.2
@@ -299,7 +306,7 @@ Item {
     }
 
     password = ""
-    state = "authenticating"
+    state = "locked"
     message = ""
     captureScreenshot()
     locked = true
@@ -403,7 +410,7 @@ Item {
 
     function cancel(): string {
       root.password = ""
-      root.state = "authenticating"
+      root.state = root.locked ? "locked" : "idle"
       root.message = ""
       return "ok"
     }
