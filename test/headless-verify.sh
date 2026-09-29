@@ -94,7 +94,7 @@ if [[ -n $weather_port ]]; then
     "city": "Testville",
     "intervalMinutes": 60
   },
-  "idle": { "dimAc": 0, "screenOffAc": 0, "lock": 0, "lockOnSleep": false, "lockOnLockSignal": false }
+  "idle": { "dimAc": 0, "screenOffAc": 0, "lock": 0, "lockOnSleep": false, "lockOnLockSignal": false, "lockOnLidClose": false }
 }
 EOF
 else
@@ -375,11 +375,15 @@ expect_eq "a wake signal is understood" "resume" \
   "$(cornice ipc idle feed '/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (false,)')"
 expect_eq "an unrelated logind signal is ignored" "resume" \
   "$(cornice ipc idle feed '/org/freedesktop/login1/session/_9: org.freedesktop.login1.Session.Unlock ()')"
-# The sandbox disables lockOnLockSignal (locking here would break the checks
-# that follow), so the signal must be ignored — the lock suite covers the real
-# path with a working PAM stack.
+# The sandbox disables lockOnLockSignal/lockOnLidClose (locking here would break
+# the checks that follow), so those signals must be understood but not acted on —
+# the lock suite covers the real lock path with a working PAM stack.
 expect_eq "a lock signal is ignored when the config disables it" "resume" \
   "$(cornice ipc idle feed '/org/freedesktop/login1/session/_9: org.freedesktop.login1.Session.Lock ()')"
+expect_eq "a lid-close property change is understood" "lid" \
+  "$(cornice ipc idle feed "/org/freedesktop/login1: org.freedesktop.DBus.Properties.PropertiesChanged ('org.freedesktop.login1.Manager', {'LidClosed': <true>}, @as [])")"
+expect_eq "a lid-open property change is understood" "lid-open" \
+  "$(cornice ipc idle feed "/org/freedesktop/login1: org.freedesktop.DBus.Properties.PropertiesChanged ('org.freedesktop.login1.Manager', {'LidClosed': <false>}, @as [])")"
 
 section "on-screen display"
 if cornice ipc osd show volume 0.42 "" >/dev/null 2>&1; then

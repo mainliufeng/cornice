@@ -173,6 +173,22 @@ sleep 1.5
 expect_eq "lock released" "false" "$(lock_status | jq -r '.locked')"
 expect_eq "compositor lock released" "false" "$(hypr_locked)"
 
+section "phase 2.6: closing the lid locks the session"
+# The real logind line for a lid close on a machine that is not going to suspend
+# (plugged in, default HandleLidSwitch): a property change, not a signal.
+cornice ipc idle feed "/org/freedesktop/login1: org.freedesktop.DBus.Properties.PropertiesChanged ('org.freedesktop.login1.Manager', {'LidClosed': <true>}, @as [])" >/dev/null 2>&1
+sleep 2
+if [[ $(cornice ipc lock status | jq -r '.locked') == "true" ]]; then
+  pass "lid close locks the session"
+else
+  fail "lid close did not lock (last action: $(cornice ipc idle status | jq -r '.lastAction'))"
+fi
+cornice lock emergency-unlock >/dev/null 2>&1 || true
+sleep 1
+[[ $(cornice ipc lock status | jq -r '.locked') == "false" ]] \
+  && pass "and opening it leaves a usable session" \
+  || fail "the session stayed locked after the lid test"
+
 section "phase 2.5: logind lock signal locks the session"
 cornice ipc idle feed '/org/freedesktop/login1/session/_9: org.freedesktop.login1.Session.Lock ()' >/dev/null 2>&1
 sleep 2

@@ -61,6 +61,14 @@ Item {
   // on suspend or on `loginctl lock-session` unless we do it here.
   readonly property bool lockOnSleep: Util.option(settings, "lockOnSleep", true)
   readonly property bool lockOnLockSignal: Util.option(settings, "lockOnLockSignal", true)
+  // Closing the lid should lock even when logind is *not* going to suspend: with
+  // the default HandleLidSwitch and a plugged-in laptop there is no
+  // PrepareForSleep at all, only a LidClosed property change — which is exactly
+  // what "no reaction when I close the lid" was.
+  readonly property bool lockOnLidClose: Util.option(settings, "lockOnLidClose", true)
+  // Docked (an external screen is attached): the session keeps being used with
+  // the lid shut, so locking would be wrong.
+  readonly property bool docked: Quickshell.screens.length > 1
 
   // ---- one monitor per step -------------------------------------------------
   IdleMonitor {
@@ -207,6 +215,19 @@ Item {
   function handleSignalLine(line) {
     if (line === "" || line.indexOf("org.freedesktop.login1.") < 0) return
     lastSignal = line.trim()
+    // logind reports the lid as a property change, not as a signal of its own.
+    if (line.indexOf("LidClosed") >= 0) {
+      const closed = line.indexOf("<true>") >= 0
+      if (closed) {
+        lastAction = docked ? "lid-docked" : "lid"
+        if (lockOnLidClose && !docked) lockNow("lid")
+      } else {
+        displayOn()
+        undim()
+        lastAction = "lid-open"
+      }
+      return
+    }
     if (line.indexOf("PrepareForSleep") >= 0) {
       if (line.indexOf("true") >= 0) {
         lastAction = "sleep"
@@ -291,6 +312,8 @@ Item {
         lastSignal: root.lastSignal,
         lockOnSleep: root.lockOnSleep,
         lockOnLockSignal: root.lockOnLockSignal,
+        lockOnLidClose: root.lockOnLidClose,
+        docked: root.docked,
         respectInhibitors: root.respectInhibitors,
         monitorsEnabled: { "dim": dimMonitor.enabled, "screenOff": screenOffMonitor.enabled, "lock": lockMonitor.enabled },
         monitorsIdle: { "dim": dimMonitor.isIdle, "screenOff": screenOffMonitor.isIdle, "lock": lockMonitor.isIdle }

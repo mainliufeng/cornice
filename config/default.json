@@ -80,7 +80,8 @@
     "screenOffBattery": 300,
     "lock": 300,
     "lockOnSleep": true,
-    "lockOnLockSignal": true
+    "lockOnLockSignal": true,
+    "lockOnLidClose": true
   },
   "lock": {
     "background": "wallpaper",

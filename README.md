@@ -195,6 +195,7 @@ The keys that are not just bar layout:
 | `idle.respectInhibitors` | `false` | if true, apps holding an idle inhibitor also block dim/lock (browsers hold them for all sorts of reasons, so this is off by default) |
 | `idle.lockOnSleep` | `true` | lock when logind says the machine is about to suspend (hypridle's `before_sleep_cmd`) |
 | `idle.lockOnLockSignal` | `true` | lock on logind's `Session.Lock` — this is what makes `loginctl lock-session`, lid scripts and power managers work |
+| `idle.lockOnLidClose` | `true` | lock when the lid closes, even if logind is not going to suspend (skipped when an external screen is attached) |
 
 `cornice ipc idle inhibit 3600` holds the idle chain off for an hour (and
 `cornice ipc idle release` ends it early) — for long downloads, presentations,
@@ -245,7 +246,12 @@ own lock handler, so nothing else would do this):
 - `PrepareForSleep(false)` → display on and un-dim (the panel is often still off
   when the session comes back);
 - `Session.Lock` → lock, which is what `loginctl lock-session` and most power
-  managers actually call.
+  managers actually call;
+- `LidClosed` → lock, and this one matters more than it looks: a plugged-in
+  laptop with the default `HandleLidSwitch` never suspends, so there is no
+  `PrepareForSleep` at all — only the lid property change. Skipped while a second
+  screen is attached, because then the lid is being used as a "close the panel"
+  gesture rather than "I am leaving".
 
 The monitor is a `gdbus monitor --system --dest org.freedesktop.login1` child; if
 it dies the shell restarts it every 15s. `cornice ipc idle feed "<signal line>"`
