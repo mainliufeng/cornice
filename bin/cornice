@@ -31,7 +31,7 @@ Inspecting the running shell (IPC)
   plugins             Installed plugins
   widgets             Available bar widgets
   config              Effective configuration (defaults merged with yours)
-  theme [name]        Print the active theme, or switch to <name>
+  theme [list|toggle|<name>]   Show, list, cycle or set the theme (persisted)
   reload              Re-read config.json and theme.json
   reload-plugins      Re-scan the plugin directories
   ipc <target> <fn>   Raw IPC call, e.g. cornice ipc shell ping
@@ -153,11 +153,45 @@ case "$command" in
     ;;
 
   theme)
-    if (($#)); then
-      call shell setTheme "$1"
-    else
-      call shell theme
-    fi
+    theme_dir="$prefix/themes"
+    available_themes() { ls -1 "$theme_dir" 2>/dev/null | sort; }
+    current_theme() { call shell theme 2>/dev/null || echo ""; }
+
+    persist_theme() {
+      local name=$1 config="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+      mkdir -p "$(dirname "$config")"
+      [[ -f $config ]] || echo '{}' >"$config"
+      local tmp
+      tmp=$(mktemp)
+      jq --arg t "$name" '.theme = $t' "$config" >"$tmp" && mv "$tmp" "$config"
+    }
+
+    case "${1:-}" in
+      "")
+        current_theme
+        ;;
+      list)
+        available_themes
+        ;;
+      toggle)
+        # Cycle through the installed themes and remember the choice, so a
+        # keybinding can flip the whole desktop between light and dark.
+        mapfile -t names < <(available_themes)
+        if ((${#names[@]} == 0)); then echo "cornice: no themes installed" >&2; exit 1; fi
+        current=$(current_theme)
+        next="${names[0]}"
+        for i in "${!names[@]}"; do
+          if [[ ${names[$i]} == "$current" ]]; then next="${names[$(( (i + 1) % ${#names[@]} ))]}"; break; fi
+        done
+        persist_theme "$next"
+        call shell setTheme "$next" >/dev/null
+        echo "$next"
+        ;;
+      *)
+        persist_theme "$1"
+        call shell setTheme "$1"
+        ;;
+    esac
     ;;
 
   reload)
