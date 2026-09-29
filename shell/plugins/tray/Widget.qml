@@ -154,6 +154,11 @@ Item {
     }
     openItem = item
     openAnchor = anchorItem
+    // The menu needs to know which item it belongs to: entries that Quickshell
+    // cannot activate are clicked through cornice-tray-activate, which looks the
+    // item up by its status-notifier id.
+    menu.ownerId = String(item.id || "")
+    menu.ownerTitle = String(item.title || "")
     menu.handle = item.menu
   }
 

@@ -15,6 +15,10 @@ Item {
   id: root
 
   property var handle: null
+  // The status-notifier item this menu belongs to, so entries that Quickshell
+  // cannot activate by itself can be clicked through cornice-tray-activate.
+  property string ownerId: ""
+  property string ownerTitle: ""
   property real anchorX: 0
   property var anchorWindow: null
   property int preferredWidth: 260
@@ -149,15 +153,25 @@ Item {
               onClicked: {
                 const entry = row.modelData
                 try {
-                  // A DBusMenu entry is activated with sendTriggered(): the app
-                  // owns the action and only learns about the click through that
-                  // call. display() is for entries with children (it opens the
-                  // submenu), which is why "Quit" used to close the menu and
-                  // nothing else.
-                  if (!entry.hasChildren && typeof entry.sendTriggered === "function")
-                    entry.sendTriggered()
-                  else
+                  if (entry.hasChildren) {
+                    // Submenus are not rendered by this panel (yet): open them the
+                    // only way we can and leave the menu where it is.
                     entry.display()
+                  } else if (typeof entry.sendTriggered === "function") {
+                    // A DBusMenuItem knows how to tell its app about the click.
+                    entry.sendTriggered()
+                  } else if (root.ownerId !== "") {
+                    // Quickshell hands entries to QML as plain QsMenuEntry objects
+                    // (no activation method at all) when the menu comes from a
+                    // status-notifier item, and it does not expose the item's bus
+                    // name either — so the click is sent by a helper that speaks
+                    // DBusMenu directly.
+                    const quote = value => "'" + String(value).replace(/'/g, "'\\''") + "'"
+                    Util.exec("cornice-tray-activate --id " + quote(root.ownerId)
+                      + " --label " + quote(entry.text))
+                  } else {
+                    entry.display()
+                  }
                 } catch (e) {
                   console.warn("cornice: menu entry failed: " + e)
                 }

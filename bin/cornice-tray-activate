@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# cornice-tray-activate — click a status-notifier menu entry for real.
+#
+# Why this exists: Quickshell hands menu entries to QML as generic QsMenuEntry
+# objects. They have display() (which only opens submenus) but not the
+# DBusMenuItem.sendTriggered() needed to activate a leaf entry, and the item's
+# bus name is not exposed to QML at all. So the shell cannot activate a tray menu
+# entry on its own — this helper does it over DBus, the way the app expects.
+#
+# Two details that matter:
+#   * the Event() call must carry a real timestamp; several apps (ChatGPT among
+#     them) ignore or hang on timestamp 0
+#   * menu item ids are rebuilt whenever the menu is opened, so the layout has to
+#     be fetched right before activating, never cached
+#
+#   cornice-tray-activate --title "ChatGPT" --label "Quit"
+set -uo pipefail
+
+title=""
+ident=""
+label=""
+list=0
+while (($#)); do
+  case "$1" in
+    --title) title="${2:-}"; shift 2 ;;
+    --id) ident="${2:-}"; shift 2 ;;
+    --label) label="${2:-}"; shift 2 ;;
+    --list) list=1; shift ;;
+    -h | --help) sed -n '2,20p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *) echo "cornice-tray-activate: unknown option '$1'" >&2; exit 2 ;;
+  esac
+done
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+
+# The watcher lists every item as "<bus name><object path>".
+items=$(gdbus call --session --dest org.kde.StatusNotifierWatcher \
+  --object-path /StatusNotifierWatcher \
+  --method org.freedesktop.DBus.Properties.Get \
+  org.kde.StatusNotifierWatcher RegisteredStatusNotifierItems 2>/dev/null |
+  grep -o "'[^']*'" | tr -d "'")
+
+[[ -n $items ]] || { echo "cornice-tray-activate: no status notifier items registered" >&2; exit 1; }
+
+# gdbus prints values as (<'value'>,); pull the first quoted string out of that.
+grab() {
+  # gdbus prints values as (<'value'>,) or (<objectpath '/value'>,): keep the
+  # first single-quoted run.
+  sed -E "s/.*'([^']*)'.*/\1/"
+}
+
+sni_prop() { # sni_prop <service> <path> <property>
+  gdbus call --session --dest "$1" --object-path "$2" \
+    --method org.freedesktop.DBus.Properties.Get org.kde.StatusNotifierItem "$3" 2>/dev/null | grab
+}
+
+sni_title() { sni_prop "$1" "$2" Title; }
+sni_id() { sni_prop "$1" "$2" Id; }
+sni_menu() { sni_prop "$1" "$2" Menu; }
+
+if ((list)); then
+  while read -r entry; do
+    [[ -n $entry ]] || continue
+    svc="${entry%%/*}"
+    path="/${entry#*/}"
+    printf '%-52s %-34s %s\n' "$svc" "$path" "$(sni_id "$svc" "$path")"
+  done <<<"$items"
+  exit 0
+fi
+
+[[ -n $label ]] || { echo "usage: cornice-tray-activate (--id ID | --title T) --label L" >&2; exit 2; }
+[[ -n $ident || -n $title ]] || { echo "cornice-tray-activate: pass --id or --title" >&2; exit 2; }
+
+match_service=""
+match_path=""
+while read -r entry; do
+  [[ -n $entry ]] || continue
+  svc="${entry%%/*}"
+  path="/${entry#*/}"
+  if [[ -n $ident ]]; then
+    item_ident=$(sni_id "$svc" "$path")
+    matched=$([[ ${item_ident,,} == "${ident,,}" ]] && echo 1 || echo 0)
+  else
+    item_title=$(sni_title "$svc" "$path")
+    matched=$([[ ${item_title,,} == "${title,,}" ]] && echo 1 || echo 0)
+  fi
+  if ((matched)); then
+    match_service="$svc"
+    match_path="$path"
+    break
+  fi
+done <<<"$items"
+
+[[ -n $match_service ]] || {
+  echo "cornice-tray-activate: no tray item with id '$ident' title '$title'" >&2
+  exit 1
+}
+
+menu=$(sni_menu "$match_service" "$match_path")
+[[ -n $menu && $menu == /* ]] || { echo "cornice-tray-activate: '$title' has no menu" >&2; exit 1; }
+
+gdbus call --session --dest "$match_service" --object-path "$menu" \
+  --method com.canonical.dbusmenu.AboutToShow 0 >/dev/null 2>&1 || true
+
+layout_file=$(mktemp)
+trap 'rm -f "$layout_file"' EXIT
+
+# A fresh layout right before activating: item ids are rebuilt whenever a menu is
+# opened, so a cached id targets the wrong row (or nothing at all).
+gdbus call --session --dest "$match_service" --object-path "$menu" \
+  --method com.canonical.dbusmenu.GetLayout 0 2 "['label']" >"$layout_file" 2>/dev/null
+
+item_id=$(python3 - "$layout_file" "$label" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+wanted = sys.argv[2].strip().lower()
+for raw_id, props in re.findall(r"\((\d+), \{(.*?)\}, @av", text):
+    found = re.search(r"<'([^']*)'>", props)
+    if found and found.group(1).strip().lower() == wanted:
+        print(raw_id)
+        break
+PY
+)
+
+[[ -n $item_id ]] || { echo "cornice-tray-activate: no entry labelled '$label' in $title's menu" >&2; exit 1; }
+
+stamp=$(( $(date +%s%3N) ))
+timeout 10 gdbus call --session --dest "$match_service" --object-path "$menu" \
+  --method com.canonical.dbusmenu.Event "$item_id" clicked "<''>" "$stamp" >/dev/null 2>&1
+status=$?
+[[ $status == 0 ]] || echo "cornice-tray-activate: the app did not answer the click (exit $status)" >&2
+exit $status
