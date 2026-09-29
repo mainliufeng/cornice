@@ -15,6 +15,15 @@ PanelFrame {
   // The world-clock section reads offsets from the clock service.
   readonly property var service: (host && host.services) ? host.services["cn.clock"] : null
 
+  // Inline editing of the world clocks; every change goes through the CLI.
+  readonly property bool editing: !!service && service.editorOpen
+  property string editError: ""
+
+  function runCommand(command) {
+    editError = ""
+    Util.exec("cornice clock " + command)
+  }
+
   property int shownYear: 0
   property int shownMonth: 0   // 0-based
 
@@ -162,21 +171,70 @@ PanelFrame {
     // ---- world clocks ------------------------------------------------------
     Column {
       width: parent.width
-      visible: root.service && root.service.rows.length > 0
+      visible: !!root.service && root.service.rows.length > 0
       spacing: Style.space(0.6)
 
       readonly property int revision: root.service ? root.service.revision : 0
 
       Item { width: 1; height: Style.space(0.4) }
 
-      Text {
-        text: I18n.t("clock.world")
-        color: Color.muted
-        font.family: Style.fontFamily
-        font.pixelSize: Style.smallFontSize
+      Item {
+        width: parent.width
+        height: Math.max(worldTitle.height, zoneToggle.height)
+
+        Text {
+          id: worldTitle
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          text: I18n.t("clock.world")
+          color: Color.muted
+          font.family: Style.fontFamily
+          font.pixelSize: Style.smallFontSize
+        }
+
+        Item {
+          id: zoneToggle
+          anchors.right: parent.right
+          width: Style.space(2.4)
+          height: Style.space(2.4)
+
+          Text {
+            anchors.centerIn: parent
+            text: root.editing ? "\u{F012C}" : "\u{F03EB}" // check / pencil
+            color: zoneToggleArea.containsMouse ? Color.accent : Color.muted
+            font.family: Style.fontFamily
+            font.pixelSize: Style.fontSize
+          }
+
+          MouseArea {
+            id: zoneToggleArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+              if (root.service) root.service.editorOpen = !root.service.editorOpen
+              root.editError = ""
+            }
+          }
+        }
+      }
+
+      EditList {
+        width: parent.width
+        visible: root.editing
+        rows: (root.service ? root.service.rows : []).map(row => [row.name, row.zone])
+        fields: [I18n.t("editor.name"), I18n.t("clock.zoneId")]
+        error: root.editError
+        onAddRequested: values => root.runCommand(
+          values[0] === "" ? "zone add " + Util.shellQuote(values[1])
+                           : "zone add " + Util.shellQuote(values[0]) + " " + Util.shellQuote(values[1]))
+        onUpdateRequested: (index, values) => root.runCommand(
+          "zone set " + index + " " + Util.shellQuote(values[1]) + " --name " + Util.shellQuote(values[0]))
+        onRemoveRequested: index => root.runCommand("zone remove " + index)
       }
 
       Repeater {
+        visible: !root.editing
         model: root.service ? root.service.rows : []
 
         delegate: Row {

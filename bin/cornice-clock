@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# cornice clock — inspect and edit the world clocks.
+#
+# World clocks live in `clock.worldClocks` in ~/.config/cornice/config.json and
+# are shown in the clock panel (the bar widget shows the local time unless it is
+# given its own `timezone`).
+#
+#   cornice clock zone list
+#   cornice clock zone add <name> <zone>       # e.g. add Tokyo Asia/Tokyo
+#   cornice clock zone set <index> <zone>
+#   cornice clock zone rename <index> <name>
+#   cornice clock zone remove <index>
+#   cornice clock zone move <index> up|down
+#   cornice clock zones                        # installed timezone database names
+set -uo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+bin_dir=$(dirname "$self")
+prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
+export CORNICE_PATH="$prefix"
+export PATH="$bin_dir:$PATH"
+
+# shellcheck source=bin/cornice-config.sh
+. "$bin_dir/cornice-config.sh"
+
+die() { echo "cornice clock: $1" >&2; exit 1; }
+need_jq() { command -v jq >/dev/null 2>&1 || die "jq is required"; }
+
+zones_json() {
+  cornice_config_any '
+    (.clock // {}) as $c
+    | ($c.worldClocks // [])
+    | map({ name: ((.name // .label // .zone // "") | tostring),
+            zone: ((.zone // .timezone // "") | tostring) })
+    | map(select(.zone != ""))'
+}
+
+write_zones() {
+  local entries="$1"
+  cornice_config_edit '.clock = ((.clock // {}) + {worldClocks: $entries})' \
+    --argjson entries "$entries" || die "could not write $(cornice_config_file)"
+}
+
+check_index() {
+  local index="$1" count="$2"
+  [[ $index =~ ^[0-9]+$ ]] || die "'$index' is not an index"
+  ((index < count)) || die "index $index is out of range (0..$((count - 1)))"
+}
+
+check_zone() {
+  local zone="${1:-}"
+  [[ -n $zone ]] || die "no timezone given (e.g. Asia/Tokyo)"
+  cornice_zone_valid "$zone" || die "'$zone' is not in the system timezone database (cornice clock zones to search)"
+}
+
+# `zone` is optional noise: `cornice clock zone list` == `cornice clock list`.
+# (`zones` on its own stays the timezone-database listing.)
+case "${1:-}" in zone | zone-clocks | clocks) shift ;; esac
+
+command="${1:-list}"
+shift || true
+
+case "$command" in
+  list | "")
+    need_jq
+    entries=$(zones_json)
+    count=$(jq 'length' <<<"$entries")
+    if ((count == 0)); then
+      echo "No world clocks configured."
+      exit 0
+    fi
+    for ((i = 0; i < count; i++)); do
+      printf '  %-2s %s\n' "$i" "$(jq -r --argjson i "$i" '.[$i] | .name + "  " + .zone' <<<"$entries")"
+    done
+    ;;
+
+  add)
+    need_jq
+    name="${1:-}"; zone="${2:-}"
+    if [[ -z $zone && -n $name ]]; then
+      # One argument means the zone itself, named after its last segment.
+      zone="$name"; name="${name##*/}"
+    fi
+    [[ -n $name && -n $zone ]] || die "usage: cornice clock zone add <name> <zone>"
+    check_zone "$zone"
+    entries=$(zones_json)
+    next=$(jq -c --arg name "$name" --arg zone "$zone" '. + [{name: $name, zone: $zone}]' <<<"$entries")
+    write_zones "$next"
+    echo "cornice clock: added $name ($zone)"
+    ;;
+
+  set)
+    need_jq
+    index="${1:-}"; shift || true
+    zone=""; name=""
+    while (($#)); do
+      case "$1" in
+        --name) name="${2:-}"; shift 2 ;;
+        *) zone="$1"; shift ;;
+      esac
+    done
+    [[ -n $index && -n $zone ]] || die "usage: cornice clock zone set <index> <zone> [--name <name>]"
+    check_zone "$zone"
+    entries=$(zones_json)
+    check_index "$index" "$(jq 'length' <<<"$entries")"
+    write_zones "$(jq -c --argjson i "$index" --arg zone "$zone" --arg name "$name" '
+      .[$i].zone = $zone | if $name != "" then .[$i].name = $name else . end' <<<"$entries")"
+    echo "cornice clock: zone $index set to $zone${name:+ ($name)}"
+    ;;
+
+  rename)
+    need_jq
+    index="${1:-}"; name="${2:-}"
+    [[ -n $index && -n $name ]] || die "usage: cornice clock zone rename <index> <name>"
+    entries=$(zones_json)
+    check_index "$index" "$(jq 'length' <<<"$entries")"
+    write_zones "$(jq -c --argjson i "$index" --arg name "$name" '.[$i].name = $name' <<<"$entries")"
+    echo "cornice clock: zone $index renamed to $name"
+    ;;
+
+  remove)
+    need_jq
+    index="${1:-}"
+    [[ -n $index ]] || die "usage: cornice clock zone remove <index>"
+    entries=$(zones_json)
+    check_index "$index" "$(jq 'length' <<<"$entries")"
+    write_zones "$(jq -c --argjson i "$index" 'del(.[$i])' <<<"$entries")"
+    echo "cornice clock: removed zone $index"
+    ;;
+
+  move)
+    need_jq
+    index="${1:-}"; where="${2:-}"
+    [[ -n $index && -n $where ]] || die "usage: cornice clock zone move <index> up|down"
+    entries=$(zones_json)
+    count=$(jq 'length' <<<"$entries")
+    check_index "$index" "$count"
+    delta=$([[ $where == up ]] && echo -1 || { [[ $where == down ]] && echo 1 || die "direction must be up or down"; })
+    target=$((index + delta))
+    ((target >= 0 && target < count)) || die "cannot move zone $index $where"
+    write_zones "$(jq -c --argjson i "$index" --argjson j "$target" '.[$i] as $t | .[$i] = .[$j] | .[$j] = $t' <<<"$entries")"
+    echo "cornice clock: zone $index moved $where"
+    ;;
+
+  zones)
+    # Browsable list, grouped by area, for picking a name by hand.
+    find /usr/share/zoneinfo -type f -printf '%P\n' 2>/dev/null \
+      | grep -E '^[A-Za-z]+/[A-Za-z_+-]+(/[A-Za-z_+-]+)?$' | sort
+    ;;
+
+  -h | --help)
+    sed -n '2,12p' "$self" | sed 's/^# \?//'
+    ;;
+
+  *)
+    die "unknown command '$command' (list|add|set|rename|remove|move|zones)"
+    ;;
+esac

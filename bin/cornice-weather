@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# cornice weather — inspect and edit the configured places.
+#
+# Places live in `weather.locations` in ~/.config/cornice/config.json. A config
+# that still uses the old single-place keys (city / latitude / longitude / place)
+# is understood: it counts as one place, and the first edit materialises the list.
+#
+#   cornice weather place list
+#   cornice weather place add <name> [--city <city> | --lat <lat> --lon <lon>]
+#   cornice weather place set <index> [--name <name>] [--city <city>]
+#                                    [--lat <lat> --lon <lon>]
+#   cornice weather place rename <index> <name>
+#   cornice weather place remove <index>
+#   cornice weather place move <index> up|down
+#   cornice weather place select <index>       # switch the active place now
+set -uo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+bin_dir=$(dirname "$self")
+prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
+export CORNICE_PATH="$prefix"
+export PATH="$bin_dir:$PATH"
+
+# shellcheck source=bin/cornice-config.sh
+. "$bin_dir/cornice-config.sh"
+
+die() { echo "cornice weather: $1" >&2; exit 1; }
+need_jq() { command -v jq >/dev/null 2>&1 || die "jq is required"; }
+
+# The places as an array: the configured list, or one entry derived from the
+# legacy single-place keys (empty when nothing is configured yet — the service
+# then auto-locates by timezone or IP).
+places_json() {
+  cornice_config_any '
+    (.weather // {}) as $w
+    | ($w.locations // null) as $list
+    | if ($list | type) == "array" and ($list | length) > 0 then $list
+      elif (($w.city // "") != "" or $w.latitude != null) then
+        [ { name: ($w.place // "" | if . != "" then . else ($w.city // "Place 1") end) }
+          + (if ($w.city // "") != "" then { city: $w.city } else {} end)
+          + (if ($w.place // "") != "" then { place: $w.place } else {} end)
+          + (if $w.latitude != null then { latitude: $w.latitude } else {} end)
+          + (if $w.longitude != null then { longitude: $w.longitude } else {} end) ]
+      else [] end'
+}
+
+write_places() { # write_places <array-json>
+  local places="$1"
+  cornice_config_edit '.weather = ((.weather // {}) + {locations: $places})
+    | if (.weather.locations | length) > 0 then . else . end' --argjson places "$places" \
+    || die "could not write $(cornice_config_file)"
+}
+
+check_index() { # check_index <index> <count>
+  local index="$1" count="$2"
+  [[ $index =~ ^[0-9]+$ ]] || die "'$index' is not an index"
+  ((index < count)) || die "index $index is out of range (0..$((count - 1)))"
+}
+
+# describe <entry> → "name — city" / "name — 59.91,10.75"
+describe() {
+  jq -r '
+    (.name // "") as $name
+    | (if (.city // "") != "" then .city
+       elif .latitude != null then ((.latitude | tostring) + "," + (.longitude | tostring))
+       else "auto" end) as $where
+    | $name + " — " + $where'
+}
+
+# `place` is optional noise: `cornice weather place list` == `cornice weather list`.
+case "${1:-}" in place | places) shift ;; esac
+
+command="${1:-list}"
+shift || true
+
+case "$command" in
+  list | "")
+    need_jq
+    places=$(places_json)
+    count=$(jq 'length' <<<"$places")
+    active=$(timeout 5 cornice ipc weather status 2>/dev/null | jq -r '.activeIndex // 0')
+    if ((count == 0)); then
+      echo "No places configured — the weather widget locates itself (timezone/IP)."
+      exit 0
+    fi
+    for ((i = 0; i < count; i++)); do
+      entry=$(jq -c ".[$i]" <<<"$places")
+      marker="  "
+      ((i == active)) && marker="* "
+      printf '%s%-2s %s\n' "$marker" "$i" "$(describe <<<"$entry")"
+    done
+    ;;
+
+  add)
+    need_jq
+    name="${1:-}"; shift || true
+    [[ -n $name ]] || die "usage: cornice weather place add <name> [--city <city> | --lat <lat> --lon <lon>]"
+    city=""; lat=""; lon=""
+    while (($#)); do
+      case "$1" in
+        --city) city="${2:-}"; shift 2 ;;
+        --lat) lat="${2:-}"; shift 2 ;;
+        --lon) lon="${2:-}"; shift 2 ;;
+        *) die "unknown option '$1'" ;;
+      esac
+    done
+    if [[ -z $city && ( -z $lat || -z $lon ) ]]; then
+      # A bare name is treated as a city to look up — that is what a user means
+      # by "add Tokyo".
+      city="$name"
+    fi
+    places=$(places_json)
+    entry=$(jq -cn --arg name "$name" --arg city "$city" --arg lat "$lat" --arg lon "$lon" '
+      { name: $name }
+      + (if $city != "" then { city: $city } else {} end)
+      + (if $lat != "" then { latitude: ($lat | tonumber) } else {} end)
+      + (if $lon != "" then { longitude: ($lon | tonumber) } else {} end)')
+    write_places "$(jq -c --argjson e "$entry" '. + [$e]' <<<"$places")"
+    echo "cornice weather: added $(describe <<<"$entry")"
+    ;;
+
+  set)
+    need_jq
+    index="${1:-}"; shift || true
+    places=$(places_json)
+    count=$(jq 'length' <<<"$places")
+    check_index "$index" "$count"
+    name=""; city=""; lat=""; lon=""; have_name=0 have_city=0 have_coords=0
+    while (($#)); do
+      case "$1" in
+        --name) name="${2:-}"; have_name=1; shift 2 ;;
+        --city) city="${2:-}"; have_city=1; shift 2 ;;
+        --lat) lat="${2:-}"; have_coords=1; shift 2 ;;
+        --lon) lon="${2:-}"; have_coords=1; shift 2 ;;
+        *) die "unknown option '$1'" ;;
+      esac
+    done
+    ((have_name || have_city || have_coords)) || die "usage: cornice weather place set <index> [--name N] [--city C] [--lat L --lon N]"
+    next=$(jq -c --argjson i "$index" --arg name "$name" --arg city "$city" \
+      --arg lat "$lat" --arg lon "$lon" --argjson hn "$have_name" --argjson hc "$have_city" \
+      --argjson hd "$have_coords" '
+      . as $places
+      | $places[$i] as $old
+      | ($old
+         + (if $hn == 1 then { name: $name } else {} end)
+         + (if $hc == 1 then { city: $city } else {} end)
+         + (if $hd == 1 then { latitude: ($lat | tonumber), longitude: ($lon | tonumber) } else {} end)) as $updated
+      | $places | .[$i] = $updated' <<<"$places")
+    write_places "$next"
+    echo "cornice weather: place $index is now $(describe <<<"$(jq -c ".[$index]" <<<"$next")")"
+    ;;
+
+  rename)
+    need_jq
+    index="${1:-}"; name="${2:-}"
+    [[ -n $index && -n $name ]] || die "usage: cornice weather place rename <index> <name>"
+    places=$(places_json)
+    check_index "$index" "$(jq 'length' <<<"$places")"
+    write_places "$(jq -c --argjson i "$index" --arg name "$name" '.[$i].name = $name' <<<"$places")"
+    echo "cornice weather: place $index renamed to $name"
+    ;;
+
+  remove)
+    need_jq
+    index="${1:-}"
+    [[ -n $index ]] || die "usage: cornice weather place remove <index>"
+    places=$(places_json)
+    check_index "$index" "$(jq 'length' <<<"$places")"
+    write_places "$(jq -c --argjson i "$index" 'del(.[$i])' <<<"$places")"
+    echo "cornice weather: removed place $index"
+    ;;
+
+  move)
+    need_jq
+    index="${1:-}"; where="${2:-}"
+    [[ -n $index && -n $where ]] || die "usage: cornice weather place move <index> up|down"
+    places=$(places_json)
+    count=$(jq 'length' <<<"$places")
+    check_index "$index" "$count"
+    delta=$([[ $where == up ]] && echo -1 || { [[ $where == down ]] && echo 1 || die "direction must be up or down"; })
+    target=$((index + delta))
+    ((target >= 0 && target < count)) || die "cannot move place $index $where"
+    write_places "$(jq -c --argjson i "$index" --argjson j "$target" '.[$i] as $t | .[$i] = .[$j] | .[$j] = $t' <<<"$places")"
+    echo "cornice weather: place $index moved $where"
+    ;;
+
+  select)
+    need_jq
+    index="${1:-}"
+    [[ -n $index ]] || die "usage: cornice weather place select <index>"
+    out=$(timeout 5 cornice ipc weather select "$index" 2>/dev/null) || die "the shell is not answering (cornice start)"
+    echo "cornice weather: active place is $out"
+    ;;
+
+  -h | --help)
+    sed -n '2,14p' "$self" | sed 's/^# \?//'
+    ;;
+
+  *)
+    die "unknown command '$command' (list|add|set|rename|remove|move|select)"
+    ;;
+esac

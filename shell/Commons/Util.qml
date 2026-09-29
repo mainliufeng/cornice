@@ -73,6 +73,13 @@ QtObject {
     return has(object, key) ? object[key] : fallback
   }
 
+  // Single-quote a value for a shell command line, so a city or a name with a
+  // space (or an apostrophe) survives the trip through `sh -c`.
+  function shellQuote(value) {
+    const text = (value === undefined || value === null) ? "" : String(value)
+    return "'" + text.replace(/'/g, "'\\''") + "'"
+  }
+
   function exec(command) {
     Quickshell.execDetached(["sh", "-c", command])
   }

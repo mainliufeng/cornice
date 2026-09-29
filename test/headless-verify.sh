@@ -105,6 +105,7 @@ if [[ -n $weather_port ]]; then
       { "name": "Othertown", "city": "Othertown" }
     ]
   },
+  "clock": { "worldClocks": [ { "name": "UTC", "zone": "UTC" } ] },
   "idle": { "dimAc": 0, "screenOffAc": 0, "lock": 0, "lockOnSleep": false, "lockOnLockSignal": false, "lockOnLidClose": false },
   "background": { "dir": "$prefix/wallpapers" }
 }
@@ -429,6 +430,67 @@ else
   fail "weather service did not answer"
 fi
 
+section "editing places and zones"
+# These are the exact commands the panel editors run, so a broken CLI would take
+# the in-panel editing down with it.
+before=$(cornice ipc weather locations 2>/dev/null | jq 'length')
+cornice weather place add "Panel City" >/dev/null 2>&1
+sleep 1
+after=$(cornice ipc weather locations 2>/dev/null | jq 'length')
+if [[ ${after:-0} -eq $((before + 1)) ]]; then
+  pass "adding a place from the CLI reaches the shell ($before -> $after)"
+else
+  fail "adding a place did not change the list ($before -> $after)"
+fi
+cornice weather place rename $((after - 1)) "改名了" >/dev/null 2>&1
+sleep 1
+name=$(cornice ipc weather locations 2>/dev/null | jq -r ".[$((after - 1))].name")
+if [[ $name == "改名了" ]]; then
+  pass "renaming a place keeps the language (中文名持久化)"
+else
+  fail "rename did not stick (got '$name')"
+fi
+cornice weather place remove $((after - 1)) >/dev/null 2>&1
+sleep 1
+back=$(cornice ipc weather locations 2>/dev/null | jq 'length')
+if [[ ${back:-0} -eq $before ]]; then
+  pass "removing a place restores the list"
+else
+  fail "removing a place left $back entries, expected $before"
+fi
+
+# The bar widget's zones and the panel's world clocks use the same list.
+cornice clock zone add "测试" Asia/Tokyo >/dev/null 2>&1
+sleep 1
+if [[ $(cornice ipc clock status 2>/dev/null | jq -r '[.zones[] | select(.name == "测试")] | length') == 1 ]]; then
+  pass "adding a world clock reaches the shell"
+else
+  fail "the added world clock is missing"
+fi
+if cornice clock zone add "Bad" Nowhere/Nothing >/dev/null 2>&1; then
+  fail "an unknown timezone was accepted"
+else
+  pass "an unknown timezone is rejected"
+fi
+cornice clock zone remove 0 >/dev/null 2>&1
+sleep 1
+if [[ $(cornice ipc clock status 2>/dev/null | jq '[.zones[] | select(.name == "测试")] | length') == 1 ]]; then
+  pass "world clocks survive removing another one"
+else
+  fail "removing one zone lost the other"
+fi
+
+# The editors are driven by the service, which is what the panels bind to.
+cornice ipc weather editor on >/dev/null 2>&1
+sleep 1
+state=$(cornice ipc weather status 2>/dev/null | jq -r .editorOpen)
+cornice ipc weather editor off >/dev/null 2>&1
+if [[ $state == "true" ]]; then
+  pass "the weather editor opens through the IPC the panel uses"
+else
+  fail "weather editor state did not stick (got '$state')"
+fi
+
 section "localized application search"
 # Chinese app names come from the desktop files (Name[zh_CN]); the launcher
 # matches names as plain substrings, so a Chinese query must find them.
@@ -482,6 +544,19 @@ if [[ -n $(cornice ipc clock status 2>/dev/null) ]]; then
   fi
 else
   fail "clock service did not answer"
+fi
+
+section "qml warnings"
+# A binding that resolves to undefined usually fails quietly: the panel still
+# opens, just missing pieces. Qt logs it, so treat any scene warning from our own
+# files as a failure — this caught a weather panel that could not be built at all.
+scene_warnings=$(grep -E "WARN scene: .*shell/(plugins|Ui|Commons)/" "$runtime/shell.log" 2>/dev/null \
+  | grep -v "io.socket" | sort -u | head -5)
+if [[ -z $scene_warnings ]]; then
+  pass "no QML scene warnings from the shell sources"
+else
+  fail "QML warnings:"
+  sed 's/^/        /' <<<"$scene_warnings"
 fi
 
 section "translations"

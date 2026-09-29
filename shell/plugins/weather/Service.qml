@@ -52,6 +52,9 @@ Item {
   }
 
   property int activeIndex: 0
+  // Whether the panel is showing its places editor. Kept here so the panel and
+  // the IPC agree, and so the state survives a panel rebuild.
+  property bool editorOpen: false
   readonly property var active: locations[Math.min(Math.max(activeIndex, 0), locations.length - 1)] || ({})
 
   readonly property string city: Util.option(active, "city", "")
@@ -557,6 +560,7 @@ Item {
         place: root.place,
         locatedBy: root.locatedBy,
         activeIndex: root.activeIndex,
+        editorOpen: root.editorOpen,
         activeName: root.activeName,
         locationCount: root.locations.length,
         city: root.city,
@@ -586,6 +590,12 @@ Item {
         city: entry.city || "",
         active: index === root.activeIndex
       })))
+    }
+
+    function editor(state: string): string {
+      const wanted = String(state)
+      root.editorOpen = wanted === "on" || wanted === "true" || wanted === "1"
+      return root.editorOpen ? "on" : "off"
     }
 
     function select(index: string): string {

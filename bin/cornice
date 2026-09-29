@@ -53,6 +53,8 @@ Machine
   health              Print the health report saved at the last shell start
   verify              Check the running shell inside your real session
   bar [cmd]           Bar layout: list | show <id> | hide <id> | move <id> up|down|… | edit
+  weather [cmd]       Places: list | add <name> [--city C] | set | rename | remove | move | select
+  clock [cmd]         World clocks: list | add <name> <zone> | set | rename | remove | move | zones
   takeover [--apply]  Take over from mako/hypridle/waybar/polkit-gnome (plan first!)
   test [--quick|suite]  Run the test suites (takeover, headless, lock, live)
   session-env         Print compositor env exports (for TTYs / stale shells)
@@ -374,6 +376,14 @@ case "$command" in
 
   bar)
     exec "$bin_dir/cornice-bar" "$@"
+    ;;
+
+  weather)
+    exec "$bin_dir/cornice-weather" "$@"
+    ;;
+
+  clock)
+    exec "$bin_dir/cornice-clock" "$@"
     ;;
 
   takeover)

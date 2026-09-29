@@ -60,6 +60,7 @@ section "Helpers"
 required_helpers=(
   cornice cornice-launch cornice-qs cornice-restart cornice-doctor
   cornice-verify cornice-takeover cornice-test cornice-tray-activate
+  cornice-bar cornice-weather cornice-clock
 )
 missing_helpers=()
 for helper in "${required_helpers[@]}"; do

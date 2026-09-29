@@ -17,6 +17,17 @@ PanelFrame {
   readonly property var days: service ? (service.daily || []) : []
   readonly property string glyph: service ? service.glyph : "\u{F0590}"
 
+  // Inline editing of the places. Every change runs the CLI, which is the only
+  // writer of config.json and reloads the shell — so what you see here is what
+  // the service (and a script) sees.
+  readonly property bool editing: !!service && service.editorOpen
+  property string editError: ""
+
+  function runCommand(command) {
+    editError = ""
+    Util.exec("cornice weather " + command)
+  }
+
   onOpened: if (service && typeof service.refresh === "function") service.refresh(false)
 
   function refresh() {
@@ -75,39 +86,90 @@ PanelFrame {
     }
 
     // ---- places ------------------------------------------------------------
-    Row {
+    // An Item (not a Row): the chips sit left and the edit toggle sits right, and
+    // a Row would both reject those anchors and position its children itself.
+    Item {
+      id: placeHeader
       width: parent.width
-      visible: root.ready && places.length > 1
-      spacing: Style.space(0.6)
+      height: Style.space(2.4)
+      visible: root.ready
 
       readonly property var places: root.service && root.service.locations ? root.service.locations : []
 
-      Repeater {
-        model: parent.places
+      Row {
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        visible: !root.editing && placeHeader.places.length > 1
+        spacing: Style.space(0.6)
 
-        delegate: Rectangle {
-          required property var modelData
-          height: Style.space(2.4)
-          width: chipText.implicitWidth + Style.space(1.6)
-          radius: Style.space(0.4)
-          color: modelData.active ? Color.accent : Color.surfaceAlt
+        Repeater {
+          model: placeHeader.places
 
-          Text {
-            id: chipText
-            anchors.centerIn: parent
-            text: modelData.name
-            color: modelData.active ? Color.background : Color.foreground
-            font.family: Style.fontFamily
-            font.pixelSize: Style.smallFontSize
-          }
+          delegate: Rectangle {
+            required property var modelData
+            height: Style.space(2.4)
+            width: chipText.implicitWidth + Style.space(1.6)
+            radius: Style.space(0.4)
+            color: modelData.active ? Color.accent : Color.panelAlt
 
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.service.select(modelData.index)
+            Text {
+              id: chipText
+              anchors.centerIn: parent
+              text: modelData.name
+              color: modelData.active ? Color.background : Color.foreground
+              font.family: Style.fontFamily
+              font.pixelSize: Style.smallFontSize
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.service.select(modelData.index)
+            }
           }
         }
       }
+
+      // Edit toggle: pencil to start editing the places, check to stop.
+      Item {
+        id: placeToggle
+        anchors.right: parent.right
+        width: Style.space(2.4)
+        height: Style.space(2.4)
+
+        Text {
+          anchors.centerIn: parent
+          text: root.editing ? "\u{F012C}" : "\u{F03EB}" // check / pencil
+          color: toggleArea.containsMouse ? Color.accent : Color.muted
+          font.family: Style.fontFamily
+          font.pixelSize: Style.fontSize
+        }
+
+        MouseArea {
+          id: toggleArea
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: {
+            if (root.service) root.service.editorOpen = !root.service.editorOpen
+            root.editError = ""
+          }
+        }
+      }
+    }
+
+    EditList {
+      width: parent.width
+      visible: root.editing
+      rows: (root.service && root.service.locations ? root.service.locations : []).map(entry => [entry.name, entry.city])
+      fields: [I18n.t("editor.name"), I18n.t("weather.placeCity")]
+      error: root.editError
+      onAddRequested: values => root.runCommand(
+        values[1] === "" ? "place add " + Util.shellQuote(values[0])
+                         : "place add " + Util.shellQuote(values[0]) + " --city " + Util.shellQuote(values[1]))
+      onUpdateRequested: (index, values) => root.runCommand(
+        "place set " + index + " --name " + Util.shellQuote(values[0]) + " --city " + Util.shellQuote(values[1]))
+      onRemoveRequested: index => root.runCommand("place remove " + index)
     }
 
     // ---- details -----------------------------------------------------------

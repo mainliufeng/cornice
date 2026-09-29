@@ -7,3 +7,4 @@ PanelFrame 1.0 PanelFrame.qml
 NotificationCard 1.0 NotificationCard.qml
 Slider 1.0 Slider.qml
 MenuPopup 1.0 MenuPopup.qml
+EditList 1.0 EditList.qml

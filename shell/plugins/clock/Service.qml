@@ -39,6 +39,8 @@ Item {
 
   // zone -> offset in minutes east of UTC
   property var zoneMinutes: ({})
+  // Whether the panel is showing its world-clock editor.
+  property bool editorOpen: false
   property bool ready: false
   // Bumped whenever the offsets change: plain object writes are not observable.
   property int revision: 0
@@ -60,8 +62,9 @@ Item {
     return new Date(Number(epoch) + (Number(target) - localEast) * 60000)
   }
 
+  // Pure: callers may use this from a binding, so it must not write state
+  // (writing `extraZones` here caused a binding loop in the clock widget).
   function zoneTimeAt(zone, format, epoch) {
-    if (zoneMinutes[zone] === undefined && zone !== "") watchZone(zone)
     const date = zoneDateAt(zone, epoch)
     if (!date) return ""
     return I18n.dateTime(date, format || "HH:mm")
@@ -71,9 +74,14 @@ Item {
     return zoneTimeAt(zone, format, Date.now())
   }
 
+  // Resolve a zone that is not configured yet. Only commands (IPC) call this:
+  // it mutates state, so a binding must never reach it.
+  function requestZone(zone) {
+    if (zone !== "" && zoneMinutes[zone] === undefined) watchZone(zone)
+  }
+
   // Difference to local time: "+9h" / "-5:30h" / the localized "same time".
   function zoneDiff(zone) {
-    if (zoneMinutes[zone] === undefined && zone !== "") watchZone(zone)
     const target = zoneMinutes[zone]
     if (target === undefined || target === null) return ""
     const delta = Number(target) + new Date().getTimezoneOffset()
@@ -153,6 +161,7 @@ Item {
     return JSON.stringify({
       ready: root.ready,
       revision: root.revision,
+      editorOpen: root.editorOpen,
       extraZones: root.extraZones,
       zones: root.rows.map(row => ({
         name: row.name,
@@ -177,11 +186,19 @@ Item {
       return "ok"
     }
 
+    function editor(state: string): string {
+      const wanted = String(state)
+      root.editorOpen = wanted === "on" || wanted === "true" || wanted === "1"
+      return root.editorOpen ? "on" : "off"
+    }
+
     function time(zone: string, format: string): string {
+      root.requestZone(zone)
       return root.zoneTime(zone, format || "HH:mm")
     }
 
     function diff(zone: string): string {
+      root.requestZone(zone)
       return root.zoneDiff(zone)
     }
   }
