@@ -119,15 +119,22 @@ Item {
   // still streaming produced counts that matched no directory.
   property bool scanPending: false
 
+  // Diagnostics: "I changed background.dir and nothing happened" is invisible
+  // without knowing whether the handler ran or the scan process is stuck.
+  property int rescans: 0
+  property int directoryChanges: 0
+
   function rescan() {
+    rescans = rescans + 1
     if (directory === "") {
       images = []
       return
     }
-    if (lister.running) {
-      scanPending = true
-      return
-    }
+    // Cancel a scan that is still streaming: `running = true` on a live process
+    // is a no-op, and waiting for it to finish is what made a changed
+    // `background.dir` keep showing the *previous* directory's images.
+    if (lister.running) lister.running = false
+    scanPending = false
     images = []
     lister.running = true
   }
@@ -154,7 +161,14 @@ Item {
     }
   }
 
-  onDirectoryChanged: rescan()
+  // `directory` is derived from the config; a reload replaces the whole config
+  // object, so watch that too instead of trusting one derived property to
+  // differ.
+  onDirectoryChanged: {
+    directoryChanges = directoryChanges + 1
+    rescan()
+  }
+  onSettingsChanged: rescan()
   Component.onCompleted: rescan()
 
   // ---- the surfaces --------------------------------------------------------
@@ -214,6 +228,10 @@ Item {
         forced: root.force,
         mode: root.mode,
         directory: root.directory,
+        rescans: root.rescans,
+        directoryChanges: root.directoryChanges,
+        listerRunning: lister.running,
+        scanPending: root.scanPending,
         images: root.images.length,
         index: root.index,
         override: root.override_,

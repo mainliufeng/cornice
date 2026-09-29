@@ -94,7 +94,8 @@ if [[ -n $weather_port ]]; then
     "city": "Testville",
     "intervalMinutes": 60
   },
-  "idle": { "dimAc": 0, "screenOffAc": 0, "lock": 0, "lockOnSleep": false, "lockOnLockSignal": false, "lockOnLidClose": false }
+  "idle": { "dimAc": 0, "screenOffAc": 0, "lock": 0, "lockOnSleep": false, "lockOnLockSignal": false, "lockOnLidClose": false },
+  "background": { "dir": "$prefix/wallpapers" }
 }
 EOF
 else

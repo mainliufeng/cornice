@@ -68,6 +68,7 @@ package() {
 
   # Documentation and the licence (once the repo has one).
   install -Dm644 "$startdir/README.md" "$pkgdir/usr/share/doc/cornice/README.md"
+  install -Dm644 "$startdir/README.zh-CN.md" "$pkgdir/usr/share/doc/cornice/README.zh-CN.md"
   install -Dm644 "$startdir/DESIGN.md" "$pkgdir/usr/share/doc/cornice/DESIGN.md"
   install -Dm644 "$startdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   return 0
