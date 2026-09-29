@@ -33,6 +33,12 @@ while (($#)); do
       shift 2
       ;;
     --dry-run) dry=1; shift ;;
+    --check)
+      # Print the values the event would carry, so a test can assert them
+      # without needing a live tray item.
+      printf 'timestamp=%s\n' "$(( $(date +%s%3N) % 4294967296 ))"
+      exit 0
+      ;;
     --list) list=1; shift ;;
     -h | --help) sed -n '2,20p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "cornice-tray-activate: unknown option '$1'" >&2; exit 2 ;;
@@ -150,12 +156,25 @@ if ((dry)); then
   exit 0
 fi
 
-stamp=$(( $(date +%s%3N) ))
-timeout 10 gdbus call --session --dest "$match_service" --object-path "$menu" \
-  --method com.canonical.dbusmenu.Event "$item_id" clicked "<''>" "$stamp" >/dev/null 2>&1
+# DBusMenu's timestamp field is uint32, so a 13-digit millisecond value is
+# rejected by gdbus *before* it is ever sent (the click silently did nothing).
+# libdbusmenu wraps it the same way.
+stamp=$(( $(date +%s%3N) % 4294967296 ))
+# Keep stderr: gdbus reports payload problems there (an out-of-range timestamp
+# made every click fail silently for a while).
+event_error=$(timeout 15 gdbus call --session --dest "$match_service" --object-path "$menu" \
+  --method com.canonical.dbusmenu.Event "$item_id" clicked "<''>" "$stamp" 2>&1 >/dev/null)
 status=$?
+if [[ $status == 124 ]]; then
+  # Many apps (ChatGPT, fcitx5) act on the click without answering the method
+  # call in time — the dialog/action appears anyway.
+  logger -t cornice "tray activate: $match_service did not reply in time (id=$item_id); the action usually still happened" 2>/dev/null || true
+  exit 0
+fi
 if [[ $status != 0 ]]; then
-  echo "cornice-tray-activate: the app did not answer the click (exit $status)" >&2
-  logger -t cornice "tray activate: $match_service did not answer the click (id=$item_id, exit $status)" 2>/dev/null || true
+  message="the app rejected the click (exit $status${event_error:+: ${event_error%%$'\n'*}})"
+  echo "cornice-tray-activate: $message" >&2
+  logger -t cornice "tray activate: $match_service $message (id=$item_id)" 2>/dev/null || true
+  exit $status
 fi
 exit $status

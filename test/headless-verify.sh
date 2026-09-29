@@ -375,6 +375,18 @@ else
   warn "no session bus; inline reply not exercised"
 fi
 
+section "tray menu activation"
+# The helper must keep its timestamp inside DBusMenu's uint32 field: a 13-digit
+# millisecond value made gdbus reject every click before it was sent (silently).
+stamp=$("$prefix/bin/cornice-tray-activate" --check | sed -n 's/^timestamp=//p')
+if [[ -n $stamp ]] && ((stamp >= 0 && stamp <= 4294967295)); then
+  pass "tray helper timestamp fits uint32 ($stamp)"
+else
+  fail "tray helper timestamp out of range: '$stamp'"
+fi
+"$prefix/bin/cornice-tray-activate" --help >/dev/null 2>&1 \
+  && pass "tray helper is runnable" || fail "tray helper is not runnable"
+
 section "keyboard layout"
 layout=$(cornice ipc keylayout status 2>/dev/null || echo '{}')
 if [[ $(jq -r '.layout // ""' <<<"$layout") != "" ]]; then
