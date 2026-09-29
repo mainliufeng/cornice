@@ -57,5 +57,13 @@
   "launcher": {
     "terminal": "kitty",
     "terminalApps": []
+  },
+  "background": {
+    "enabled": false,
+    "path": "",
+    "dir": "",
+    "mode": "fill",
+    "perWorkspace": {},
+    "force": false
   }
 }

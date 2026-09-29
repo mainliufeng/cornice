@@ -22,7 +22,10 @@ ShellRoot {
   // Keep this identical to the path bin/cornice computes.
   readonly property string socketPath: runtimeDir + "/cornice-" + userName + ".sock"
 
-  readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME") !== undefined && Quickshell.env("XDG_CONFIG_HOME") !== ""
+  // Quickshell.env() returns null for an unset variable (not undefined), so test
+  // truthiness: the old check accepted null and turned the config path into
+  // "/cornice/config.json", meaning user config was never read at all.
+  readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME")
     ? Quickshell.env("XDG_CONFIG_HOME")
     : home + "/.config"
 
@@ -82,18 +85,50 @@ ShellRoot {
     }
   }
 
-  readonly property FileView userFile: FileView {
-    path: shell.userConfigPath
-    watchChanges: true
-    printErrors: false
-    onLoaded: {
-      shell.userConfig = shell.parseJson(text(), shell.userConfigPath)
-      shell.applyConfig()
+  // FileView has no reload(), and its watchChanges cannot watch a file that did
+  // not exist yet — so a config created *after* the shell started used to be
+  // ignored until the next restart. A Loader lets us recreate the view, and a
+  // poller recreates it until the file finally loads.
+  readonly property bool userConfigLoaded: userConfigLoader.item !== null && userConfigLoader.item.loaded === true
+
+  Loader {
+    id: userConfigLoader
+    active: true
+    sourceComponent: Component {
+      FileView {
+        path: shell.userConfigPath
+        watchChanges: true
+        printErrors: false
+        onLoaded: {
+          shell.userConfig = shell.parseJson(text(), shell.userConfigPath)
+          shell.applyConfig()
+        }
+        onTextChanged: {
+          shell.userConfig = shell.parseJson(text(), shell.userConfigPath)
+          shell.applyConfig()
+        }
+      }
     }
-    onTextChanged: {
-      shell.userConfig = shell.parseJson(text(), shell.userConfigPath)
-      shell.applyConfig()
-    }
+  }
+
+  function reloadUserConfig() {
+    userConfigLoader.active = false
+    userConfigReload.restart()
+  }
+
+  Timer {
+    id: userConfigReload
+    interval: 60
+    repeat: false
+    onTriggered: userConfigLoader.active = true
+  }
+
+  // Retry while the user config has never been read (it may simply not exist).
+  Timer {
+    interval: 3000
+    repeat: true
+    running: !shell.userConfigLoaded
+    onTriggered: shell.reloadUserConfig()
   }
 
   PluginRegistry {
@@ -363,8 +398,7 @@ ShellRoot {
     }
 
     function reloadConfig(): string {
-      shell.userFile.reload()
-      shell.defaultsFile.reload()
+      shell.reloadUserConfig()
       return "ok"
     }
 
@@ -431,8 +465,8 @@ ShellRoot {
   }
 
   Component.onCompleted: {
-    defaultsFile.reload()
-    userFile.reload()
+    // Both FileViews load as soon as they are created; the user file is retried
+    // by the poller above until it exists.
     refreshHyprlandState()
   }
 

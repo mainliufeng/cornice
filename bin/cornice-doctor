@@ -130,6 +130,20 @@ else
   warn "$shell_instances shell instances — duplicates cannot own the notification bus name (restart: cornice restart)"
 fi
 
+section "Background"
+if pgrep -x mpvpaper >/dev/null 2>&1; then
+  ok "video wallpaper running (mpvpaper) — cornice's background layer stays idle"
+else
+  bg_enabled=$(jq -r '.background.enabled // false' "$prefix/config/default.json" 2>/dev/null || echo false)
+  user_config="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+  [[ -r $user_config ]] && bg_enabled=$(jq -r '.background.enabled // '"$bg_enabled"'' "$user_config" 2>/dev/null || echo "$bg_enabled")
+  if [[ $bg_enabled == "true" ]]; then
+    ok "background layer enabled"
+  else
+    warn "no wallpaper tool running (mpvpaper absent) and cornice's background layer is off — the desktop will show a flat colour"
+  fi
+fi
+
 section "Configuration"
 defaults="$prefix/config/default.json"
 user_config="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"

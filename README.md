@@ -156,6 +156,32 @@ property var widgetConfig  // the entry from config.json
 Plugin code runs inside the shell process, unsandboxed — same trust model as
 any dotfile. Run `cornice reload-plugins` after adding one.
 
+## Wallpaper
+
+The background layer is off by default and steps aside whenever a video
+wallpaper (mpvpaper) is running. To use static images instead:
+
+```json
+{
+  "background": {
+    "enabled": true,
+    "dir": "~/Pictures/wallpapers",
+    "mode": "fill",
+    "perWorkspace": { "1": "~/Pictures/one.png" },
+    "force": false
+  }
+}
+```
+
+```bash
+cornice background status        # what is drawn right now
+cornice background next          # cycle through `dir`
+cornice background set ~/x.png   # one-off override
+cornice background clear         # back to dir/path
+```
+
+`force: true` draws even while mpvpaper runs (they will overlap, so pick one).
+
 ## Support hooks
 
 Some read-only IPC targets exist so a problem can be diagnosed from outside the

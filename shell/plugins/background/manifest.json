@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.background",
+  "name": "Background",
+  "version": "0.3.0",
+  "author": "cornice",
+  "description": "Wallpaper layer: static image, per-workspace overrides, cycling through a directory",
+  "kinds": ["service"],
+  "entryPoints": {
+    "service": "Background.qml"
+  }
+}

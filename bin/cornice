@@ -39,6 +39,7 @@ Inspecting the running shell (IPC)
   panel <id> [json]   Toggle a panel plugin (e.g. cornice panel cn.audio)
   launcher            Toggle the application launcher
   clipboard           Toggle the clipboard history overlay
+  background [cmd]    Wallpaper layer: status | set <path> | next | prev | clear | reload
   emojis              Toggle the emoji picker
   notifications       Toggle the notification centre
   dnd [on|off]        Toggle or set do-not-disturb
@@ -195,6 +196,11 @@ case "$command" in
 
   clipboard)
     call shell toggle cn.clipboard '{}'
+    ;;
+
+  background | wallpaper)
+    (($# >= 1)) || { echo "usage: cornice background status|set <path>|next|prev|clear|reload" >&2; exit 2; }
+    call background "$@"
     ;;
 
   emojis)
