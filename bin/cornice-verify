@@ -15,18 +15,10 @@ export PATH="$bin_dir:$PATH"
 
 result=0
 
-# Tools are often run from a TTY or an agent shell that lacks the compositor
-# environment; borrow it from the user manager so hyprctl/grim work.
-if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} || -z ${WAYLAND_DISPLAY:-} ]]; then
-  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-  while IFS= read -r line; do
-    case "$line" in
-      HYPRLAND_INSTANCE_SIGNATURE=*|WAYLAND_DISPLAY=*|DBUS_SESSION_BUS_ADDRESS=*|XDG_CURRENT_DESKTOP=*)
-        export "${line?}"
-        ;;
-    esac
-  done < <(systemctl --user show-environment 2>/dev/null || true)
-fi
+# hyprctl/grim must work even when this runs from a TTY or a shell that
+# inherited a stale Hyprland instance signature.
+# shellcheck source=/dev/null
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/cornice-env.sh"
 
 pass() { printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; result=1; }
@@ -129,11 +121,13 @@ else
 fi
 
 section "screenshot"
-if command -v grim >/dev/null 2>&1; then
+if command -v hyprctl >/dev/null 2>&1 && [[ $(hyprctl locked 2>/dev/null) == "true" ]]; then
+  warn "session is locked — skipping the visual checks (unlock and re-run)"
+elif command -v grim >/dev/null 2>&1; then
   shot="${TMPDIR:-/tmp}/cornice-verify.png"
   timeout 5 cornice ipc shell summon cn.audio '{}' >/dev/null 2>&1
   sleep 0.8
-  if grim "$shot" 2>/dev/null; then
+  if timeout 8 grim "$shot" 2>/dev/null; then
     pass "screenshot: $shot"
   else
     warn "grim failed"

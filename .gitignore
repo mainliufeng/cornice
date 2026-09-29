@@ -5,3 +5,5 @@
 # editor / OS noise
 .DS_Store
 *.swp
+core.*
+*.core

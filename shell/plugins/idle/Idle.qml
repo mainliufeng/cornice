@@ -29,6 +29,10 @@ Item {
   readonly property var settings: (host && host.config && host.config.idle) ? host.config.idle : ({})
 
   property bool onAc: true
+  // Set by `cornice ipc idle inhibit <seconds>` (or indefinitely with 0): a long
+  // download, a presentation, or the test suite should not be interrupted by the
+  // lock screen. Simpler and more reliable than an IdleInhibitor surface.
+  property bool inhibited: false
   property bool dimmed: false
   property bool screenOff: false
   property string lastAction: ""
@@ -52,7 +56,7 @@ Item {
   // ---- one monitor per step -------------------------------------------------
   IdleMonitor {
     id: dimMonitor
-    enabled: root.dimSeconds > 0
+    enabled: root.dimSeconds > 0 && !root.inhibited
     timeout: root.dimSeconds
     respectInhibitors: root.respectInhibitors
     onIsIdleChanged: isIdle ? root.dim() : root.undim()
@@ -60,7 +64,7 @@ Item {
 
   IdleMonitor {
     id: screenOffMonitor
-    enabled: root.screenOffSeconds > 0
+    enabled: root.screenOffSeconds > 0 && !root.inhibited
     timeout: root.screenOffSeconds
     respectInhibitors: root.respectInhibitors
     onIsIdleChanged: isIdle ? root.displayOff() : root.displayOn()
@@ -68,7 +72,7 @@ Item {
 
   IdleMonitor {
     id: lockMonitor
-    enabled: root.lockSeconds > 0
+    enabled: root.lockSeconds > 0 && !root.inhibited
     timeout: root.lockSeconds
     respectInhibitors: root.respectInhibitors
     onIsIdleChanged: if (isIdle) root.lockNow()
@@ -148,6 +152,12 @@ Item {
     onTriggered: acProbe.running = true
   }
 
+  Timer {
+    id: inhibitTimer
+    repeat: false
+    onTriggered: root.inhibited = false
+  }
+
   function dim() {
     if (dimmed) return
     dimProcess.running = true
@@ -192,6 +202,7 @@ Item {
     function status(): string {
       return JSON.stringify({
         onAc: root.onAc,
+        inhibited: root.inhibited,
         dimmed: root.dimmed,
         screenOff: root.screenOff,
         lastAction: root.lastAction,
@@ -228,6 +239,24 @@ Item {
     function lock(): string {
       root.lockNow()
       return "ok"
+    }
+
+    function inhibit(seconds: string): string {
+      const value = Number(seconds || 0)
+      root.inhibited = true
+      if (value > 0) {
+        inhibitTimer.interval = Math.max(1, value) * 1000
+        inhibitTimer.restart()
+      } else {
+        inhibitTimer.stop()
+      }
+      return "inhibited" + (value > 0 ? " for " + value + "s" : " until released")
+    }
+
+    function release(): string {
+      root.inhibited = false
+      inhibitTimer.stop()
+      return "released"
     }
 
     function refresh(): string {

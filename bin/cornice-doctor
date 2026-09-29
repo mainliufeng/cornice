@@ -7,16 +7,10 @@ set -uo pipefail
 self=$(readlink -f "${BASH_SOURCE[0]}")
 bin_dir=$(dirname "$self")
 
-# Tools are often run from a TTY or an agent shell that lacks the compositor
-# environment; borrow it from the user manager so hyprctl works.
-if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
-  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-  while IFS= read -r line; do
-    case "$line" in
-      HYPRLAND_INSTANCE_SIGNATURE=*|WAYLAND_DISPLAY=*) export "${line?}" ;;
-    esac
-  done < <(systemctl --user show-environment 2>/dev/null || true)
-fi
+# hyprctl/grim must work even when this runs from a TTY or a shell that
+# inherited a stale Hyprland instance signature.
+# shellcheck source=/dev/null
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/cornice-env.sh"
 
 # --log: keep a copy of the report in the state dir (used by cornice-launch to
 # record the state of every session, and by `cornice health` to read it back).

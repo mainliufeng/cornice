@@ -51,6 +51,9 @@ Machine
   doctor              Check dependencies, compositor and conflicts
   health              Print the health report saved at the last shell start
   verify              Check the running shell inside your real session
+  takeover [--apply]  Take over from mako/hypridle/waybar/polkit-gnome (plan first!)
+  test [--quick|suite]  Run the test suites (takeover, headless, lock, live)
+  session-env         Print compositor env exports (for TTYs / stale shells)
   path                Print the paths cornice resolved
   help                This message
 USAGE
@@ -324,6 +327,18 @@ case "$command" in
 
   verify)
     exec "$bin_dir/cornice-verify" "$@"
+    ;;
+
+  takeover)
+    exec "$bin_dir/cornice-takeover" "$@"
+    ;;
+
+  test)
+    exec "$bin_dir/cornice-test" "$@"
+    ;;
+
+  session-env)
+    exec "$bin_dir/cornice-env.sh"
     ;;
 
   health)

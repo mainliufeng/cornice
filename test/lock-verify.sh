@@ -9,6 +9,7 @@
 #
 # Never touches the live session or the live PAM configuration.
 set -uo pipefail
+ulimit -c 0   # compositor crashes in a test must not litter the repo with cores
 
 prefix=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export CORNICE_PATH="$prefix"

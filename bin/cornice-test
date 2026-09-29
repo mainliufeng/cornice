@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# cornice test — run every suite and print one summary.
+#
+# Suites:
+#   takeover   sandbox: does `cornice takeover` find and change the right lines?
+#   headless   private compositor stack: does the shell start, load plugins, paint?
+#   lock       private stack: does the lock screen accept/reject/emergency-unlock?
+#   live       the session you are logged into: is the running shell healthy?
+#
+#   cornice test            everything that applies
+#   cornice test --quick    only the fast, sandboxed suites (takeover, live)
+#   cornice test takeover   one suite by name
+set -uo pipefail
+ulimit -c 0
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+bin_dir=$(dirname "$self")
+prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
+export CORNICE_PATH="$prefix"
+test_dir="$prefix/test"
+
+suite_args=()
+quick=0
+for arg in "$@"; do
+  case "$arg" in
+    --quick) quick=1 ;;
+    -h | --help) sed -n '2,15p' "$self" | sed 's/^# \?//'; exit 0 ;;
+    takeover | headless | lock | live) suite_args+=("$arg") ;;
+    *) echo "cornice test: unknown argument '$arg'" >&2; exit 2 ;;
+  esac
+done
+if ((quick)) && ((${#suite_args[@]} == 0)); then suite_args=(takeover live); fi
+((${#suite_args[@]})) || suite_args=(takeover headless lock live)
+
+run_suite() {
+  local name="$1" script="$2"
+  shift 2
+  printf '\n\033[1m── %s ──────────────────────────────────────────\033[0m\n' "$name"
+  if [[ ! -x $script ]]; then
+    printf '  \033[33mSKIP\033[0m  %s is not executable\n' "$script"
+    skipped+=("$name")
+    return 0
+  fi
+  if "$script" "$@"; then
+    passed+=("$name")
+  else
+    failed+=("$name")
+  fi
+}
+
+passed=() failed=() skipped=()
+
+# A long suite would otherwise trip the idle lock and lock the screen mid-run
+# (it did). Inhibit while the suites run, and always release afterwards.
+inhibited=0
+if command -v cornice >/dev/null 2>&1 || [[ -x $bin_dir/cornice ]]; then
+  if "$bin_dir/cornice" ipc idle inhibit 900 >/dev/null 2>&1; then
+    inhibited=1
+    printf 'idle inhibited for the duration of the run (released at the end)\n'
+  fi
+fi
+release_idle() {
+  ((inhibited)) || return 0
+  "$bin_dir/cornice" ipc idle release >/dev/null 2>&1 || true
+}
+trap release_idle EXIT
+
+for suite in "${suite_args[@]}"; do
+  case "$suite" in
+    takeover) run_suite "takeover (sandbox)" "$test_dir/takeover-test.sh" ;;
+    headless) run_suite "headless verify (private compositor)" "$test_dir/headless-verify.sh" ;;
+    lock) run_suite "lock verify (private compositor)" "$test_dir/lock-verify.sh" ;;
+    live)
+      printf '\n\033[1m── live session ─────────────────────────────────\033[0m\n'
+      if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} && -z ${WAYLAND_DISPLAY:-} ]]; then
+        printf '  \033[33mSKIP\033[0m  no compositor in this environment\n'
+        skipped+=("live")
+      elif "$bin_dir/cornice-verify"; then
+        passed+=("live")
+      else
+        failed+=("live")
+      fi
+      ;;
+  esac
+done
+
+printf '\n\033[1mSummary\033[0m\n'
+for s in "${passed[@]:-}"; do [[ -n $s ]] && printf '  \033[32mpass\033[0m  %s\n' "$s"; done
+for s in "${skipped[@]:-}"; do [[ -n $s ]] && printf '  \033[33mskip\033[0m  %s\n' "$s"; done
+for s in "${failed[@]:-}"; do [[ -n $s ]] && printf '  \033[31mfail\033[0m  %s\n' "$s"; done
+printf '  %d passed, %d skipped, %d failed\n' "${#passed[@]}" "${#skipped[@]}" "${#failed[@]}"
+
+((${#failed[@]} == 0))

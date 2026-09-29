@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+# cornice takeover — hand the session over from the individual daemons.
+#
+# Cornice replaces a handful of small Wayland daemons (notification daemon, idle
+# daemon, bar, polkit agent, wallpaper). They all fight over the same bus names,
+# files or layer surfaces, so "install cornice and hope" produces duplicate
+# popups, two bars, or notifications that never reach the shell.
+#
+# This command finds those competitors, shows exactly what it would do, and can
+# apply it — always commenting lines out and keeping a backup, never deleting.
+#
+#   cornice takeover                 # plan only (default)
+#   cornice takeover --apply         # do it (backs everything up first)
+#   cornice takeover --undo          # restore the newest backup
+#   cornice takeover --reload        # after --apply: hyprctl reload
+#   cornice takeover --json          # machine-readable plan
+set -uo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+bin_dir=$(dirname "$self")
+prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
+export CORNICE_PATH="$prefix"
+
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/cornice"
+takeover_dir="$state_dir/takeover"
+hypr_conf_dir="${CORNICE_TAKEOVER_CONF_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr}"
+
+mode="plan"
+as_json=0
+do_reload=0
+no_kill=0
+conf_dir_override=""
+while (($#)); do
+  arg="$1"
+  shift || true
+  case "$arg" in
+    --apply) mode="apply" ;;
+    --conf-dir)
+      conf_dir_override="${1:-}"
+      shift || true
+      ;;
+    --no-kill) no_kill=1 ;;
+    --undo) mode="undo" ;;
+    --plan | --dry-run) mode="plan" ;;
+    --reload) do_reload=1 ;;
+    --json) as_json=1 ;;
+    -h | --help)
+      sed -n '2,22p' "$self" | sed 's/^# \?//'
+      exit 0
+      ;;
+    *)
+      echo "cornice takeover: unknown option '$arg' (try --help)" >&2
+      exit 2
+      ;;
+  esac
+done
+[[ -n $conf_dir_override ]] && hypr_conf_dir="$conf_dir_override"
+
+ok() { printf '  \033[32mok\033[0m    %s\n' "$1"; }
+warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
+info() { printf '  ----  %s\n' "$1"; }
+section() { printf '\n%s\n' "$1"; }
+act() { printf '  \033[36mdo\033[0m    %s\n' "$1"; }
+keep() { printf '  \033[2mkeep\033[0m  %s\n' "$1"; }
+
+# ---------------------------------------------------------------------------
+# What competes with what. Patterns are matched against exec-once/exec lines;
+# units are systemd --user units.
+#
+# kind=replace  → cornice takes this over: stop it, comment it out
+# kind=yield    → cornice steps aside for it: report, never touch
+# kind=keep     → complementary, cornice uses it: report, never touch
+# ---------------------------------------------------------------------------
+handled_components=(
+  "notifications|replace|Notifications|mako dunst swaync fnott sway-notification-center|mako.service dunst.service swaync.service fnott.service"
+  "idle|replace|Idle handling|hypridle swayidle|hypridle.service swayidle.service"
+  "bar|replace|Bar|waybar|waybar.service"
+  "polkit|replace|Polkit agent|polkit-gnome-authentication-agent-1 lxpolkit lxqt-policykit-agent mate-polkit polkit-kde-authentication-agent-1 hyprpolkitagent xfce-polkit|hyprpolkitagent.service"
+  "wallpaper|yield|Wallpaper|hyprpaper swaybg swww-daemon wbg mpvpaper|"
+  "nightlight|keep|Night light|hyprsunset wlsunset gammastep|"
+  "clipboard|keep|Clipboard history|cliphist|"
+)
+
+component_by_pattern() {
+  local line="$1" entry patterns pattern token base candidates=()
+  # Match on the *command names* in the line, not on substrings: a path like
+  # ~/dotfiles/linux/desktop/mako/notify-log.py mentions mako but is not mako.
+  read -r -a tokens <<<"$line"
+  for token in "${tokens[@]}"; do
+    token="${token%\&}"
+    token="${token%;}"
+    token="${token//\"/}"
+    token="${token//\'/}"
+    [[ -n $token ]] || continue
+    candidates+=("${token##*/}")
+  done
+
+  for entry in "${handled_components[@]}"; do
+    IFS='|' read -r _ _ _ patterns _ <<<"$entry"
+    for pattern in $patterns; do
+      for base in "${candidates[@]}"; do
+        if [[ $base == "$pattern" ]]; then
+          printf '%s\n' "$entry"
+          return 0
+        fi
+      done
+    done
+  done
+  return 1
+}
+
+component_by_unit() {
+  local unit="$1" entry unit_list u
+  for entry in "${handled_components[@]}"; do
+    IFS='|' read -r _ _ _ _ unit_list <<<"$entry"
+    for u in $unit_list; do
+      [[ $u == "$unit" ]] && {
+        printf '%s\n' "$entry"
+        return 0
+      }
+    done
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Collect the plan
+# ---------------------------------------------------------------------------
+declare -a plan_lines=() plan_files=() plan_units=() plan_kills=() notes=()
+
+# Hyprland config files, following `source =` one level deep (their config is a
+# symlink into a dotfiles repo, which is exactly why we edit files, not names).
+config_files() {
+  local -A seen=()
+  local -a queue=()
+  local f resolved
+  for f in "$hypr_conf_dir"/*.conf; do
+    [[ -e $f ]] || continue
+    seen["$(readlink -f "$f")"]=1
+    queue+=("$f")
+    printf '%s\n' "$f"
+  done
+  local dir
+  for f in "${queue[@]}"; do
+    dir=$(dirname "$f")
+    while IFS= read -r resolved; do
+      [[ -n $resolved ]] || continue
+      resolved="${resolved/#\~/$HOME}"
+      [[ $resolved == /* ]] || resolved="$dir/$resolved"
+      for g in $resolved; do
+        [[ -f $g ]] || continue
+        local real
+        real=$(readlink -f "$g")
+        [[ -n ${seen[$real]:-} ]] && continue
+        seen["$real"]=1
+        printf '%s\n' "$g"
+      done
+    done < <(sed -n 's/^[[:space:]]*source[[:space:]]*=[[:space:]]*//p' "$f" 2>/dev/null)
+  done
+}
+
+mapfile -t conf_files < <(config_files)
+
+for conf in "${conf_files[@]}"; do
+  lineno=0
+  while IFS= read -r line; do
+    lineno=$((lineno + 1))
+    # Only look at active exec lines; commented ones are already handed over.
+    [[ $line =~ ^[[:space:]]*(exec-once|exec)[[:space:]]*= ]] || continue
+    if entry=$(component_by_pattern "$line"); then
+      IFS='|' read -r slug kind label _patterns _units <<<"$entry"
+      case "$kind" in
+        replace)
+          plan_lines+=("$conf|$lineno|$slug|$label|$line")
+          ;;
+        yield | keep)
+          notes+=("$kind|$slug|$label|$line")
+          ;;
+      esac
+    fi
+  done < "$conf"
+done
+
+# systemd user units (mako is often *not* an exec-once line but an enabled unit).
+if command -v systemctl >/dev/null 2>&1; then
+  for unit in $(systemctl --user list-units --all --plain --no-legend '*.service' 2>/dev/null | awk '{print $1}'); do
+    if entry=$(component_by_unit "$unit"); then
+      IFS='|' read -r slug kind label _patterns _units <<<"$entry"
+      [[ $kind == replace ]] || continue
+      enabled=$(systemctl --user is-enabled "$unit" 2>/dev/null || true)
+      active=$(systemctl --user is-active "$unit" 2>/dev/null || true)
+      [[ $enabled == enabled || $active == active || $active == activating ]] || continue
+      plan_units+=("$unit|$slug|$enabled|$active")
+    fi
+  done
+fi
+
+# Running processes for the components we take over (they survive a config edit
+# until the next session, so --apply stops them).
+for entry in "${handled_components[@]}"; do
+  IFS='|' read -r slug kind label patterns _units <<<"$entry"
+  [[ $kind == replace ]] || continue
+  for pattern in $patterns; do
+      if ((no_kill == 0)) && pgrep -x "$pattern" >/dev/null 2>&1; then plan_kills+=("$pattern|$slug"); fi
+  done
+done
+
+# Is the cornice snippet sourced? Without it there are no keybinds for the shell.
+snippet_sourced=0
+snippet_path="$prefix/config/snippet.hyprland.conf"
+for conf in "${conf_files[@]}"; do
+  # Either the snippet is sourced, or the config wires cornice itself
+  # (e.g. an `$cornice = ...` variable used from keybinds).
+  if grep -qE "^[[:space:]]*source[[:space:]]*=.*(cornice)" "$conf" 2>/dev/null \
+    || grep -qE '(^|[^a-z])cornice([^a-z]|$)' "$conf" 2>/dev/null; then
+    snippet_sourced=1
+    break
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# --undo
+# ---------------------------------------------------------------------------
+if [[ $mode == undo ]]; then
+  latest=$(find "$takeover_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)
+  if [[ -z $latest ]]; then
+    echo "cornice takeover: nothing to undo (no backup in $takeover_dir)" >&2
+    exit 1
+  fi
+  echo "Restoring from $latest"
+  if [[ -f $latest/manifest.json ]] && command -v jq >/dev/null 2>&1; then
+    while IFS=$'\t' read -r backup original; do
+      [[ -f $backup ]] || continue
+      cp -f "$backup" "$original"
+      ok "restored $original"
+    done < <(jq -r '.files[] | [.backup, .path] | @tsv' "$latest/manifest.json")
+    while IFS=$'\t' read -r unit was_enabled; do
+      [[ -n $unit ]] || continue
+      if [[ $was_enabled == enabled ]]; then
+        systemctl --user enable --now "$unit" >/dev/null 2>&1 && ok "re-enabled $unit"
+      else
+        systemctl --user start "$unit" >/dev/null 2>&1 && ok "started $unit"
+      fi
+    done < <(jq -r '.units[] | [.unit, .was_enabled] | @tsv' "$latest/manifest.json" 2>/dev/null)
+  else
+    echo "cornice takeover: $latest/manifest.json missing or jq unavailable" >&2
+    exit 1
+  fi
+  echo
+  echo "hyprctl reload   # or log out and back in, to restart anything restored"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Report
+# ---------------------------------------------------------------------------
+if ((as_json)); then
+  files_json=$(printf '%s\n' "${plan_lines[@]:-}" | jq -R -s 'split("\n") | map(select(length>0) | split("|") | {file:.[0], line:(.[1]|tonumber), component:.[2], label:.[3], text:.[4]})')
+  units_json=$(printf '%s\n' "${plan_units[@]:-}" | jq -R -s 'split("\n") | map(select(length>0) | split("|") | {unit:.[0], component:.[1], enabled:.[2], active:.[3]})')
+  jq -n --argjson files "$files_json" --argjson units "$units_json" \
+    --argjson snippet "$snippet_sourced" --arg mode "$mode" \
+    '{mode:$mode, snippetSourced:($snippet==1), execLines:$files, units:$units}'
+  exit 0
+fi
+
+echo "cornice takeover — hand the session over to the shell"
+echo "  config:  ${conf_files[*]:-<none found>}"
+echo "  backup:  $takeover_dir"
+
+section "Components cornice takes over"
+if ((${#plan_lines[@]} == 0 && ${#plan_units[@]} == 0)); then
+  ok "nothing to take over — no competing exec-once lines or units found"
+else
+  for row in "${plan_lines[@]:-}"; do
+    [[ -n $row ]] || continue
+    IFS='|' read -r conf lineno slug label line <<<"$row"
+    info "$label ← $conf:$lineno"
+    printf '        %s\n' "$(sed 's/^[[:space:]]*//' <<<"$line")"
+  done
+  for row in "${plan_units[@]:-}"; do
+    [[ -n $row ]] || continue
+    IFS='|' read -r unit slug enabled active <<<"$row"
+    info "$(component_by_unit "$unit" | cut -d'|' -f3) ← unit $unit (enabled=$enabled active=$active)"
+  done
+fi
+
+if ((${#plan_kills[@]})); then
+  section "Running now (will be stopped by --apply)"
+  for row in "${plan_kills[@]}"; do IFS='|' read -r pattern slug <<<"$row"; info "$pattern"; done
+fi
+
+if ((${#notes[@]})); then
+  section "Left alone"
+  for row in "${notes[@]}"; do
+    IFS='|' read -r kind slug label line <<<"$row"
+    if [[ $kind == yield ]]; then
+      keep "$label — cornice yields to it (see background.force in config.json)"
+    else
+      keep "$label — cornice uses it"
+    fi
+  done
+fi
+
+section "Keybinds"
+if ((snippet_sourced)); then
+  ok "the cornice snippet is sourced"
+else
+  warn "no 'source' line pointing at cornice — add it to your Hyprland config:"
+  printf '        source = %s\n' "$snippet_path"
+fi
+
+if [[ $mode != apply ]]; then
+  section "Plan only"
+  echo "  Re-run with --apply to make these changes (a backup is written to"
+  echo "  $takeover_dir/<timestamp>/ first), then: hyprctl reload"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# --apply
+# ---------------------------------------------------------------------------
+if ((${#plan_lines[@]} == 0 && ${#plan_units[@]} == 0 && ${#plan_kills[@]} == 0)); then
+  echo
+  echo "cornice takeover: nothing to change — the session is already handed over"
+  exit 0
+fi
+
+stamp=$(date +%Y%m%d-%H%M%S)
+backup_root="$takeover_dir/$stamp"
+mkdir -p "$backup_root/files"
+manifest="$backup_root/manifest.json"
+printf '{\n  "timestamp": "%s",\n  "files": [\n' "$stamp" >"$manifest"
+first=1
+units_manifest=""
+
+for conf in "${conf_files[@]}"; do
+  # Which lines of this file are ours to comment out?
+  mapfile -t targets < <(printf '%s\n' "${plan_lines[@]:-}" | awk -F'|' -v f="$conf" '$1==f {print $2"|"$4}')
+  ((${#targets[@]})) || continue
+
+  backup="$backup_root/files/$(basename "$conf")"
+  cp -f "$conf" "$backup"
+  if ((first)); then first=0; else printf ',\n' >>"$manifest"; fi
+  jq -cn --arg path "$conf" --arg backup "$backup" '{path:$path, backup:$backup}' >>"$manifest"
+
+  tmp=$(mktemp)
+  awk -v targets="$(printf '%s\n' "${targets[@]}")" '
+    BEGIN { n = split(targets, rows, "\n"); for (i = 1; i <= n; i++) { split(rows[i], f, "|"); want[f[1]] = f[2] } }
+    {
+      lineno++
+      if (lineno in want) {
+        printf "# cornice takeover: replaced by cornice — %s\n", want[lineno]
+        printf "# %s\n", $0
+      } else {
+        print
+      }
+    }
+  ' "$conf" >"$tmp"
+  cat "$tmp" >"$conf"
+  rm -f "$tmp"
+  act "commented $conf (backup: ${backup#"$backup_root"/})"
+done
+
+printf '\n  ],\n  "units": [\n' >>"$manifest"
+first=1
+for row in "${plan_units[@]:-}"; do
+  [[ -n $row ]] || continue
+  IFS='|' read -r unit slug enabled active <<<"$row"
+  if ((first)); then first=0; else printf ',\n' >>"$manifest"; fi
+  jq -cn --arg unit "$unit" --arg enabled "$enabled" --arg active "$active" \
+    '{unit:$unit, was_enabled:$enabled, was_active:$active}' >>"$manifest"
+  systemctl --user disable --now "$unit" >/dev/null 2>&1 && act "disabled unit $unit" || warn "could not disable $unit"
+done
+printf '\n  ]\n}\n' >>"$manifest"
+
+for row in "${plan_kills[@]:-}"; do
+  [[ -n $row ]] || continue
+  IFS='|' read -r pattern slug <<<"$row"
+  if pkill -x "$pattern" 2>/dev/null; then act "stopped running $pattern"; fi
+done
+
+section "Done"
+ok "backup: $backup_root (undo: cornice takeover --undo)"
+if ((do_reload)); then
+  if command -v hyprctl >/dev/null 2>&1; then
+    hyprctl reload >/dev/null 2>&1 && ok "hyprctl reload" || warn "hyprctl reload failed"
+  else
+    warn "hyprctl not found; reload your compositor manually"
+  fi
+else
+  echo "  next:  hyprctl reload   (or: cornice takeover --reload)"
+fi
+echo "  the shell keeps running; only the components above were changed"
