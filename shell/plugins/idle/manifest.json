@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.idle",
+  "name": "Idle",
+  "version": "0.3.0",
+  "author": "cornice",
+  "description": "Idle handling: dim, display off and lock, AC/battery aware, honouring idle inhibitors",
+  "kinds": ["service"],
+  "entryPoints": {
+    "service": "Idle.qml"
+  }
+}

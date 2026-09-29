@@ -455,6 +455,17 @@ Item {
 
   function lock(reason) {
     if (locked) return "already-locked"
+
+    // The compositor may already hold a lock we do not own: a previous lock
+    // client died, or Hyprland is showing its crashed-lockscreen failsafe.
+    // Asking for a second lock in that state makes Quickshell send a request the
+    // compositor rejects with a fatal protocol error, which killed the whole
+    // shell (and left the session locked). Refuse instead.
+    if (compositorLocked) {
+      console.warn("cornice: refusing to lock — the compositor already reports a locked session")
+      message = "The compositor already has a lock this shell does not own"
+      return "compositor-locked"
+    }
     if (!pamChecked) return "unavailable"        // still probing; caller may retry
     if (!pamAvailable) {
       message = "Refusing to lock: PAM service '" + pamService + "' is not available"

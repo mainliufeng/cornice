@@ -65,5 +65,12 @@
     "mode": "fill",
     "perWorkspace": {},
     "force": false
+  },
+  "idle": {
+    "dimAc": 60,
+    "dimBattery": 0,
+    "screenOffAc": 120,
+    "screenOffBattery": 300,
+    "lock": 300
   }
 }

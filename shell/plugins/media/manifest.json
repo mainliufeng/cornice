@@ -2,14 +2,15 @@
   "schemaVersion": 1,
   "id": "cn.media",
   "name": "Media",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "cornice",
-  "description": "Now-playing from MPRIS: click to play/pause, scroll to skip",
-  "kinds": [
-    "bar-widget"
-  ],
+  "description": "Now-playing from MPRIS: click opens a control panel, middle click plays/pauses, scroll skips",
+  "kinds": ["service", "bar-widget", "panel"],
+  "keepLoaded": true,
   "entryPoints": {
-    "barWidget": "Widget.qml"
+    "service": "Service.qml",
+    "barWidget": "Widget.qml",
+    "panel": "Panel.qml"
   },
   "barWidget": {
     "displayName": "Media",
@@ -21,16 +22,8 @@
       "format": "{icon} {title}"
     },
     "schema": [
-      {
-        "key": "maxWidth",
-        "type": "number",
-        "label": "Maximum width in pixels"
-      },
-      {
-        "key": "format",
-        "type": "string",
-        "label": "Format: {icon} {title} {artist}"
-      }
+      { "key": "maxWidth", "type": "number", "label": "Maximum width in pixels" },
+      { "key": "format", "type": "string", "label": "Format: {icon} {title} {artist}" }
     ]
   }
 }
