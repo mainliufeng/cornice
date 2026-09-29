@@ -21,6 +21,7 @@ PanelFrame {
 
   onOpened: if (service && service.markRead) service.markRead()
 
+
   Column {
     anchors.fill: parent
     spacing: Style.space(1)
@@ -132,7 +133,18 @@ PanelFrame {
           anchors.leftMargin: Style.space(0.8)
           anchors.rightMargin: Style.space(0.8)
           entry: modelData
+          // The live object is what carries actions and inline-reply; the history
+          // entry only holds the text we render.
+          notification: root.service ? root.service.liveNotification(modelData.id) : null
+          // The chip only exists while the panel is open, and closing the panel
+          // drops any half-typed reply instead of leaving it holding the keyboard.
+          allowReply: root.isOpen
           onDismissed: if (root.service) root.service.removeFromHistory(modelData.id)
+
+          Connections {
+            target: root
+            function onDismissed() { card.replying = false }
+          }
         }
       }
     }

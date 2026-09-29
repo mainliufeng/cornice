@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.keylayout",
+  "name": "Keyboard layout",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Current Hyprland keyboard layout; click to cycle to the next one",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Keyboard layout",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "format": "{layout}",
+      "hideWhenSingle": false
+    },
+    "schema": [
+      {
+        "key": "format",
+        "type": "string",
+        "label": "Format: {layout} = us, {name} = English (US)"
+      },
+      {
+        "key": "hideWhenSingle",
+        "type": "boolean",
+        "label": "Hide when only one layout is configured (single-layout machines)"
+      }
+    ]
+  }
+}

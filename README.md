@@ -27,9 +27,21 @@ compositor stack in CI-ish runs):
   `>` run-command mode.
 - **Clipboard / emoji** — cliphist-backed history (type to filter, Enter copies,
   images previewed) and a searchable emoji picker.
+- **Weather** — open-meteo (no API key): current conditions, next hours and next
+  days in the bar and a panel. Located by `weather.city`, explicit coordinates,
+  the system timezone or the IP address, in that order (the timezone is tried
+  before the IP lookup because a VPN makes the IP report its exit node).
+- **Keyboard layout** — the active Hyprland layout, fed by the compositor's event
+  socket, click to cycle; hidden by default when only one layout is configured.
+- **Inline reply** — notifications that carry an `inline-reply` action get a reply
+  field in the notification centre (never in the popup: that would have to steal
+  the keyboard).
 - **Lock screen** — PAM-backed, `loginctl lock-session` aware, refuses to lock
-  when PAM is unusable, releases an abandoned lock, and documents the TTY
-  recovery path when a lock client dies.
+  when PAM is unusable, releases an abandoned lock, documents the TTY recovery
+  path when a lock client dies, and releases the session lock on graceful
+  shutdown so `cornice stop`/`restart` never strand the session. Its background
+  is the current wallpaper by default (no screenshot, no grim), with
+  `lock.background: "screenshot"` to go back to the old behaviour.
 - **Polkit agent** — in-shell authentication dialog (so `polkit-gnome` can go).
 - **Wallpaper** — static layer with per-workspace overrides that yields to
   mpvpaper/hyprpaper/swaybg/swww/wbg unless `background.force` is set.
@@ -115,6 +127,13 @@ cornice launch                       # foreground, with the watchdog
 cornice ping | version | plugins | widgets | targets | socket | path
 cornice config | theme [list|toggle|<name>] | reload | reload-plugins
 cornice ipc <target> <method> [args] # raw IPC, e.g. cornice ipc idle status
+  #   shell.windows            every panel/popup window and where it is
+  #   shell.debug              counts, config path, service registry
+  #   weather.{status,refresh,locate,place}
+  #   keylayout.{status,next,refresh}
+  #   idle.{status,dim,undim,displayOff,displayOn,lock,inhibit <s>,release}
+  #   notifications.{status,inspect,reply <id> <text>,setDnd,markRead,dismissAll}
+  #   lock.status / background.status / media.status
 
 # things you bind to keys
 cornice launcher | clipboard | emojis | notifications | dnd [on|off]
@@ -161,6 +180,15 @@ The keys that are not just bar layout:
 | `background.perWorkspace` | `{}` | `{"2": "/path/to.png"}` overrides |
 | `background.force` | `false` | take over even if mpvpaper/hyprpaper/swaybg/swww runs |
 | `notifications.takeover` | `true` | reclaim `org.freedesktop.Notifications` if it is free |
+| `notifications.inlineReply` | `true` | advertise inline reply; clients then get a reply field in the centre |
+| `weather.city` | `""` | city name to geocode (beats everything else) |
+| `weather.latitude` / `weather.longitude` | `null` | explicit coordinates, used as-is |
+| `weather.autoLocate` | `true` | locate via the timezone, then the IP address |
+| `weather.useTimezone` | `true` | prefer the system timezone's city over the IP lookup (VPN-safe) |
+| `weather.unit` | `"metric"` | `metric` or `imperial` |
+| `weather.intervalMinutes` | `15` | refresh cadence (minimum 5) |
+| `lock.background` | `"wallpaper"` | `wallpaper`, `screenshot` or `none` |
+| `lock.blur` / `lock.scrim` | `1.0` / `1.0` | lock background blur and darkening |
 | `idle.dimAc` / `idle.dimBattery` | `60` / `0` | seconds before the backlight dims (0 = never) |
 | `idle.screenOffAc` / `idle.screenOffBattery` | `120` / `300` | seconds before the display turns off |
 | `idle.lock` | `300` | seconds before the session locks |

@@ -32,6 +32,9 @@
           "id": "cn.indicators"
         },
         {
+          "id": "cn.weather"
+        },
+        {
           "id": "cn.tray"
         },
         {
@@ -44,6 +47,9 @@
           "id": "cn.audio"
         },
         {
+          "id": "cn.keylayout"
+        },
+        {
           "id": "cn.power"
         }
       ]
@@ -52,7 +58,8 @@
   "notifications": {
     "timeout": 6000,
     "maxPopups": 4,
-    "historyLimit": 50
+    "historyLimit": 50,
+    "inlineReply": true
   },
   "launcher": {
     "terminal": "kitty",
@@ -72,5 +79,19 @@
     "screenOffAc": 120,
     "screenOffBattery": 300,
     "lock": 300
+  },
+  "lock": {
+    "background": "wallpaper",
+    "blur": 1.0,
+    "scrim": 1.0
+  },
+  "weather": {
+    "autoLocate": true,
+    "city": "",
+    "place": "",
+    "latitude": null,
+    "longitude": null,
+    "unit": "metric",
+    "intervalMinutes": 15
   }
 }

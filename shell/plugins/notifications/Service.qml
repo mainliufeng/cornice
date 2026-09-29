@@ -53,6 +53,11 @@ Item {
     sourceComponent: Component {
       NotificationServer {
         keepOnReload: true
+        // Opt-in on the server side: with this false (the default) Quickshell
+        // clears hasInlineReply on every notification, so a client's
+        // inline-reply action never produces a reply field — the action arrives,
+        // and nothing can be done with it.
+        inlineReplySupported: Util.option(widgetConfigFromHost(), "inlineReply", true)
         onNotification: notification => root.receive(notification)
       }
     }
@@ -286,6 +291,9 @@ Item {
           NotificationCard {
             id: card
             entry: modelData.entry
+            // Action buttons work in popups too; inline reply stays out because a
+            // popup must never take the keyboard.
+            notification: root.liveNotification(modelData.id)
             width: parent.width
             onDismissed: root.dropPopup(modelData.key, true)
           }
@@ -303,6 +311,37 @@ Item {
 
     function dnd(): string {
       return root.dnd ? "true" : "false"
+    }
+
+    function inspect(): string {
+      const tracked = root.server ? root.server.trackedNotifications : null
+      const list = tracked && tracked.values ? tracked.values : (tracked || [])
+      return JSON.stringify({
+        inlineReplySupported: root.server ? root.server.inlineReplySupported : null,
+        notifications: list.map(item => ({
+          id: item.id,
+          app: item.appName,
+          hasInlineReply: item.hasInlineReply,
+          placeholder: item.inlineReplyPlaceholder,
+          actions: (item.actions || []).map(action => ({
+            identifier: action.identifier,
+            text: action.text
+          })),
+          hints: item.hints ? Object.keys(item.hints) : []
+        }))
+      })
+    }
+
+    function reply(id: string, message: string): string {
+      const live = root.liveNotification(Number(id))
+      if (!live) return "no-such-notification"
+      if (live.hasInlineReply !== true) return "no-inline-reply"
+      try {
+        live.sendInlineReply(String(message))
+      } catch (error) {
+        return "failed: " + error
+      }
+      return "ok"
     }
 
     function setDnd(value: string): string {

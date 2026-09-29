@@ -69,18 +69,34 @@ PanelFrame {
 
         Rectangle {
           id: muteButton
-          width: muteText.implicitWidth + Style.space(1.4)
+          width: muteRow.implicitWidth + Style.space(1.4)
           height: Style.widgetHeight
           radius: Style.radius
           color: (root.sink && root.sink.audio && root.sink.audio.muted) ? Color.workspaceActive : Color.hover
 
-          Text {
-            id: muteText
+          // Glyph and word are separate Texts: inside one Text the Nerd Font
+          // lets the icon overrun the "m" of "muted".
+          Row {
+            id: muteRow
             anchors.centerIn: parent
-            text: (root.sink && root.sink.audio && root.sink.audio.muted) ? "\uf026 muted" : "\uf028"
-            color: (root.sink && root.sink.audio && root.sink.audio.muted) ? Color.workspaceActiveText : Color.foreground
-            font.family: Style.iconFamily
-            font.pixelSize: Style.smallFontSize
+            spacing: Style.space(0.8)
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: (root.sink && root.sink.audio && root.sink.audio.muted) ? "\u{F026}" : "\u{F028}"
+              color: (root.sink && root.sink.audio && root.sink.audio.muted) ? Color.workspaceActiveText : Color.foreground
+              font.family: Style.iconFamily
+              font.pixelSize: Style.smallFontSize
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              visible: !!(root.sink && root.sink.audio && root.sink.audio.muted)
+              text: "muted"
+              color: Color.workspaceActiveText
+              font.family: Style.fontFamily
+              font.pixelSize: Style.smallFontSize
+            }
           }
 
           MouseArea {

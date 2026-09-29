@@ -40,6 +40,38 @@ Item {
   readonly property string user: Quickshell.env("USER") || ""
   readonly property string shotPath: runtimeDir + "/cornice-lock.png"
 
+  // Background of the lock surface. "wallpaper" reuses whatever the background
+  // plugin is showing (a still image, so it costs one decode instead of a grim
+  // round trip), "screenshot" blurs the desktop as it was, "none" leaves the
+  // theme colour. The screenshot stays the fallback whenever there is no
+  // wallpaper to show.
+  readonly property string backgroundMode: Util.option(lockConfig, "background", "wallpaper")
+  readonly property real blurAmount: Util.option(lockConfig, "blur", 1.0)
+  readonly property real scrimAmount: Util.option(lockConfig, "scrim", 1.0)
+
+  readonly property var backgroundService: host ? host.services["cn.background"] : null
+
+  readonly property string wallpaperPath: {
+    const service = backgroundService
+    if (!service) return ""
+    if (backgroundMode !== "wallpaper") return ""
+    // Another wallpaper tool (mpvpaper, hyprpaper) may own the screen: the
+    // background service is inactive then and knows nothing worth showing.
+    if (service.active !== true) return ""
+    if (typeof service.pathFor !== "function" || typeof service.workspaceFor !== "function") return ""
+    const path = String(service.pathFor(service.workspaceFor("")) || "")
+    return path
+  }
+
+  readonly property bool wantedScreenshot: backgroundMode === "screenshot"
+    || (backgroundMode === "wallpaper" && wallpaperPath === "")
+
+  readonly property string backgroundSource: {
+    if (wallpaperPath !== "") return "file://" + wallpaperPath
+    if (wantedScreenshot && shotRevision > 0) return "file://" + shotPath + "?v=" + shotRevision
+    return ""
+  }
+
   property bool locked: false
   property bool secure: false
   property bool pamAvailable: false
@@ -131,12 +163,13 @@ Item {
 
           anchors.fill: parent
 
-        // Screenshot of the desktop as it was when the lock engaged, blurred the
-        // way hyprlock's `path = screenshot` + blur_passes did.
+        // The lock background: the current wallpaper, or a blurred screenshot of
+        // the desktop as it was when the lock engaged (hyprlock's
+        // `path = screenshot` + blur_passes behaviour), or nothing at all.
         Image {
           id: shot
           anchors.fill: parent
-          source: root.shotRevision > 0 ? "file://" + root.shotPath + "?v=" + root.shotRevision : ""
+          source: root.backgroundSource
           fillMode: Image.PreserveAspectCrop
           visible: false
           asynchronous: true
@@ -144,22 +177,31 @@ Item {
 
         MultiEffect {
           anchors.fill: parent
-          visible: root.shotRevision > 0
+          visible: root.backgroundSource !== "" && root.blurAmount > 0
           source: shot
           blurEnabled: true
-          blur: 1.0
+          blur: root.blurAmount
           blurMax: 48
+        }
+
+        // Blur disabled: show the image unfiltered instead of a hole.
+        Image {
+          anchors.fill: parent
+          visible: root.backgroundSource !== "" && root.blurAmount <= 0
+          source: root.backgroundSource
+          fillMode: Image.PreserveAspectCrop
+          asynchronous: true
         }
 
         // A gradient scrim instead of a flat wash: the desktop stays readable
         // behind the lock, but the type keeps its contrast.
         Rectangle {
           anchors.fill: parent
-          visible: root.shotRevision > 0
+          visible: root.backgroundSource !== ""
           gradient: Gradient {
-            GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.62) }
-            GradientStop { position: 0.45; color: Qt.rgba(0, 0, 0, 0.30) }
-            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.66) }
+            GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.62 * root.scrimAmount) }
+            GradientStop { position: 0.45; color: Qt.rgba(0, 0, 0, 0.30 * root.scrimAmount) }
+            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.66 * root.scrimAmount) }
           }
         }
 
@@ -453,6 +495,20 @@ Item {
     }
   }
 
+  // A session lock that outlives its client leaves Hyprland showing its
+  // "lockscreen app died" failsafe, and only a compositor restart clears that.
+  // Releasing on destruction means a graceful exit (cornice stop/restart,
+  // SIGTERM) never strands the session. A SIGKILL still can — nothing can run
+  // then — which is why `cornice stop` refuses while locked.
+  Component.onDestruction: {
+    if (!locked) return
+    try {
+      locked = false
+    } catch (error) {
+      console.warn("cornice: could not release the lock while shutting down: " + error)
+    }
+  }
+
   function lock(reason) {
     if (locked) return "already-locked"
 
@@ -476,7 +532,9 @@ Item {
     password = ""
     state = "locked"
     message = ""
-    captureScreenshot()
+    // Only screenshot when the wallpaper is not the background: grim costs a
+    // frame capture and a PNG write on every lock.
+    if (wantedScreenshot) captureScreenshot()
     locked = true
     journal = journal + "|lock:" + (reason === undefined ? "manual" : reason)
     return "ok"
@@ -556,6 +614,9 @@ Item {
 
     function status(): string {
       return JSON.stringify({
+        background: root.backgroundMode,
+        backgroundSource: root.backgroundSource,
+        wallpaper: root.wallpaperPath,
         locked: root.locked,
         secure: root.secure,
         state: root.state,

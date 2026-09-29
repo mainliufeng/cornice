@@ -49,12 +49,12 @@ pass "ping: $(timeout 5 cornice ping)"
 pass "socket: $(cornice socket)"
 
 plugin_count=$(timeout 5 cornice plugins | jq 'length' 2>/dev/null || echo 0)
-if ((plugin_count >= 15)); then pass "plugins: $plugin_count"; else fail "only $plugin_count plugins discovered"; fi
+if ((plugin_count >= 21)); then pass "plugins: $plugin_count"; else fail "only $plugin_count plugins discovered"; fi
 
 bar=$(timeout 5 cornice widgets | jq -r '[.[].id] | length' 2>/dev/null || echo 0)
 if ((bar > 0)); then pass "bar widgets available: $bar"; else fail "no bar widgets registered"; fi
 
-for target in shell notifications osd; do
+for target in shell notifications osd idle lock weather keylayout media background; do
   if timeout 5 cornice targets | jq -e --arg t "$target" 'index($t)' >/dev/null 2>&1; then
     pass "ipc target: $target"
   else
@@ -80,7 +80,7 @@ if command -v hyprctl >/dev/null 2>&1; then
 fi
 
 section "panels"
-for id in cn.clock cn.audio cn.network cn.bluetooth cn.power cn.notifications cn.launcher; do
+for id in cn.clock cn.audio cn.network cn.bluetooth cn.power cn.notifications cn.launcher cn.weather cn.media; do
   timeout 5 cornice ipc shell summon "$id" '{}' >/dev/null 2>&1
   sleep 0.3
   state=$(timeout 5 cornice ipc shell debug 2>/dev/null | jq -r --arg id "$id" '.openStates[] | select(startswith($id + "=")) | split("=")[1]' 2>/dev/null)
@@ -118,6 +118,41 @@ if ipc osd show volume 0.5 "" >/dev/null 2>&1; then
   ipc osd hide >/dev/null 2>&1
 else
   fail "OSD does not answer on its own target"
+fi
+
+section "newer plugins"
+weather=$(timeout 5 cornice ipc weather status 2>/dev/null || echo "")
+if [[ -n $weather ]]; then
+  state=$(jq -r '.status // "?"' <<<"$weather" 2>/dev/null)
+  place=$(jq -r '.place // ""' <<<"$weather" 2>/dev/null)
+  case "$state" in
+    ready) pass "weather: $place $(jq -r '.temperature|round' <<<"$weather" 2>/dev/null)°" ;;
+    locating | fetching | bootstrapping) warn "weather still $state (network or first run)" ;;
+    unconfigured) warn "weather is not configured (set weather.city)" ;;
+    *) warn "weather: $state $(jq -r '.error // ""' <<<"$weather" 2>/dev/null)" ;;
+  esac
+else
+  fail "weather does not answer on its own target"
+fi
+
+layout=$(timeout 5 cornice ipc keylayout status 2>/dev/null || echo "")
+if [[ -n $layout ]]; then
+  pass "keyboard layout: $(jq -r '.layout // "?"' <<<"$layout") ($(jq -r '.name // ""' <<<"$layout"))"
+else
+  fail "keylayout does not answer on its own target"
+fi
+
+lock=$(timeout 5 cornice ipc lock status 2>/dev/null || echo "")
+if [[ -n $lock ]]; then
+  mode=$(jq -r '.background // "?"' <<<"$lock" 2>/dev/null)
+  source_=$(jq -r '.backgroundSource // ""' <<<"$lock" 2>/dev/null)
+  if [[ $mode == "none" ]]; then
+    pass "lock background: none (theme colour)"
+  elif [[ -n $source_ ]]; then
+    pass "lock background: $mode → ${source_##*/}"
+  else
+    warn "lock background: $mode but nothing resolved yet"
+  fi
 fi
 
 section "screenshot"

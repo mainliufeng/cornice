@@ -18,22 +18,22 @@ qs="$bin_dir/cornice-qs"
 # compositor while a watchdog relaunches can otherwise start two shells, and the
 # second one loses the notification bus name.
 # A launcher can be started from anywhere — a TTY, an agent shell, a cron job —
-# and then it does not inherit the compositor environment. A shell started
-# without WAYLAND_DISPLAY/HYPRLAND_INSTANCE_SIGNATURE cannot draw anything and
-# just crash-loops, so pull the session values from the user manager first.
-if [[ -z ${WAYLAND_DISPLAY:-} || -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
-  # systemctl --user itself needs a runtime dir and a bus address, so establish
-  # those first — otherwise the fallback silently does nothing and the shell
-  # comes up with no display at all (Qt then tries xcb and dies).
-  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
-  while IFS= read -r line; do
-    case "$line" in
-      WAYLAND_DISPLAY=*|HYPRLAND_INSTANCE_SIGNATURE=*|XDG_RUNTIME_DIR=*|DBUS_SESSION_BUS_ADDRESS=*|XDG_CURRENT_DESKTOP=*)
-        export "${line?}"
-        ;;
-    esac
-  done < <(systemctl --user show-environment 2>/dev/null || true)
+# and then it either lacks the compositor environment or, worse, carries a *stale*
+# HYPRLAND_INSTANCE_SIGNATURE from a shell that survived a compositor restart.
+# Checking existence is not enough: with a stale signature the shell cannot talk
+# to Hyprland, every hyprctl call fails, and the watchdog then decides the
+# compositor is gone and exits without relaunching anything (which is how a
+# restart used to leave the session with no bar at all).
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+# shellcheck source=/dev/null
+source "$bin_dir/cornice-env.sh"
+
+if ! command -v hyprctl >/dev/null 2>&1 || ! timeout 5 hyprctl version >/dev/null 2>&1; then
+  echo "cornice: cannot reach the compositor (HYPRLAND_INSTANCE_SIGNATURE=${HYPRLAND_INSTANCE_SIGNATURE:-unset})" >&2
+  echo "  a shell started now would come up with no display; start this from the session" >&2
+  echo "  or run: eval \"\$(cornice session-env)\"" >&2
+  exit 1
 fi
 
 lock_file="${XDG_RUNTIME_DIR:-/tmp}/cornice-launch.lock"
@@ -132,12 +132,21 @@ trap stop HUP INT TERM
 attempts=0
 window_started=$SECONDS
 
+# `cornice stop` writes this before killing the child: without it the watchdog
+# cannot tell "the user stopped the shell" from "the shell exited cleanly", and
+# a restart would either never happen or fight the stop.
+stop_marker="${XDG_RUNTIME_DIR:-/tmp}/cornice-stop"
+
 while true; do
   ((terminating)) && exit 0
   run_shell
   status=$?
   ((terminating)) && exit 0
-  ((status == 0)) && exit 0
+
+  if [[ -f $stop_marker ]]; then
+    rm -f "$stop_marker"
+    exit 0
+  fi
 
   compositor_alive || exit 0
 

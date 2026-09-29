@@ -302,11 +302,19 @@ case "$command" in
       echo "  unlock first, or pass --force if you really mean it." >&2
       exit 1
     fi
+    # Tell the watchdog this stop is deliberate (it relaunches after any other
+    # exit, including a clean one).
+    stop_marker="${XDG_RUNTIME_DIR:-/tmp}/cornice-stop"
+    mkdir -p "$(dirname "$stop_marker")" 2>/dev/null || true
+    : >"$stop_marker"
     stopped=0
     while "$qs" kill -p "$config_dir" --any-display >/dev/null 2>&1; do
       stopped=1
     done
-    if ((stopped)); then echo "cornice: shell stopped"; else echo "cornice: no shell was running"; fi
+    if ((stopped)); then echo "cornice: shell stopped"; else
+      echo "cornice: no shell was running"
+      rm -f "$stop_marker"
+    fi
     ;;
 
   status)

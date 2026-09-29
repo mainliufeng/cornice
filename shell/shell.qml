@@ -381,6 +381,33 @@ ShellRoot {
       })
     }
 
+    // Where the visible plugin windows actually are: panel placement has bitten
+    // this shell more than once (a panel sized for the wrong edge, a popup
+    // overlapping the bar), and clicking one needs real numbers.
+    function windows(): string {
+      const out = []
+      const map = shell.instanceMap || ({})
+      for (const id of Object.keys(map)) {
+        const instance = map[id]
+        const item = instance ? instance.item : null
+        if (!item || !item.window) continue
+        const window = item.window
+        out.push({
+          id: id,
+          entry: instance.entry,
+          loaded: instance.loaded === true,
+          open: item.isOpen === true,
+          visible: window.visible === true,
+          screen: window.screen ? window.screen.name : "",
+          x: Math.round(window.x),
+          y: Math.round(window.y),
+          width: Math.round(window.width),
+          height: Math.round(window.height)
+        })
+      }
+      return JSON.stringify(out)
+    }
+
     function targets(): string {
       return JSON.stringify(IpcRegistry.targets())
     }

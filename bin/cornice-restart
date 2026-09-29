@@ -28,6 +28,9 @@ fi
 # Kill every instance and wait for them to actually be gone: launching while an
 # old instance is still alive makes the new one exit immediately (quickshell -n)
 # and leaves the session with no shell at all.
+# A stop marker left over from an earlier `cornice stop` would make the watchdog
+# stand down after this restart kills the shell.
+rm -f "${XDG_RUNTIME_DIR:-/tmp}/cornice-stop" 2>/dev/null || true
 while "$qs" kill -p "$config_dir" --any-display >/dev/null 2>&1; do :; done
 for _ in $(seq 1 50); do
   "$qs" ipc -p "$config_dir" call shell ping >/dev/null 2>&1 || break
@@ -36,20 +39,34 @@ done
 # A socket left behind by a killed instance would make the CLI talk to nothing.
 rm -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/cornice-${USER:-user}.sock" 2>/dev/null || true
 
-# Absolute path on purpose: the compositor's PATH does not necessarily contain
-# ~/.local/bin, and a failed relaunch after killing the old shell leaves the user
-# with no bar at all.
-if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && command -v hyprctl >/dev/null 2>&1; then
-  hyprctl dispatch "exec $bin_dir/cornice-launch" >/dev/null 2>&1
+# The live watchdog relaunches its child as soon as it exits, so the usual case
+# needs nothing from us — just wait. Only start a launcher ourselves when no
+# watchdog holds the lock (a shell started by hand, or a launcher that gave up).
+relaunch_started=0
+if [[ -z $(pgrep -f "$bin_dir/cornice-launch" 2>/dev/null) ]]; then
+  # Absolute path on purpose: the compositor's PATH does not necessarily contain
+  # ~/.local/bin, and a failed relaunch after killing the old shell leaves the user
+  # with no bar at all.
+  if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && command -v hyprctl >/dev/null 2>&1; then
+    hyprctl dispatch "exec $bin_dir/cornice-launch" >/dev/null 2>&1
+  else
+    setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
+    disown || true
+  fi
+  relaunch_started=1
   sleep 0.3
 fi
-# Wait longer than a shell needs to boot before assuming the dispatch failed;
-# a premature fallback is what produced duplicate instances (and with them a
-# shell that could not own org.freedesktop.Notifications).
-if ! timeout 15 "$bin_dir/cornice" ping >/dev/null 2>&1; then
+# Wait longer than a shell needs to boot before assuming the relaunch failed; a
+# premature fallback is what produced duplicate instances (and with them a shell
+# that could not own org.freedesktop.Notifications).
+if ! timeout 20 "$bin_dir/cornice" ping >/dev/null 2>&1; then
   if pgrep -x quickshell >/dev/null 2>&1; then
     echo "cornice: a shell process exists but is not answering yet" >&2
-  else
+  elif ((relaunch_started == 0)); then
+    # The watchdog is alive but did not bring the shell back: nudge it by
+    # clearing the marker that makes it stand down (a stale stop marker from an
+    # earlier `cornice stop` would do exactly this).
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/cornice-stop" 2>/dev/null || true
     setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
     disown || true
   fi

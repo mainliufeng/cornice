@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.weather",
+  "name": "Weather",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Current conditions and a short forecast from open-meteo; click for the panel",
+  "kinds": ["service", "bar-widget", "panel"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Widget.qml",
+    "panel": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Weather",
+    "category": "Information",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "format": "{icon} {temp}",
+      "showPlace": false
+    },
+    "schema": [
+      { "key": "format", "type": "string", "label": "Format: {icon} {temp} {place} {label}" },
+      { "key": "showPlace", "type": "boolean", "label": "Append the place name to the tooltip" }
+    ]
+  }
+}

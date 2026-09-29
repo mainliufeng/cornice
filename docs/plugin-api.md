@@ -53,6 +53,7 @@ Required: `id` (use a `cn.` prefix for first-party), `name`, `version`,
 | `keepLoaded` | services are always kept; for panels/overlays it means "mount at startup and open/close instead of remounting" (media, audio, notifications do this) |
 | `entryPoints` | `service`, `barWidget`, `panel`, `overlay`, `menu` → path relative to the plugin dir |
 | `barWidget.defaultSection` | `left`, `center` or `right` |
+| `keepLoaded` + `panel` | mounted at startup; the shell calls `open()`/`close()` instead of remounting (the OSD, the notification centre, media, audio) |
 | `barWidget.allowMultiple` | can the user place several instances |
 | `barWidget.defaults` | per-instance settings the bar writes (the widget reads `plugin.config`) |
 | `barWidget.schema` | describes those settings for the widget editor |
@@ -191,7 +192,19 @@ document the keys in the README's configuration table.
 | `qs.Commons` | `Style` (sizes, fonts, icon font), `Color` (theme palette), `Theme`, `Util` (`option`, `clamp`, `list`, `exec`, `deepMerge`), `ShellIpc`, `IpcRegistry` |
 | `qs.Ui` | `PanelFrame`, `Slider`, `TextField`, `Surface`, `BarSection` |
 
-Rules that are easy to get wrong:
+Two traps that have already cost this codebase a debugging session each:
+
+- **Never name a property (or an item id) `text` in a file that parses a
+  `StdioCollector`.** Inside `onStreamFinished`/`onDataChanged` the id wins over
+  the collector's own `text`, so `JSON.parse(text)` throws
+  *"Property 'split' of object QQuickText is not a function"* and the parser
+  silently never works.
+- **A `MouseArea` declared *after* the content of a card sits on top of it** and
+  swallows the clicks meant for buttons and text fields inside. Declare the
+  background MouseArea first (that is how `NotificationCard` supports action
+  buttons and inline reply).
+
+Other rules that are easy to get wrong:
 
 - **Theme through `Color`/`Style` only.** Hard-coded hex values break the light
   theme, which is generated from the same `theme.json` files.
