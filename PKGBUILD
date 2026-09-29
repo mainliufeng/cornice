@@ -50,7 +50,7 @@ options=('!strip')
 
 package() {
   install -dm755 "$pkgdir/usr/share/cornice"
-  for dir in bin shell themes wallpapers config docs; do
+  for dir in bin shell i18n themes wallpapers config docs; do
     [[ -d $startdir/$dir ]] || continue
     cp -r "$startdir/$dir" "$pkgdir/usr/share/cornice/"
   done

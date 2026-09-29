@@ -141,7 +141,7 @@ if ((copy)); then
   staging="$libdir.new.$$"
   rm -rf "$staging"
   mkdir -p "$staging"
-  for dir in bin shell themes wallpapers config docs; do
+  for dir in bin shell i18n themes wallpapers config docs; do
     [[ -d $repo/$dir ]] && cp -r "$repo/$dir" "$staging/"
   done
   find "$staging" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true

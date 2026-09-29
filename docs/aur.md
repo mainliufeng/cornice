@@ -68,7 +68,7 @@ pkgver() {
 package() {
   cd cornice
   install -dm755 "$pkgdir/usr/share/cornice"
-  for dir in bin shell themes wallpapers config docs; do
+  for dir in bin shell i18n themes wallpapers config docs; do
     cp -r "$dir" "$pkgdir/usr/share/cornice/"
   done
   find "$pkgdir/usr/share/cornice" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
