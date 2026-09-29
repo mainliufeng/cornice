@@ -4,12 +4,14 @@
   "name": "Clock",
   "version": "0.2.0",
   "author": "cornice",
-  "description": "Date and time, click to toggle an alternate format",
+  "description": "Date and time, plus world clocks in the panel; click toggles an alternate format",
   "kinds": [
+    "service",
     "bar-widget",
     "panel"
   ],
   "entryPoints": {
+    "service": "Service.qml",
     "barWidget": "Widget.qml",
     "panel": "Panel.qml"
   },
@@ -32,6 +34,16 @@
         "key": "formatAlt",
         "type": "string",
         "label": "Alternate format (click)"
+      },
+      {
+        "key": "timezone",
+        "type": "string",
+        "label": "IANA timezone, e.g. Asia/Tokyo (empty = local)"
+      },
+      {
+        "key": "label",
+        "type": "string",
+        "label": "Optional prefix, e.g. Tokyo"
       }
     ]
   },

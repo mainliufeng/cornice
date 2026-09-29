@@ -69,6 +69,15 @@ Item {
     }
   }
 
+  // Scrolling the widget walks through the configured places.
+  WheelHandler {
+    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+    onWheel: event => {
+      if (!root.service || !root.service.cycle) return
+      root.service.cycle(event.angleDelta.y > 0 ? -1 : 1)
+    }
+  }
+
   MouseArea {
     anchors.fill: parent
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton

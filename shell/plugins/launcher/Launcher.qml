@@ -59,7 +59,11 @@ PanelFrame {
         if (!entry.noDisplay) list.push({ entry: entry, name: entry.name, comment: entry.comment, icon: entry.icon })
       }
       if (commandMode() && text.length > 1)
-        list.push({ command: query.trim().slice(1), name: "Run: " + query.trim().slice(1), comment: "shell command" })
+        list.push({
+          command: query.trim().slice(1),
+          name: I18n.t("launcher.run") + " " + query.trim().slice(1),
+          comment: I18n.t("launcher.shellCommand")
+        })
       return list
     }
 
@@ -149,9 +153,9 @@ PanelFrame {
       text: {
         const item = root.results[Math.max(0, Math.min(root.selected, root.results.length - 1))]
         const terminal = item !== undefined && (item.command !== undefined || root.wantsTerminal(item.entry, false))
-        const base = "Enter: open   Shift+Enter: run in a terminal   Esc: close"
+        const base = I18n.t("launcher.hint")
         if (item === undefined) return base
-        return terminal ? base + "        this entry runs in " + root.terminal : base
+        return terminal ? base + "        " + I18n.t("launcher.runsIn") + " " + root.terminal : base
       }
       color: Color.muted
       elide: Text.ElideRight
@@ -247,6 +251,13 @@ PanelFrame {
 
   ShellIpc {
     target: "launcher"
+
+    // Test hook: the suites cannot drive the input method, so they set the
+    // query directly (same idea as weather.select / idle.feed).
+    function setQuery(text: string): string {
+      root.query = text
+      return root.query
+    }
 
     function debug(): string {
       return JSON.stringify({

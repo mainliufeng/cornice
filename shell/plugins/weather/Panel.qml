@@ -74,6 +74,42 @@ PanelFrame {
       }
     }
 
+    // ---- places ------------------------------------------------------------
+    Row {
+      width: parent.width
+      visible: root.ready && places.length > 1
+      spacing: Style.space(0.6)
+
+      readonly property var places: root.service && root.service.locations ? root.service.locations : []
+
+      Repeater {
+        model: parent.places
+
+        delegate: Rectangle {
+          required property var modelData
+          height: Style.space(2.4)
+          width: chipText.implicitWidth + Style.space(1.6)
+          radius: Style.space(0.4)
+          color: modelData.active ? Color.accent : Color.surfaceAlt
+
+          Text {
+            id: chipText
+            anchors.centerIn: parent
+            text: modelData.name
+            color: modelData.active ? Color.background : Color.foreground
+            font.family: Style.fontFamily
+            font.pixelSize: Style.smallFontSize
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.service.select(modelData.index)
+          }
+        }
+      }
+    }
+
     // ---- details -----------------------------------------------------------
     Row {
       width: parent.width

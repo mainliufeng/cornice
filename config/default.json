@@ -95,5 +95,8 @@
     "unit": "metric",
     "intervalMinutes": 15
   },
-  "language": "en"
+  "language": "en",
+  "clock": {
+    "worldClocks": []
+  }
 }

@@ -139,6 +139,64 @@ cornice test [--quick|takeover|headless|lock|install|live]
 cornice session-env                  # compositor env exports for TTYs/stale shells
 ```
 
+## Several places, several timezones
+
+Weather takes a list of places and the clock panel takes a list of zones:
+
+```json
+{
+  "weather": {
+    "intervalMinutes": 15,
+    "locations": [
+      { "name": "Shanghai", "city": "Shanghai" },
+      { "name": "Tokyo",    "city": "Tokyo" },
+      { "name": "Oslo",     "latitude": 59.91, "longitude": 10.75 }
+    ]
+  },
+  "clock": {
+    "worldClocks": [
+      { "name": "Tokyo", "zone": "Asia/Tokyo" },
+      { "name": "Oslo",  "zone": "Europe/Oslo" }
+    ]
+  }
+}
+```
+
+Each place is resolved on its own (city name, coordinates, or the IP/timezone
+fallback) and cached separately. Switch places by scrolling the weather widget
+or by clicking a name in the weather panel:
+
+```bash
+cornice ipc weather locations     # [{index, name, city, active}, …]
+cornice ipc weather select 1      # switch to the second place
+```
+
+Timezone offsets come from the system tzdata (`TZ=<zone> date +%z`), so daylight
+saving is handled for you; anything the shell prints is formatted in the
+configured language. The world-clock list lives in the clock panel, and a clock
+*bar widget* can carry its own zone:
+
+```json
+{ "id": "cn.clock", "label": "Tokyo", "timezone": "Asia/Tokyo", "format": "HH:mm" }
+```
+
+Add such a widget with `cornice bar show cn.clock --section center` and edit its
+options in `config.json` (or through the bar editor panel).
+
+## Language
+
+```bash
+cornice language          # current language (default: en)
+cornice language list     # available translations
+cornice language zh-CN    # switch, persist, reload
+```
+
+Translations live in `i18n/<code>.json`; English is also the fallback table, so a
+missing key degrades to English rather than to an empty label. Weekday, month and
+calendar names follow the language too. To add a language, copy `i18n/en.json`,
+translate the values, and run `cornice language <code>` — the test suite fails if
+the tables disagree, or if the shell asks for a key that does not exist.
+
 ## Configuration
 
 `~/.config/cornice/config.json` is deep-merged over [`config/default.json`](config/default.json),

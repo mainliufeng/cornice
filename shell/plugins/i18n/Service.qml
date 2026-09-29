@@ -137,6 +137,13 @@ Item {
       return JSON.stringify(root.availableLanguages)
     }
 
+    // Test hook: format a date with the configured locale, so a suite can assert
+    // that weekday/month names really follow the language.
+    function format(formatString: string, epoch: string): string {
+      const date = new Date(Number(epoch))
+      return I18n.dateTime(date, String(formatString))
+    }
+
     function translate(key: string): string {
       return I18n.t(String(key))
     }

@@ -13,8 +13,37 @@ Item {
 
   readonly property string format: Util.option(widgetConfig, "format", "ddd HH:mm")
   readonly property string formatAlt: Util.option(widgetConfig, "formatAlt", "HH:mm:ss")
+  // Optional world clock: "timezone": "Asia/Tokyo" turns this widget into that
+  // zone's clock (add another clock widget in the bar editor for a second one).
+  readonly property string timezone: Util.option(widgetConfig, "timezone", "")
+  readonly property string zoneLabel: Util.option(widgetConfig, "label", "")
+  // host.services is the reactive registry (see the weather widget); the
+  // service may register after this widget is built, so it is read reactively.
+  readonly property var service: (host && host.services) ? host.services["cn.clock"] : null
 
   property bool showAlt: false
+
+  // Fills in the zone time, falling back to the local clock until the service
+  // has resolved the offset (revision keeps the binding reactive).
+  function render(date, fmt) {
+    if (timezone === "" || !service) return I18n.dateTime(date, fmt)
+    service.revision // dependency: re-render when offsets are re-resolved
+    const text = service.zoneTimeAt(timezone, fmt, date.getTime())
+    return (text === "" ? I18n.dateTime(date, fmt) : text)
+  }
+
+  // Registration happens outside of bindings (writing to the service from a
+  // binding would be a side effect during evaluation).
+  function registerZone() {
+    if (timezone !== "" && service) service.watchZone(timezone)
+  }
+
+  Connections {
+    target: root
+    function onServiceChanged() { root.registerZone() }
+  }
+
+  Component.onCompleted: registerZone()
 
   implicitHeight: Style.widgetHeight
   implicitWidth: label.implicitWidth + Style.space(1)
@@ -28,7 +57,10 @@ Item {
   Text {
     id: label
     anchors.centerIn: parent
-    text: Qt.formatDateTime(clock.date, root.showAlt ? root.formatAlt : root.format)
+    // Locale-aware: "ddd" must render as the configured language's weekday,
+    // which Qt.formatDateTime does not do (it uses the process default locale).
+    text: (root.zoneLabel !== "" ? root.zoneLabel + " " : "")
+      + root.render(clock.date, root.showAlt ? root.formatAlt : root.format)
     color: Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize

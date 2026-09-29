@@ -245,7 +245,7 @@ Item {
             spacing: Style.space(0.7)
 
             Text {
-              text: Qt.formatDateTime(surfaceClock.date, "HH:mm")
+              text: I18n.dateTime(surfaceClock.date, "HH:mm")
               color: Color.foreground
               font.family: Style.fontFamily
               font.pixelSize: Math.round(Style.fontSize * 5.2)
@@ -265,7 +265,7 @@ Item {
 
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: Qt.formatDateTime(surfaceClock.date, "dddd, d MMMM").toUpperCase()
+            text: I18n.dateTime(surfaceClock.date, "dddd, d MMMM").toUpperCase()
             color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.65)
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize * 0.95

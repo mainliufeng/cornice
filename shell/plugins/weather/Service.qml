@@ -34,10 +34,31 @@ Item {
   // the IP report the exit node (on this machine: Los Angeles for a CST user).
   readonly property bool useTimezone: Util.option(settings, "useTimezone", true)
   property string timezoneCity: ""
-  readonly property string city: Util.option(settings, "city", "")
-  readonly property string configuredPlace: Util.option(settings, "place", "")
-  readonly property var configuredLatitude: Util.option(settings, "latitude", null)
-  readonly property var configuredLongitude: Util.option(settings, "longitude", null)
+  // Several places can be configured:
+  //   "locations": [ { "name": "Tokyo", "city": "Tokyo" },
+  //                  { "name": "Oslo", "latitude": 59.91, "longitude": 10.75 } ]
+  // The older single-place keys (city/latitude/longitude/place) still work and
+  // are treated as one entry, so existing configs keep behaving the same.
+  readonly property var locations: {
+    const configured = Util.option(settings, "locations", null)
+    if (configured && configured.length > 0) return configured
+    return [{
+      name: Util.option(settings, "place", ""),
+      city: Util.option(settings, "city", ""),
+      place: Util.option(settings, "place", ""),
+      latitude: Util.option(settings, "latitude", null),
+      longitude: Util.option(settings, "longitude", null)
+    }]
+  }
+
+  property int activeIndex: 0
+  readonly property var active: locations[Math.min(Math.max(activeIndex, 0), locations.length - 1)] || ({})
+
+  readonly property string city: Util.option(active, "city", "")
+  readonly property string configuredPlace: Util.option(active, "place", "")
+  readonly property var configuredLatitude: Util.option(active, "latitude", null)
+  readonly property var configuredLongitude: Util.option(active, "longitude", null)
+  readonly property string activeName: Util.option(active, "name", "")
 
   property real latitude: NaN
   property real longitude: NaN
@@ -57,7 +78,7 @@ Item {
   // configured `weather.city` ended up ignored until the next restart. Watching
   // this key means a location change re-resolves immediately instead.
   readonly property string locationKey: [
-    city, configuredLatitude, configuredLongitude, autoLocate, useTimezone
+    activeIndex, city, configuredLatitude, configuredLongitude, autoLocate, useTimezone
   ].join("|")
 
   onLocationKeyChanged: {
@@ -87,8 +108,8 @@ Item {
       || ((Quickshell.env("HOME") || "") + "/.local/state")
     return base + "/cornice"
   }
-  readonly property string cachePath: stateDirectory + "/weather.json"
-  readonly property string locationPath: stateDirectory + "/weather-location.json"
+  readonly property string cachePath: stateDirectory + "/weather-" + activeIndex + ".json"
+  readonly property string locationPath: stateDirectory + "/weather-location-" + activeIndex + ".json"
   readonly property bool locationKnown: !isNaN(latitude) && !isNaN(longitude)
 
   readonly property string temperatureUnit: unit === "imperial" ? "°F" : "°C"
@@ -162,6 +183,27 @@ Item {
     }
   }
 
+  function select(index) {
+    const list = locations
+    const wanted = Math.min(Math.max(Number(index), 0), list.length - 1)
+    const forced = wanted !== activeIndex
+    activeIndex = wanted
+    if (forced) {
+      // locationKey changed, which re-resolves (and then fetches) the new place.
+      latitude = NaN
+      longitude = NaN
+      updatedAt = 0
+      refresh(true)
+    }
+    return activeIndex
+  }
+
+  function cycle(step) {
+    const list = locations
+    if (list.length <= 1) return activeIndex
+    return select((activeIndex + (step || 1) + list.length) % list.length)
+  }
+
   function finishBootstrap() {
     if (bootstrapPending <= 0) return
     bootstrapPending = bootstrapPending - 1
@@ -190,6 +232,8 @@ Item {
       status = "locating"
       busy = true
       error = ""
+      geocodingTimezone = false
+      geocode.command = geocodeCommand(city)
       geocode.running = true
       return "locating"
     }
@@ -230,11 +274,17 @@ Item {
     return "fetching"
   }
 
-  readonly property Process geocode: Process {
-    command: ["curl", "-fsS", "--max-time", "10", "--compressed",
+  // The command is built explicitly right before every start instead of being a
+  // binding: QML re-evaluates bindings lazily, so starting the process used to
+  // run the *previous* city's query (switching places was one behind).
+  function geocodeCommand(query) {
+    return ["curl", "-fsS", "--max-time", "10", "--compressed",
       root.geocodeBase + "?count=1&language=" + encodeURIComponent(I18n.language)
-      + "&format=json&name="
-      + encodeURIComponent(root.city)]
+      + "&format=json&name=" + encodeURIComponent(query)]
+  }
+
+  readonly property Process geocode: Process {
+    command: geocodeCommand("")
 
     stdout: StdioCollector {
       waitForEnd: true
@@ -506,6 +556,9 @@ Item {
         error: root.error,
         place: root.place,
         locatedBy: root.locatedBy,
+        activeIndex: root.activeIndex,
+        activeName: root.activeName,
+        locationCount: root.locations.length,
         city: root.city,
         autoLocate: root.autoLocate,
         useTimezone: root.useTimezone,
@@ -524,6 +577,23 @@ Item {
         hours: root.hourly.length,
         days: root.daily.length
       })
+    }
+
+    function locations(): string {
+      return JSON.stringify(root.locations.map((entry, index) => ({
+        index: index,
+        name: entry.name || entry.place || entry.city || ("place " + (index + 1)),
+        city: entry.city || "",
+        active: index === root.activeIndex
+      })))
+    }
+
+    function select(index: string): string {
+      return String(root.select(Number(index)))
+    }
+
+    function cycle(step: string): string {
+      return String(root.cycle(Number(step) || 1))
     }
 
     function refresh(): string {
