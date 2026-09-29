@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.polkit",
+  "name": "Polkit agent",
+  "version": "0.3.0",
+  "author": "cornice",
+  "description": "PolicyKit authentication agent: the password dialog for privileged actions",
+  "kinds": ["service"],
+  "entryPoints": {
+    "service": "Polkit.qml"
+  }
+}

@@ -7,6 +7,8 @@ FocusScope {
   id: root
 
   property alias text: input.text
+  property alias echoMode: input.echoMode
+  property alias passwordCharacter: input.passwordCharacter
   property string placeholder: ""
   property bool selectAllOnFocus: true
 

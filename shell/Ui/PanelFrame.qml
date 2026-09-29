@@ -75,7 +75,13 @@ Item {
     // half-screen margin centres it. (Anchoring both sides stretches it.)
     anchors.left: true
 
-    margins.top: root.edge === "top" ? Style.barHeight + Style.space(1) : 0
+    // "center" means centred on the screen, not "just under the bar": layer-shell
+    // has no vertical-centre anchor, so the offset is computed from the output.
+    margins.top: root.edge === "top" ? Style.barHeight + Style.space(1)
+      : root.edge === "center"
+        ? Math.max(Style.barHeight + Style.space(1),
+            Math.round(((window.screen ? window.screen.height : 1080) - root.panelHeight) / 2))
+        : 0
     margins.bottom: root.edge === "bottom" ? Style.space(2) : 0
     margins.left: Math.max(0, Math.round(((window.screen ? window.screen.width : 1280) - root.panelWidth) / 2))
 
