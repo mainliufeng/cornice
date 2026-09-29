@@ -92,6 +92,44 @@ if command -v busctl >/dev/null 2>&1; then
 fi
 pgrep -x waybar >/dev/null 2>&1 && warn "waybar is in your exec-once: comment it out before switching"
 
+section "Notifications"
+if command -v busctl >/dev/null 2>&1; then
+  owner=$(busctl --user list --no-pager 2>/dev/null | awk '$1=="org.freedesktop.Notifications" {print $2, $3}')
+  if [[ -z $owner ]]; then
+    warn "nobody owns org.freedesktop.Notifications — notifications are going nowhere"
+  elif [[ $owner == *quickshell* ]]; then
+    ok "cornice owns org.freedesktop.Notifications (pid ${owner%% *})"
+  else
+    bad "another daemon owns org.freedesktop.Notifications: $owner"
+    warn "stop it, or set \"notifications\": {\"takeover\": true} in ~/.config/cornice/config.json"
+  fi
+
+  competing=""
+  for daemon in mako dunst swaync fnott; do
+    pgrep -x "$daemon" >/dev/null 2>&1 && competing="$competing $daemon"
+  done
+  if [[ -n $competing ]]; then
+    warn "competing notification daemon(s) running:$competing"
+  else
+    ok "no competing notification daemon"
+  fi
+fi
+
+# Count only shells belonging to *this* session: the test harnesses run their
+# own quickshell instances under a private XDG_RUNTIME_DIR.
+shell_instances=0
+for pid in $(pgrep -x quickshell 2>/dev/null); do
+  runtime=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n 's/^XDG_RUNTIME_DIR=//p')
+  [[ $runtime == "${XDG_RUNTIME_DIR:-/tmp}" ]] && shell_instances=$((shell_instances + 1))
+done
+if ((shell_instances == 1)); then
+  ok "exactly one shell instance"
+elif ((shell_instances == 0)); then
+  warn "no shell instance running"
+else
+  warn "$shell_instances shell instances — duplicates cannot own the notification bus name (restart: cornice restart)"
+fi
+
 section "Configuration"
 defaults="$prefix/config/default.json"
 user_config="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
