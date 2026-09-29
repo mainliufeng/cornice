@@ -55,12 +55,16 @@ if [[ -S $socket ]] && ! timeout 1 socat -u OPEN:/dev/null "UNIX-CONNECT:$socket
   rm -f "$socket"
 fi
 
+# NOTE: do not pass quickshell's -n/--no-duplicate here. It exits immediately when
+# a stale instance registration survives a crash, which silently keeps old code
+# running forever (restarts appear to do nothing). The flock below already
+# guarantees a single launcher, and cornice-restart stops the previous child.
 run_shell() {
   if command -v systemd-cat >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
     QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 \
-      systemd-cat -t cornice -- "$qs" -n -p "$config_dir" &
+      systemd-cat -t cornice -- "$qs" -p "$config_dir" &
   else
-    QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 "$qs" -n -p "$config_dir" &
+    QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 "$qs" -p "$config_dir" &
   fi
   shell_pid=$!
   wait "$shell_pid"

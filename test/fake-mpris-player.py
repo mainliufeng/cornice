@@ -70,6 +70,9 @@ PLAYER_XML = """
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--name", default="cornice-test", help="MPRIS bus name suffix")
+    parser.add_argument("--identity", default="", help="MPRIS Identity (defaults to --name)")
+    parser.add_argument("--art", default="", help="path to an image exported as mpris:artUrl")
     parser.add_argument("--title", default="Fake Song")
     parser.add_argument("--artist", default="Fake Artist")
     parser.add_argument("--playing", action="store_true", default=True)
@@ -83,16 +86,19 @@ def main():
         log.write(f"{int(time.time())} {what}\n")
         log.flush()
 
-    state = {"playing": args.playing}
+    state = {"playing": args.playing, "volume": 0.8}
 
     def metadata():
-        return {
+        out = {
             "mpris:trackid": GLib.Variant("o", "/org/mpris/MediaPlayer2/Track/1"),
             "xesam:title": GLib.Variant("s", args.title),
             "xesam:artist": GLib.Variant("as", [args.artist]),
             "xesam:album": GLib.Variant("s", "Fake Album"),
             "mpris:length": GLib.Variant("x", 210 * 1000000),
         }
+        if args.art:
+            out["mpris:artUrl"] = GLib.Variant("s", "file://" + args.art)
+        return out
 
     def properties(iface):
         if iface == IFACE_ROOT:
@@ -100,7 +106,7 @@ def main():
                 "CanQuit": GLib.Variant("b", True),
                 "CanRaise": GLib.Variant("b", False),
                 "HasTrackList": GLib.Variant("b", False),
-                "Identity": GLib.Variant("s", "Fake Player"),
+                "Identity": GLib.Variant("s", args.identity or args.name),
                 "DesktopEntry": GLib.Variant("s", "fake-player"),
                 "SupportedUriSchemes": GLib.Variant("as", []),
                 "SupportedMimeTypes": GLib.Variant("as", []),
@@ -111,7 +117,7 @@ def main():
             "Rate": GLib.Variant("d", 1.0),
             "Shuffle": GLib.Variant("b", False),
             "Metadata": GLib.Variant("a{sv}", metadata()),
-            "Volume": GLib.Variant("d", 0.8),
+            "Volume": GLib.Variant("d", state["volume"]),
             "Position": GLib.Variant("x", 0),
             "MinimumRate": GLib.Variant("d", 1.0),
             "MaximumRate": GLib.Variant("d", 1.0),
@@ -125,6 +131,7 @@ def main():
 
     def on_call(connection, sender, path, iface, method, params, invocation):
         record(f"{iface.split('.')[-1]}.{method}")
+
         if method == "PlayPause":
             state["playing"] = not state["playing"]
             emit_properties()
@@ -156,12 +163,22 @@ def main():
     def on_get_all(connection, sender, path, iface):
         return properties(iface)
 
+    # The 5th argument of register_object is the *setter* closure (a previous
+    # version passed on_get_all there, so every property write was rejected and
+    # volume control looked broken).
+    def on_set(connection, sender, path, iface, prop, value):
+        if iface == IFACE_PLAYER and prop == "Volume":
+            state["volume"] = float(value.unpack())
+            record(f"Volume={state['volume']:.3f}")
+            return True
+        return False
+
     connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
     for xml in (ROOT_XML, PLAYER_XML):
         node = Gio.DBusNodeInfo.new_for_xml(xml)
-        connection.register_object(MPRIS_PATH, node.interfaces[0], on_call, on_get, on_get_all)
+        connection.register_object(MPRIS_PATH, node.interfaces[0], on_call, on_get, on_set)
 
-    Gio.bus_own_name_on_connection(connection, "org.mpris.MediaPlayer2.cornice-test",
+    Gio.bus_own_name_on_connection(connection, f"org.mpris.MediaPlayer2.{args.name}",
                                   Gio.BusNameOwnerFlags.NONE, None, None)
     record("started")
 

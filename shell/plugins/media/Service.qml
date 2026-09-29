@@ -34,16 +34,16 @@ Item {
   readonly property real length: player ? Number(player.length || 0) : 0
   readonly property bool hasPlayer: player !== null && title !== ""
 
-  // MPRIS position is in microseconds.
+  // Quickshell already converts MPRIS' microsecond values to seconds.
   readonly property string positionLabel: formatTime(position)
   readonly property string lengthLabel: formatTime(length)
   readonly property real progress: length > 0 ? Util.clamp(position / length, 0, 1) : 0
 
-  function formatTime(microseconds) {
-    const total = Math.max(0, Math.floor(Number(microseconds || 0) / 1000000))
+  function formatTime(value) {
+    const total = Math.max(0, Math.floor(Number(value || 0)))
     const minutes = Math.floor(total / 60)
-    const seconds = total % 60
-    return minutes + ":" + (seconds < 10 ? "0" : "") + seconds
+    const rest = total % 60
+    return minutes + ":" + (rest < 10 ? "0" : "") + rest
   }
 
   function playPause() {
