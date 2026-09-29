@@ -103,9 +103,21 @@ Item {
   }
 
   // ---- directory listing ---------------------------------------------------
+  // Scans must not overlap: a second scan resetting `images` while the first was
+  // still streaming produced counts that matched no directory.
+  property bool scanPending: false
+
   function rescan() {
+    if (directory === "") {
+      images = []
+      return
+    }
+    if (lister.running) {
+      scanPending = true
+      return
+    }
     images = []
-    if (directory !== "") lister.running = true
+    lister.running = true
   }
 
   Process {
@@ -120,6 +132,12 @@ Item {
       onRead: line => {
         const path = String(line).trim()
         if (path !== "") root.images = root.images.concat([path])
+      }
+    }
+    onExited: {
+      if (root.scanPending) {
+        root.scanPending = false
+        root.rescan()
       }
     }
   }

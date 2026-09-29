@@ -131,6 +131,32 @@ ShellRoot {
     onTriggered: shell.reloadUserConfig()
   }
 
+  // FileView's watchChanges did not fire for this file in practice, so poll the
+  // mtime: one stat every two seconds, and reload when it moves.
+  property string userConfigStamp: ""
+
+  Process {
+    id: userConfigStampProbe
+
+    command: ["sh", "-c", "stat -c %Y " + JSON.stringify(shell.userConfigPath) + " 2>/dev/null || echo 0"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        const stamp = String(text).trim()
+        if (shell.userConfigStamp !== "" && stamp !== shell.userConfigStamp)
+          shell.reloadUserConfig()
+        shell.userConfigStamp = stamp
+      }
+    }
+  }
+
+  Timer {
+    interval: 2000
+    running: true
+    repeat: true
+    onTriggered: userConfigStampProbe.running = true
+  }
+
   PluginRegistry {
     id: pluginRegistry
     host: shell

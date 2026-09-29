@@ -17,6 +17,25 @@ qs="$bin_dir/cornice-qs"
 # Only one launcher may run per user: a restart that dispatches through the
 # compositor while a watchdog relaunches can otherwise start two shells, and the
 # second one loses the notification bus name.
+# A launcher can be started from anywhere — a TTY, an agent shell, a cron job —
+# and then it does not inherit the compositor environment. A shell started
+# without WAYLAND_DISPLAY/HYPRLAND_INSTANCE_SIGNATURE cannot draw anything and
+# just crash-loops, so pull the session values from the user manager first.
+if [[ -z ${WAYLAND_DISPLAY:-} || -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+  # systemctl --user itself needs a runtime dir and a bus address, so establish
+  # those first — otherwise the fallback silently does nothing and the shell
+  # comes up with no display at all (Qt then tries xcb and dies).
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+  while IFS= read -r line; do
+    case "$line" in
+      WAYLAND_DISPLAY=*|HYPRLAND_INSTANCE_SIGNATURE=*|XDG_RUNTIME_DIR=*|DBUS_SESSION_BUS_ADDRESS=*|XDG_CURRENT_DESKTOP=*)
+        export "${line?}"
+        ;;
+    esac
+  done < <(systemctl --user show-environment 2>/dev/null || true)
+fi
+
 lock_file="${XDG_RUNTIME_DIR:-/tmp}/cornice-launch.lock"
 if command -v flock >/dev/null 2>&1; then
   exec 9>"$lock_file"
