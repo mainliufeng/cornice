@@ -36,9 +36,81 @@ Item {
     return config.notifications || ({})
   }
 
-  readonly property NotificationServer server: NotificationServer {
-    keepOnReload: true
-    onNotification: notification => root.receive(notification)
+  // Quickshell registers org.freedesktop.Notifications when this object is
+  // created. At shell start the name may still be held by the previous instance
+  // (it is dying), registration then fails and is never retried — the session
+  // silently loses every notification from then on. So the server lives behind a
+  // Loader that the watchdog below can recreate until we own the name.
+  readonly property var server: serverHost.item
+  property bool serverRegistered: false
+  property int serverGeneration: 0
+
+  Loader {
+    id: serverHost
+    active: true
+    // Recreating is the only way to re-attempt the bus-name registration.
+    property int generation: root.serverGeneration
+    sourceComponent: Component {
+      NotificationServer {
+        keepOnReload: true
+        onNotification: notification => root.receive(notification)
+      }
+    }
+    // A synchronous false→true is coalesced by the engine; unload now, reload
+    // on the next tick so the server object is really recreated.
+    onGenerationChanged: {
+      active = false
+      reloadTimer.restart()
+    }
+    onLoaded: root.serverRegistered = true
+
+    Timer {
+      id: reloadTimer
+      interval: 50
+      repeat: false
+      onTriggered: serverHost.active = true
+    }
+  }
+
+  // Watch who owns the name; take it back when the owner goes away.
+  Process {
+    id: nameProbe
+
+    // Owner as "<unique name> <pid>", or "unowned".
+    command: ["sh", "-c",
+      "o=$(busctl --user get-name-owner org.freedesktop.Notifications 2>/dev/null); " +
+      "if [ -z \"$o\" ]; then echo unowned; else " +
+      "p=$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus " +
+      "org.freedesktop.DBus GetConnectionUnixProcessID s \"$o\" 2>/dev/null | awk '{print $2}'); " +
+      "echo \"$o ${p:-0}\"; fi"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        const parts = String(text).trim().split(/\s+/)
+        if (parts[0] === "unowned") {
+          console.warn("cornice: org.freedesktop.Notifications is unowned; re-registering the notification server")
+          root.recreateServer()
+          return
+        }
+        const ownerPid = Number(parts[1] || 0)
+        const ours = ownerPid !== 0 && ownerPid === Number(Quickshell.processId)
+        root.serverRegistered = ours
+        if (!ours)
+          console.warn("cornice: another process (" + ownerPid + ") owns org.freedesktop.Notifications")
+      }
+    }
+  }
+
+  function recreateServer() {
+    root.serverRegistered = false
+    root.serverGeneration = root.serverGeneration + 1
+  }
+
+  Timer {
+    interval: 10000
+    running: root.server === null || !root.serverRegistered
+    repeat: true
+    onTriggered: nameProbe.running = true
   }
 
   // The live object for a notification id, or null when it is already gone.
@@ -276,7 +348,7 @@ Item {
         unread: root.unread,
         popups: root.popups.length,
         history: root.history.length,
-        serverReady: root.server !== null
+        serverReady: root.server !== null && root.serverRegistered
       })
     }
   }

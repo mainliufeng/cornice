@@ -45,6 +45,30 @@ compositor_alive() {
   return 1
 }
 
+# Another notification daemon (mako, dunst, ...) squats
+# org.freedesktop.Notifications: our server then cannot register and every
+# notification silently goes to the other daemon. Warn, or take over when the
+# user asked for it in their config.
+competing=""
+for daemon in mako dunst swaync fnott; do
+  pgrep -x "$daemon" >/dev/null 2>&1 && competing="$competing $daemon"
+done
+if [[ -n $competing ]]; then
+  takeover=false
+  user_config="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+  if [[ -r $user_config ]] && command -v jq >/dev/null 2>&1; then
+    takeover=$(jq -r '.notifications.takeover // false' "$user_config" 2>/dev/null || echo false)
+  fi
+  if [[ $takeover == "true" ]]; then
+    logger -t cornice "taking over notifications from:$competing" 2>/dev/null || true
+    for daemon in $competing; do pkill -x "$daemon" 2>/dev/null || true; done
+  else
+    logger -t cornice "another notification daemon is running:$competing — notifications will not reach cornice" 2>/dev/null || true
+    echo "cornice: $competing is running and owns org.freedesktop.Notifications" >&2
+    echo "cornice: stop it, or set \"notifications\": {\"takeover\": true} in ~/.config/cornice/config.json" >&2
+  fi
+fi
+
 # One passive check per shell start. It never touches the screen (no panels, no
 # notifications), so it is safe to run at login; the report lands in
 # ~/.local/state/cornice/doctor-last.txt and in the journal.
