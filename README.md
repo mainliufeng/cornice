@@ -23,6 +23,8 @@ hypridle + hyprlock + polkit-gnome + a launcher, each with its own config file.
 | **Media** — cover, progress, transport, volume, several players | **Audio** — sink and microphone volume, device list |
 | ![the OSD](docs/screenshots/osd.png) | ![the emoji picker](docs/screenshots/emoji.png) |
 | **OSD** — volume, microphone, brightness; follows hardware keys | **Emoji picker** — searchable, Enter copies |
+| ![the lock screen](docs/screenshots/lock.png) | |
+| **Lock screen** — PAM-backed, wallpaper background, no account name unless you want it | |
 
 More, without screenshots:
 
@@ -158,6 +160,7 @@ so write only what differs. Arrays are replaced, objects are merged;
 | `idle.lockOnSleep` | `true` | lock when logind is about to suspend |
 | `idle.lockOnLockSignal` | `true` | lock on `loginctl lock-session` |
 | `idle.lockOnLidClose` | `true` | lock when the lid closes (skipped when docked) |
+| `lock.showUser` | `true` | show the account name on the lock screen |
 | `lock.background` | `"wallpaper"` | `wallpaper`, `screenshot` or `none` |
 | `lock.blur` / `lock.scrim` | `1.0` / `1.0` | lock background blur and darkening |
 

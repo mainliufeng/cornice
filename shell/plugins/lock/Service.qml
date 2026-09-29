@@ -31,6 +31,10 @@ Item {
   readonly property string pamService: Util.option(lockConfig, "pamService", "hyprlock")
   readonly property string pamDirectory: Util.option(lockConfig, "pamDirectory", "")
   readonly property bool allowEmergency: Util.option(lockConfig, "emergencyUnlock", true)
+  // Showing the account name on the lock screen is the familiar default, but it
+  // is also the one thing on it that is personal — `false` keeps it off for good
+  // (screenshots, streams, shared machines).
+  readonly property bool showUser: Util.option(lockConfig, "showUser", true)
 
   // Which screen shows the password box; the rest only show the background and
   // the clock. Empty means "the first screen that has a field".
@@ -285,6 +289,7 @@ Item {
 
             Text {
               anchors.verticalCenter: parent.verticalCenter
+              visible: root.showUser
               text: Quickshell.env("USER") || ""
               color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.75)
               font.family: Style.fontFamily
@@ -614,6 +619,7 @@ Item {
 
     function status(): string {
       return JSON.stringify({
+        showUser: root.showUser,
         background: root.backgroundMode,
         backgroundSource: root.backgroundSource,
         wallpaper: root.wallpaperPath,

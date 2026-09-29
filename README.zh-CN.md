@@ -23,6 +23,8 @@ waybar + mako + hypridle + hyprlock + polkit-gnome + 一个启动器 这一串�
 | **媒体** — 封面、进度、播放控制、音量、多播放器切换 | **音频** — 输出/麦克风音量、设备列表 |
 | ![OSD](docs/screenshots/osd.png) | ![emoji](docs/screenshots/emoji.png) |
 | **OSD** — 音量/麦克风/亮度，跟随硬件按键 | **emoji 选择器** — 可搜索，回车即复制 |
+| ![锁屏](docs/screenshots/lock.png) | |
+| **锁屏** — 走 PAM，背景用壁纸；账号名默认显示、可关掉 | |
 
 其余功能（不配截图）：
 
@@ -146,6 +148,7 @@ cornice session-env                  # 输出合成器环境变量（TTY / 过�
 | `idle.lockOnSleep` | `true` | 睡眠前锁屏 |
 | `idle.lockOnLockSignal` | `true` | 收到 `loginctl lock-session` 时锁屏 |
 | `idle.lockOnLidClose` | `true` | 合盖锁屏（接了外接屏时跳过） |
+| `lock.showUser` | `true` | 锁屏是否显示账号名 |
 | `lock.background` | `"wallpaper"` | `wallpaper` / `screenshot` / `none` |
 | `lock.blur` / `lock.scrim` | `1.0` / `1.0` | 锁屏背景的模糊与压暗强度 |
 

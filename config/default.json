@@ -86,7 +86,8 @@
   "lock": {
     "background": "wallpaper",
     "blur": 1.0,
-    "scrim": 1.0
+    "scrim": 1.0,
+    "showUser": true
   },
   "weather": {
     "autoLocate": true,

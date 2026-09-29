@@ -55,7 +55,7 @@ mkdir -p "$XDG_CONFIG_HOME/cornice" "$XDG_CACHE_HOME" "$XDG_STATE_HOME"
 # Hermetic: the lock background should be the wallpaper shipped with cornice, not
 # whatever photo the machine running the tests happens to have in ~/Pictures.
 cat >"$XDG_CONFIG_HOME/cornice/config.json" <<JSON
-{ "background": { "dir": "$prefix/wallpapers" } }
+{ "background": { "dir": "$prefix/wallpapers" }, "lock": { "showUser": false } }
 JSON
 
 cat >"$runtime/hyprland.conf" <<'EOF'
@@ -211,7 +211,7 @@ sleep 1
 
 section "phase 3: a correct password unlocks (pam_permit stands in for it)"
 cat >"$XDG_CONFIG_HOME/cornice/config.json" <<JSON
-{ "lock": { "pamService": "cornice-test", "pamDirectory": "$runtime/pam" },
+{ "lock": { "pamService": "cornice-test", "pamDirectory": "$runtime/pam", "showUser": false },
   "background": { "dir": "$prefix/wallpapers" } }
 JSON
 timeout 30 cornice restart >/dev/null 2>&1
