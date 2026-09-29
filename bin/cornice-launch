@@ -14,6 +14,18 @@ export CORNICE_PATH="$prefix"
 config_dir="$prefix/shell"
 qs="$bin_dir/cornice-qs"
 
+# Only one launcher may run per user: a restart that dispatches through the
+# compositor while a watchdog relaunches can otherwise start two shells, and the
+# second one loses the notification bus name.
+lock_file="${XDG_RUNTIME_DIR:-/tmp}/cornice-launch.lock"
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$lock_file"
+  if ! flock -n 9; then
+    echo "cornice: another launcher is already starting the shell" >&2
+    exit 0
+  fi
+fi
+
 # Desktop entries and CLI helpers assume the user's own bin dir is on PATH
 # (a login shell would have it); the compositor's environment often does not.
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"

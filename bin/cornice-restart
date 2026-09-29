@@ -43,9 +43,16 @@ if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && command -v hyprctl >/dev/null 2>
   hyprctl dispatch "exec $bin_dir/cornice-launch" >/dev/null 2>&1
   sleep 0.3
 fi
-if ! timeout 3 "$bin_dir/cornice" ping >/dev/null 2>&1; then
-  setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
-  disown || true
+# Wait longer than a shell needs to boot before assuming the dispatch failed;
+# a premature fallback is what produced duplicate instances (and with them a
+# shell that could not own org.freedesktop.Notifications).
+if ! timeout 15 "$bin_dir/cornice" ping >/dev/null 2>&1; then
+  if pgrep -x quickshell >/dev/null 2>&1; then
+    echo "cornice: a shell process exists but is not answering yet" >&2
+  else
+    setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
+    disown || true
+  fi
 fi
 
 # Two attempts: the first launch can still lose the race against a dying
