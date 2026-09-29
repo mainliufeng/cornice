@@ -288,6 +288,34 @@ cornice background clear         # back to dir/path
 `force: true` draws even while another wallpaper tool runs (they will overlap, so
 pick one). Without a `path`/`dir`, the shipped `wallpapers/default.png` is used.
 
+## Resources
+
+Measured with `./test/benchmark.sh --compare` on a 3072x1920 eDP-1 session (PSS,
+12s window, all 23 plugins loaded):
+
+| Stack | Memory | CPU (idle) |
+| --- | --- | --- |
+| cornice | ~200 MiB | ~0.1% |
+| waybar + mako + hypridle | ~46 MiB | ~0.2% |
+
+Cornice is the bigger process, and it should be reported plainly: it is a Qt
+Quick runtime, and it also replaces more than those three daemons (lock screen,
+polkit agent, launcher, clipboard history, emoji picker, notification centre and
+seven panels, weather, media control). Attribution, measured the same way:
+
+| Part | Cost |
+| --- | --- |
+| bare Quickshell + one layer surface | 62 MiB |
+| each additional layer surface | ~5.5 MiB, and only while it is visible |
+| the wallpaper layer | ~15 MiB |
+| all bar widgets together | ~1 MiB |
+| the plugin tree, service singletons (PipeWire, BlueZ, NetworkManager, MPRIS, tray) and font caches | the remainder |
+
+So the floor is the runtime, not a leak or a single plugin: making the audio and
+media panels lazy was measured and saved nothing, so they stay warm for instant
+opening. `./test/benchmark.sh` reproduces these numbers; `--json` prints them for
+a script.
+
 ## Taking over from other daemons
 
 Cornice replaces mako/dunst/swaync (notifications), hypridle (idle), waybar

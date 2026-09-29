@@ -5,7 +5,11 @@
   "version": "0.3.0",
   "author": "cornice",
   "description": "Now-playing from MPRIS: click opens a control panel, middle click plays/pauses, scroll skips",
-  "kinds": ["service", "bar-widget", "panel"],
+  "kinds": [
+    "service",
+    "bar-widget",
+    "panel"
+  ],
   "keepLoaded": true,
   "entryPoints": {
     "service": "Service.qml",
@@ -22,8 +26,16 @@
       "format": "{icon} {title}"
     },
     "schema": [
-      { "key": "maxWidth", "type": "number", "label": "Maximum width in pixels" },
-      { "key": "format", "type": "string", "label": "Format: {icon} {title} {artist}" }
+      {
+        "key": "maxWidth",
+        "type": "number",
+        "label": "Maximum width in pixels"
+      },
+      {
+        "key": "format",
+        "type": "string",
+        "label": "Format: {icon} {title} {artist}"
+      }
     ]
   }
 }

@@ -9,6 +9,7 @@
     "bar-widget",
     "panel"
   ],
+  "keepLoaded": true,
   "entryPoints": {
     "barWidget": "Widget.qml",
     "panel": "Panel.qml"
@@ -28,6 +29,5 @@
         "label": "Volume step in percent"
       }
     ]
-  },
-  "keepLoaded": true
+  }
 }
