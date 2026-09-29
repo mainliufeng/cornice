@@ -23,6 +23,10 @@ Item {
   readonly property var settings: (host && host.config && host.config.weather) ? host.config.weather : ({})
 
   readonly property string unit: Util.option(settings, "unit", "metric") === "imperial" ? "imperial" : "metric"
+  // Overridable so the test suites can point it at a local fake API.
+  readonly property string forecastBase: Util.option(settings, "baseUrl", "https://api.open-meteo.com/v1/forecast")
+  readonly property string geocodeBase: Util.option(settings, "geocodeUrl", "https://geocoding-api.open-meteo.com/v1/search")
+  readonly property string locateUrl: Util.option(settings, "locateUrl", "https://ipapi.co/json/")
   readonly property int intervalMinutes: Math.max(5, Util.option(settings, "intervalMinutes", 15))
   readonly property bool autoLocate: Util.option(settings, "autoLocate", true)
   // Located by city name / coordinates / the system timezone / the IP address,
@@ -140,7 +144,7 @@ Item {
     const unitParams = unit === "imperial"
       ? "&temperature_unit=fahrenheit&wind_speed_unit=mph"
       : ""
-    return "https://api.open-meteo.com/v1/forecast?latitude=" + latitude
+    return forecastBase + "?latitude=" + latitude
       + "&longitude=" + longitude
       + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m"
       + "&hourly=temperature_2m,weather_code"
@@ -197,7 +201,7 @@ Item {
       busy = true
       error = ""
       geocode.command = ["curl", "-fsS", "--max-time", "10", "--compressed",
-        "https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&format=json&name="
+        root.geocodeBase + "?count=1&language=en&format=json&name="
         + encodeURIComponent(timezoneCity)]
       geocodingTimezone = true
       geocode.running = true
@@ -230,7 +234,7 @@ Item {
 
   readonly property Process geocode: Process {
     command: ["curl", "-fsS", "--max-time", "10", "--compressed",
-      "https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&format=json&name="
+      root.geocodeBase + "?count=1&language=en&format=json&name="
       + encodeURIComponent(root.city)]
 
     stdout: StdioCollector {
@@ -268,7 +272,7 @@ Item {
   readonly property Process locate: Process {
     property int attempt: 0
     command: attempt === 0
-      ? ["curl", "-fsS", "--max-time", "8", "--compressed", "https://ipapi.co/json/"]
+      ? ["curl", "-fsS", "--max-time", "8", "--compressed", root.locateUrl]
       : ["curl", "-fsS", "--max-time", "8", "--compressed", "http://ip-api.com/json/?fields=status,lat,lon,city,countryCode"]
 
     stdout: StdioCollector {

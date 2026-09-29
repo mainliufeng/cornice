@@ -65,6 +65,42 @@ export XDG_CACHE_HOME="$runtime/cache"
 export XDG_STATE_HOME="$runtime/state"
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME"
 
+# A local stand-in for open-meteo: the weather plugin is pointed at it so the
+# suite asserts on fixed values instead of today's real forecast (and without
+# touching the network at all).
+weather_port=""
+if python3 -c "import ast,sys" >/dev/null 2>&1; then
+  rm -f "$runtime/weather.port"
+  setsid python3 "$prefix/test/fake-weather-server.py" --port 0 --print-port \
+    >"$runtime/weather.port" 2>"$runtime/weather-server.log" &
+  weather_server_pid=$!
+  for _ in $(seq 1 20); do
+    [[ -s $runtime/weather.port ]] && break
+    sleep 0.2
+  done
+  weather_port=$(cat "$runtime/weather.port" 2>/dev/null || echo "")
+fi
+
+# Sandbox config: point weather at the fake API, and keep the idle chain from
+# locking this private session (the lock suite covers locking deliberately).
+if [[ -n $weather_port ]]; then
+  mkdir -p "$XDG_CONFIG_HOME/cornice"
+  cat >"$XDG_CONFIG_HOME/cornice/config.json" <<EOF
+{
+  "weather": {
+    "baseUrl": "http://127.0.0.1:$weather_port/forecast",
+    "geocodeUrl": "http://127.0.0.1:$weather_port/geocode",
+    "locateUrl": "http://127.0.0.1:$weather_port/locate",
+    "city": "Testville",
+    "intervalMinutes": 60
+  },
+  "idle": { "dimAc": 0, "screenOffAc": 0, "lock": 0, "lockOnSleep": false, "lockOnLockSignal": false }
+}
+EOF
+else
+  warn "could not start the fake weather API; weather will not be asserted"
+fi
+
 cat >"$runtime/hyprland.conf" <<'EOF'
 misc {
     disable_hyprland_logo = true
@@ -165,10 +201,11 @@ if ((ready)); then
   expect_eq "socket path" "$runtime/cornice-${USER}.sock" "$(cornice socket)"
 
   plugin_count=$(cornice plugins | jq 'length')
-  if ((plugin_count >= 15)); then pass "plugins discovered: $plugin_count"
-  else fail "expected at least 15 plugins, found $plugin_count"; fi
+  on_disk=$(find "$prefix/shell/plugins" -name manifest.json | wc -l)
+  if ((plugin_count == on_disk)); then pass "every plugin loaded: $plugin_count/$on_disk"
+  else fail "loaded $plugin_count of $on_disk plugins on disk"; fi
 
-  for target in shell notifications osd; do
+  for target in shell notifications osd idle lock weather keylayout media background; do
     if cornice targets | jq -e --arg t "$target" 'index($t)' >/dev/null; then
       pass "ipc target present: $target"
     else
@@ -242,6 +279,107 @@ for id in cn.clock cn.audio cn.network cn.bluetooth cn.power cn.notifications; d
     fail "$id did not open (result '$open_result', state '$state')"
   fi
 done
+
+section "weather (local fake API)"
+if [[ -n $weather_port ]]; then
+  weather=""
+  for _ in $(seq 1 25); do
+    weather=$(cornice ipc weather status 2>/dev/null || echo '{}')
+    [[ $(jq -r '.status // ""' <<<"$weather") == "ready" ]] && break
+    sleep 0.4
+  done
+  expect_eq "weather parsed the local API" "ready" "$(jq -r '.status // ""' <<<"$weather")"
+  expect_eq "weather temperature" "21.5" "$(jq -r '.temperature' <<<"$weather")"
+  expect_eq "weather condition label" "Partly cloudy" "$(jq -r '.label' <<<"$weather")"
+  expect_eq "weather geocoded the configured city" "Testville, TV" "$(jq -r '.place' <<<"$weather")"
+  expect_eq "weather located by city" "city" "$(jq -r '.locatedBy' <<<"$weather")"
+  expect_eq "weather hours" "12" "$(jq -r '.hours' <<<"$weather")"
+  expect_eq "weather days" "5" "$(jq -r '.days' <<<"$weather")"
+
+  # A dead API must degrade, not crash: flip the URL, reload, and check both the
+  # error state and that the shell still answers.
+  jq '.weather.baseUrl = "http://127.0.0.1:9/dead"' \
+    "$XDG_CONFIG_HOME/cornice/config.json" >"$runtime/config.json.tmp" \
+    && mv "$runtime/config.json.tmp" "$XDG_CONFIG_HOME/cornice/config.json"
+  cornice reload >/dev/null 2>&1
+  # `cornice reload` is asynchronous: wait until the shell actually reports the
+  # new URL, otherwise the refresh below still uses the old (working) one.
+  for _ in $(seq 1 25); do
+    [[ $(cornice ipc shell config | jq -r '.weather.baseUrl // ""') == "http://127.0.0.1:9/dead" ]] && break
+    sleep 0.3
+  done
+  cornice ipc weather refresh >/dev/null 2>&1
+  for _ in $(seq 1 30); do
+    [[ $(cornice ipc weather status | jq -r '.status') == "error" ]] && break
+    sleep 0.4
+  done
+  expect_eq "a dead API leaves weather in an error state" "error" "$(cornice ipc weather status | jq -r '.status')"
+  if [[ $(cornice ping) == pong* ]]; then pass "and the shell still answers ($(cornice ping))"
+  else fail "the shell stopped answering after a failing fetch"; fi
+else
+  warn "fake weather API unavailable; weather checks skipped"
+fi
+
+section "notification inline reply"
+if [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} ]] && command -v python3 >/dev/null 2>&1; then
+  rm -f "$runtime/reply.log" "$runtime/reply.out"
+  setsid python3 "$prefix/test/fake-notify-reply.py" --timeout 30 \
+    --log "$runtime/reply.log" >"$runtime/reply.out" 2>&1 &
+  reply_pid=$!
+  reply_id=""
+  for _ in $(seq 1 20); do
+    reply_id=$(grep -o 'sent id=[0-9]*' "$runtime/reply.log" 2>/dev/null | tail -1 | cut -d= -f2)
+    [[ -n $reply_id ]] && break
+    sleep 0.3
+  done
+  if [[ -n $reply_id ]]; then
+    pass "a client sent a notification with an inline-reply action (id $reply_id)"
+    inspect=$(cornice ipc notifications inspect)
+    expect_eq "the server advertises inline reply" "true" "$(jq -r '.inlineReplySupported' <<<"$inspect")"
+    expect_eq "the notification reports hasInlineReply" "true" \
+      "$(jq -r --arg id "$reply_id" '.notifications[] | select(.id == ($id|tonumber)) | .hasInlineReply' <<<"$inspect")"
+    expect_eq "the reply is accepted" "ok" "$(cornice ipc notifications reply "$reply_id" "answered by the suite" 2>&1)"
+    answered=""
+    for _ in $(seq 1 20); do
+      answered=$(grep -o 'replied id=[0-9]* text=.*' "$runtime/reply.log" 2>/dev/null | tail -1)
+      [[ -n $answered ]] && break
+      sleep 0.3
+    done
+    if [[ $answered == *"answered by the suite"* ]]; then
+      pass "the client received NotificationReplied with the text"
+    else
+      fail "the client never received the reply (log: $(tail -1 "$runtime/reply.log" 2>/dev/null))"
+    fi
+  else
+    fail "the reply client never sent a notification"
+  fi
+  kill "$reply_pid" 2>/dev/null || true
+else
+  warn "no session bus; inline reply not exercised"
+fi
+
+section "keyboard layout"
+layout=$(cornice ipc keylayout status 2>/dev/null || echo '{}')
+if [[ $(jq -r '.layout // ""' <<<"$layout") != "" ]]; then
+  pass "keylayout reads the compositor: $(jq -r '.layout' <<<"$layout") ($(jq -r '.name' <<<"$layout"))"
+else
+  fail "keylayout reported nothing (last action: $(jq -r '.lastAction // "?"' <<<"$layout"))"
+fi
+
+section "idle logind signals"
+idle_state=$(cornice ipc idle status)
+expect_eq "the logind monitor is running" "true" "$(jq -r '.logindWatching' <<<"$idle_state")"
+expect_eq "a suspend signal is understood" "sleep" \
+  "$(cornice ipc idle feed '/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (true,)')"
+expect_eq "a wake signal is understood" "resume" \
+  "$(cornice ipc idle feed '/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (false,)')"
+expect_eq "an unrelated logind signal is ignored" "resume" \
+  "$(cornice ipc idle feed '/org/freedesktop/login1/session/_9: org.freedesktop.login1.Session.Unlock ()')"
+# The sandbox disables lockOnLockSignal (locking here would break the checks
+# that follow), so the signal must be ignored — the lock suite covers the real
+# path with a working PAM stack.
+expect_eq "a lock signal is ignored when the config disables it" "resume" \
+  "$(cornice ipc idle feed '/org/freedesktop/login1/session/_9: org.freedesktop.login1.Session.Lock ()')"
 
 section "on-screen display"
 if cornice ipc osd show volume 0.42 "" >/dev/null 2>&1; then
@@ -326,6 +464,8 @@ if [[ -z $problems ]]; then pass "no QML errors in the shell log"
 else
   fail "QML problems in the shell log:"; echo "$problems" | head -10
 fi
+
+[[ -n ${weather_server_pid:-} ]] && kill "$weather_server_pid" 2>/dev/null || true
 
 echo
 ((result == 0)) && echo "RESULT: all checks passed" || echo "RESULT: failures above"

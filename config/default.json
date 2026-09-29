@@ -78,7 +78,9 @@
     "dimBattery": 0,
     "screenOffAc": 120,
     "screenOffBattery": 300,
-    "lock": 300
+    "lock": 300,
+    "lockOnSleep": true,
+    "lockOnLockSignal": true
   },
   "lock": {
     "background": "wallpaper",

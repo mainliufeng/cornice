@@ -142,6 +142,24 @@ else
   fail "keylayout does not answer on its own target"
 fi
 
+idle_state=$(timeout 5 cornice ipc idle status 2>/dev/null || echo "")
+if [[ -n $idle_state ]]; then
+  if [[ $(jq -r '.logindWatching // false' <<<"$idle_state") == "true" ]]; then
+    pass "idle: watching logind (suspend + loginctl lock-session)"
+  else
+    fail "idle: the logind monitor is not running (suspend will not lock)"
+  fi
+  # Only the wake path is exercised here: feeding a suspend signal would lock the
+  # session this check runs in.
+  timeout 5 cornice ipc idle feed \
+    "/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (false,)" >/dev/null 2>&1 || true
+  if [[ $(timeout 5 cornice ipc idle status | jq -r '.lastAction // ""') == "resume" ]]; then
+    pass "idle: wake signal turns the display back on"
+  else
+    fail "idle: the wake signal was not handled"
+  fi
+fi
+
 lock=$(timeout 5 cornice ipc lock status 2>/dev/null || echo "")
 if [[ -n $lock ]]; then
   mode=$(jq -r '.background // "?"' <<<"$lock" 2>/dev/null)

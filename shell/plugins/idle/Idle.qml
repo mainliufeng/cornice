@@ -33,6 +33,9 @@ Item {
   // download, a presentation, or the test suite should not be interrupted by the
   // lock screen. Simpler and more reliable than an IdleInhibitor surface.
   property bool inhibited: false
+  property bool logindWatching: false
+  property string lastSignal: ""
+  property string signalBuffer: ""
   property bool dimmed: false
   property bool screenOff: false
   property string lastAction: ""
@@ -52,6 +55,12 @@ Item {
   // honouring them by default means dim/display-off/lock may never fire — which
   // is not what hypridle did. Off by default; turn on per machine if wanted.
   readonly property bool respectInhibitors: Util.option(settings, "respectInhibitors", false)
+
+  // logind wiring. hypridle used to provide both of these (before_sleep_cmd and
+  // its own logind Lock handler); with hypridle gone, nothing locks the session
+  // on suspend or on `loginctl lock-session` unless we do it here.
+  readonly property bool lockOnSleep: Util.option(settings, "lockOnSleep", true)
+  readonly property bool lockOnLockSignal: Util.option(settings, "lockOnLockSignal", true)
 
   // ---- one monitor per step -------------------------------------------------
   IdleMonitor {
@@ -180,7 +189,48 @@ Item {
     dpmsProcess.running = true
   }
 
-  function lockNow() {
+  // ---- logind ---------------------------------------------------------------
+  // `gdbus monitor` streams every signal from logind; the interesting ones are
+  //   Manager.PrepareForSleep (true,)   → suspending now
+  //   Manager.PrepareForSleep (false,)  → resumed
+  //   Session.Lock ()                   → loginctl lock-session, lid scripts, ...
+  // Chunks split lines, so keep the tail in signalBuffer instead of assuming one
+  // line per chunk.
+  function consumeSignals(chunk) {
+    if (!chunk) return
+    const combined = signalBuffer + chunk
+    const lines = combined.split("\n")
+    signalBuffer = lines.pop()
+    for (const line of lines) handleSignalLine(line)
+  }
+
+  function handleSignalLine(line) {
+    if (line === "" || line.indexOf("org.freedesktop.login1.") < 0) return
+    lastSignal = line.trim()
+    if (line.indexOf("PrepareForSleep") >= 0) {
+      if (line.indexOf("true") >= 0) {
+        lastAction = "sleep"
+        if (lockOnSleep) lockNow("sleep")
+      } else {
+        // Their old hypridle config ran `idle.sh display-on` after sleep: the
+        // panel is often still off when the session comes back.
+        displayOn()
+        undim()
+        lastAction = "resume"
+      }
+      return
+    }
+    if (line.indexOf(".Lock") >= 0 && lockOnLockSignal) lockNow("logind")
+  }
+
+  // Feed a line straight into the parser: the tests use it instead of actually
+  // suspending the machine.
+  function feedSignal(line) {
+    handleSignalLine(line)
+    return lastAction
+  }
+
+  function lockNow(reason) {
     if (!lockService || typeof lockService.lock !== "function") {
       console.warn("cornice: idle wanted to lock but the lock service is not loaded")
       return
@@ -192,9 +242,36 @@ Item {
       lastAction = "lock-skipped"
       return
     }
-    lastAction = "lock"
-    lockService.lock("idle")
+    const why = reason === undefined ? "idle" : String(reason)
+    lastAction = "lock:" + why
+    lockService.lock(why)
   }
+
+  readonly property Process logindMonitor: Process {
+    command: ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1"]
+
+    stdout: StdioCollector {
+      waitForEnd: false
+      onDataChanged: root.consumeSignals(text)
+    }
+
+    onStarted: root.logindWatching = true
+    onExited: (code, status) => {
+      root.logindWatching = false
+      if (code !== 0) console.warn("cornice idle: logind monitor exited with " + code + " (is gdbus installed?)")
+    }
+  }
+
+  // The monitor is the only thing that learns about suspend and loginctl; if it
+  // dies (a bus restart, a missing gdbus) bring it back.
+  Timer {
+    interval: 15000
+    repeat: true
+    running: true
+    onTriggered: if (!logindMonitor.running) logindMonitor.running = true
+  }
+
+  Component.onCompleted: logindMonitor.running = true
 
   ShellIpc {
     target: "idle"
@@ -210,6 +287,10 @@ Item {
         screenOffSeconds: root.screenOffSeconds,
         lockSeconds: root.lockSeconds,
         lockService: root.lockService !== null,
+        logindWatching: root.logindWatching,
+        lastSignal: root.lastSignal,
+        lockOnSleep: root.lockOnSleep,
+        lockOnLockSignal: root.lockOnLockSignal,
         respectInhibitors: root.respectInhibitors,
         monitorsEnabled: { "dim": dimMonitor.enabled, "screenOff": screenOffMonitor.enabled, "lock": lockMonitor.enabled },
         monitorsIdle: { "dim": dimMonitor.isIdle, "screenOff": screenOffMonitor.isIdle, "lock": lockMonitor.isIdle }
@@ -257,6 +338,11 @@ Item {
       root.inhibited = false
       inhibitTimer.stop()
       return "released"
+    }
+
+    // Test hook: pretend logind sent this line (the real ones need a suspend).
+    function feed(line: string): string {
+      return root.feedSignal(String(line))
     }
 
     function refresh(): string {

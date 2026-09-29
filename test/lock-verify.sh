@@ -173,6 +173,21 @@ sleep 1.5
 expect_eq "lock released" "false" "$(lock_status | jq -r '.locked')"
 expect_eq "compositor lock released" "false" "$(hypr_locked)"
 
+section "phase 2.5: logind lock signal locks the session"
+cornice ipc idle feed '/org/freedesktop/login1/session/_9: org.freedesktop.login1.Session.Lock ()' >/dev/null 2>&1
+sleep 2
+state=$(cornice ipc lock status 2>/dev/null || echo '{}')
+if [[ $(jq -r '.locked // false' <<<"$state") == "true" ]]; then
+  pass "logind Lock signal locks the session"
+else
+  fail "logind Lock signal did not lock (state: $(jq -r '.state // "?"' <<<"$state"))"
+fi
+cornice lock emergency-unlock >/dev/null 2>&1 || true
+sleep 1
+[[ $(cornice ipc lock status | jq -r '.locked') == "false" ]] \
+  && pass "and it can be released again" \
+  || fail "the session stayed locked after an emergency unlock"
+
 section "phase 3: a correct password unlocks (pam_permit stands in for it)"
 cat >"$XDG_CONFIG_HOME/cornice/config.json" <<JSON
 { "lock": { "pamService": "cornice-test", "pamDirectory": "$runtime/pam" } }

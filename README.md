@@ -193,6 +193,8 @@ The keys that are not just bar layout:
 | `idle.screenOffAc` / `idle.screenOffBattery` | `120` / `300` | seconds before the display turns off |
 | `idle.lock` | `300` | seconds before the session locks |
 | `idle.respectInhibitors` | `false` | if true, apps holding an idle inhibitor also block dim/lock (browsers hold them for all sorts of reasons, so this is off by default) |
+| `idle.lockOnSleep` | `true` | lock when logind says the machine is about to suspend (hypridle's `before_sleep_cmd`) |
+| `idle.lockOnLockSignal` | `true` | lock on logind's `Session.Lock` — this is what makes `loginctl lock-session`, lid scripts and power managers work |
 
 `cornice ipc idle inhibit 3600` holds the idle chain off for an hour (and
 `cornice ipc idle release` ends it early) — for long downloads, presentations,
@@ -235,6 +237,20 @@ bitten this codebase (five-digit glyph escapes, anchors on plugin roots, …).
 with separate AC and battery timeouts (see the configuration table). It uses the
 backlight for dimming — like the `idle.sh` it replaced — and restores the
 previous level at startup, so a crash cannot leave the screen dim.
+
+logind wiring (it replaced hypridle's `before_sleep_cmd`/`after_sleep_cmd` and its
+own lock handler, so nothing else would do this):
+
+- `PrepareForSleep(true)` → lock the session before it suspends;
+- `PrepareForSleep(false)` → display on and un-dim (the panel is often still off
+  when the session comes back);
+- `Session.Lock` → lock, which is what `loginctl lock-session` and most power
+  managers actually call.
+
+The monitor is a `gdbus monitor --system --dest org.freedesktop.login1` child; if
+it dies the shell restarts it every 15s. `cornice ipc idle feed "<signal line>"`
+injects a line into the parser — that is how the test suites cover suspend
+without suspending your machine.
 
 Events worth knowing:
 
