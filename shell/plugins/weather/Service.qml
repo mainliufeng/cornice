@@ -51,6 +51,23 @@ Item {
   // location (which is how a CST machine ended up showing Los Angeles weather).
   property int bootstrapPending: 3
   property bool dataFromCache: false
+
+  // Everything that decides *where* we are. The user's config file is merged
+  // asynchronously — the first refresh can run before it lands, which is how a
+  // configured `weather.city` ended up ignored until the next restart. Watching
+  // this key means a location change re-resolves immediately instead.
+  readonly property string locationKey: [
+    city, configuredLatitude, configuredLongitude, autoLocate, useTimezone
+  ].join("|")
+
+  onLocationKeyChanged: {
+    if (bootstrapPending > 0) return   // the bootstrap refresh will use the new value
+    if (locationKey === "") return
+    latitude = NaN
+    longitude = NaN
+    updatedAt = 0
+    refresh(true)
+  }
   property string status: "idle"         // idle | locating | fetching | ready | error | unconfigured
   property string error: ""
 
@@ -504,6 +521,9 @@ Item {
         error: root.error,
         place: root.place,
         locatedBy: root.locatedBy,
+        city: root.city,
+        autoLocate: root.autoLocate,
+        useTimezone: root.useTimezone,
         latitude: root.latitude,
         longitude: root.longitude,
         temperature: root.temperature,

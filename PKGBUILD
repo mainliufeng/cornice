@@ -12,6 +12,10 @@
 #
 # Layout note: the CLI resolves its own prefix by following its symlink, so the
 # tree must live in /usr/share/cornice with /usr/bin entries pointing into it.
+#
+# The `source=()` below packages this working tree, which is what a local
+# `makepkg -si` in a clone needs. For an AUR upload the source has to be
+# fetchable instead — see `docs/aur.md`.
 
 pkgname=cornice-git
 pkgver=r$(git -C "$startdir" rev-list --count HEAD 2>/dev/null || echo 1).$(git -C "$startdir" rev-parse --short HEAD 2>/dev/null || echo local)
@@ -19,7 +23,7 @@ pkgrel=1
 pkgdesc="General-purpose Hyprland shell: bar, panels, notifications, launcher, lock, idle"
 arch=('any')
 url="https://github.com/mainliufeng/cornice"
-license=('custom')   # TODO: pick a licence and drop a LICENSE file in the repo
+license=('MIT')
 # glib2 provides gdbus (the logind monitor for suspend/lid locking) and curl is
 # what the weather plugin fetches with — both are used by default plugins, so
 # they are hard dependencies, not optional ones.
@@ -65,6 +69,6 @@ package() {
   # Documentation and the licence (once the repo has one).
   install -Dm644 "$startdir/README.md" "$pkgdir/usr/share/doc/cornice/README.md"
   install -Dm644 "$startdir/DESIGN.md" "$pkgdir/usr/share/doc/cornice/DESIGN.md"
-  [[ -f $startdir/LICENSE ]] && install -Dm644 "$startdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$startdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   return 0
 }

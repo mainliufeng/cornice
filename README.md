@@ -68,6 +68,13 @@ Verification:
 `cornice test` runs the applicable ones; `cornice test --quick` skips the two
 that build a private compositor.
 
+## Screenshots
+
+| | |
+| --- | --- |
+| ![the bar](docs/screenshots/bar.png) | ![the weather panel](docs/screenshots/panel-weather.png) |
+| the bar | the weather panel |
+
 ## Requirements
 
 - Hyprland (Wayland session)
@@ -88,8 +95,6 @@ cd ~/Code/self/cornice
 ./install.sh                 # symlink the CLI into ~/.local/bin, check deps
 ```
 
-![the bar](docs/screenshots/bar.png)
-
 `./install.sh` never needs root and never edits a config file. Options:
 
 ```bash
@@ -100,12 +105,15 @@ cd ~/Code/self/cornice
 make install                     # same as ./install.sh
 ```
 
-Arch users can build a package instead — the PKGBUILD builds from the working
-tree (there is no public remote yet):
+Arch users can build a package instead:
 
 ```bash
 make pkg        # makepkg -si; installs to /usr/share/cornice + /usr/bin
 ```
+
+It will be published as `cornice-git` on the AUR — [docs/aur.md](docs/aur.md)
+has the AUR-ready PKGBUILD and the exact upload procedure (AUR registration is
+periodically closed to fight spam, so this is prepared rather than uploaded).
 
 Verify the install the same way a release would (installs into a temp prefix and
 runs the whole headless suite against it, including the shipped defaults):
