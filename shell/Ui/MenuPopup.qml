@@ -167,8 +167,12 @@ Item {
                     // name either — so the click is sent by a helper that speaks
                     // DBusMenu directly.
                     const quote = value => "'" + String(value).replace(/'/g, "'\\''") + "'"
-                    Util.exec("cornice-tray-activate --id " + quote(root.ownerId)
-                      + " --label " + quote(entry.text))
+                    const command = "cornice-tray-activate --id " + quote(root.ownerId)
+                      + " --label " + quote(entry.text)
+                    // Logged on purpose: if the helper is missing from PATH the
+                    // click would otherwise fail silently (it did once).
+                    console.log("cornice: tray menu activate → " + command)
+                    Util.exec(command)
                   } else {
                     entry.display()
                   }
