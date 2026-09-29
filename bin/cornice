@@ -289,6 +289,16 @@ case "$command" in
     ;;
 
   stop)
+    # Killing the shell while the session is locked kills the lock client too:
+    # Hyprland then shows its crashed-lockscreen failsafe, and on a hyprlang
+    # config there is no runtime command to clear it (hl.clear_crashed_lockscreen
+    # is Lua-only). So refuse unless the caller insists.
+    if [[ ${1:-} != "--force" ]] && timeout 3 "$qs" ipc -p "$config_dir" call lock status 2>/dev/null | grep -q '"secure":true'; then
+      echo "cornice: the session is locked — stopping the shell now would leave Hyprland's" >&2
+      echo "  crashed-lockscreen failsafe up (only a session restart clears it on a hyprlang config)." >&2
+      echo "  unlock first, or pass --force if you really mean it." >&2
+      exit 1
+    fi
     stopped=0
     while "$qs" kill -p "$config_dir" --any-display >/dev/null 2>&1; do
       stopped=1

@@ -86,8 +86,15 @@ Item {
       onRead: line => {
         root.compositorLocked = String(line).trim() === "true"
         if (root.compositorLocked)
+          // Two different situations look the same from here:
+          //  * our own lock request is pending/queued — emergency-unlock releases it;
+          //  * a previous lock client died and Hyprland is showing its
+          //    crashed-lockscreen failsafe — on a hyprlang config the only way out
+          //    is restarting the compositor (hl.clear_crashed_lockscreen is Lua-only).
           console.warn("cornice: the compositor reports a locked session that this shell does not own "
-            + "(a previous lock client died). Unlock from a TTY with: cornice lock emergency-unlock")
+            + "(a previous lock client died). Try: cornice lock emergency-unlock — "
+            + "if the screen still shows Hyprland's \"lockscreen app died\" message, "
+            + "that failsafe can only be cleared by restarting the compositor: hyprctl dispatch exit")
       }
     }
   }

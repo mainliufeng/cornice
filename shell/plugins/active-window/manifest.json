@@ -5,7 +5,9 @@
   "version": "0.1.0",
   "author": "cornice",
   "description": "Title of the focused window",
-  "kinds": ["bar-widget"],
+  "kinds": [
+    "bar-widget"
+  ],
   "entryPoints": {
     "barWidget": "Widget.qml"
   },
@@ -15,10 +17,14 @@
     "allowMultiple": false,
     "defaultSection": "left",
     "defaults": {
-      "maxWidth": 420
+      "maxWidth": 260
     },
     "schema": [
-      { "key": "maxWidth", "type": "number", "label": "Maximum width in pixels" }
+      {
+        "key": "maxWidth",
+        "type": "number",
+        "label": "Maximum width in pixels"
+      }
     ]
   }
 }

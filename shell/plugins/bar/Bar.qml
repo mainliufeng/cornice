@@ -79,6 +79,11 @@ Item {
         registry: bar.registry
         entries: bar.leftEntries
         section: "left"
+        // Stop before the centre clock: a long window title must never run under
+        // it. Widgets that can elide (active-window, media) get their own
+        // maxWidth from their inline config.
+        width: Math.max(0, Math.round((parent.width - centerSection.width) / 2 - Style.padding * 2))
+        clip: true
       }
 
       BarSection {
@@ -101,6 +106,8 @@ Item {
         registry: bar.registry
         entries: bar.rightEntries
         section: "right"
+        width: Math.max(0, Math.round((parent.width - centerSection.width) / 2 - Style.padding * 2))
+        clip: true
       }
 
       // Diagnostics beat a silently empty bar.

@@ -184,6 +184,21 @@ cornice background clear         # back to dir/path
 `force: true` draws even while another wallpaper tool runs (they will overlap, so
 pick one). Without a `path`/`dir`, the shipped `wallpapers/default.png` is used.
 
+## If a lock client dies
+
+Hyprland keeps the session locked and shows its "lockscreen app died" failsafe when
+the lock client disappears (e.g. the shell was killed while locked). On a **Lua**
+Hyprland config you can clear it in place:
+
+```bash
+hyprctl eval 'hl.clear_crashed_lockscreen()'
+```
+
+On a **hyprlang** config (`hyprland.conf`) that command does not exist, so the only
+way out is restarting the compositor — `hyprctl dispatch exit` — and logging back
+in. `cornice stop` therefore refuses to kill the shell while the session is locked;
+pass `--force` if you know what you are doing.
+
 ## Support hooks
 
 Some read-only IPC targets exist so a problem can be diagnosed from outside the
