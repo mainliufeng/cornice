@@ -62,6 +62,20 @@ echo "  tracked files: $(git -C "$prefix" ls-files | wc -l), exported: $(find "$
 echo "== 1/… install.sh --copy (from the exported tree)"
 "$tmp/source/install.sh" --copy --prefix "$tmp/prefix" >"$tmp/install.log" 2>&1 \
   || { echo "install.sh failed:"; tail -5 "$tmp/install.log"; exit 1; }
+# Every helper the repo ships must be installed and resolve: a stale install once
+# left a helper out, and the shell then failed to act on tray menu clicks.
+missing_helpers=()
+while IFS= read -r helper; do
+  [[ -n $helper ]] || continue
+  [[ -x "$tmp/prefix/bin/$helper" ]] || missing_helpers+=("$helper")
+done < <(find "$tmp/source/bin" -maxdepth 1 -name 'cornice*' ! -name '*.sh' -printf '%f\n' | sort)
+if ((${#missing_helpers[@]} == 0)); then
+  echo "  all shipped helpers are installed"
+else
+  echo "  FAIL: not installed: ${missing_helpers[*]}"
+  failures=$((failures + 1))
+fi
+
 run_against "install.sh --copy" "$tmp/prefix/share/cornice"
 
 if ((with_package)); then

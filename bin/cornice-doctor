@@ -53,6 +53,28 @@ else
   bad "hyprctl not found (Cornice targets Hyprland)"
 fi
 
+section "Helpers"
+# Every cornice-* command the shell or the CLI invokes at runtime. A missing one
+# used to fail silently (the tray menu simply did nothing until re-installing),
+# so this is checked on every launch and lands in the health report.
+required_helpers=(
+  cornice cornice-launch cornice-qs cornice-restart cornice-doctor
+  cornice-verify cornice-takeover cornice-test cornice-tray-activate
+)
+missing_helpers=()
+for helper in "${required_helpers[@]}"; do
+  if command -v "$helper" >/dev/null 2>&1; then
+    ok "$helper: $(command -v "$helper")"
+  elif [[ -x "$prefix/bin/${helper}.sh" || -x "$prefix/bin/$helper" ]]; then
+    warn "$helper: not on PATH (using $prefix/bin)"
+  else
+    bad "$helper: missing — re-run ./install.sh (new helpers need it)"
+  fi
+done
+if [[ -f $prefix/bin/cornice-tray-activate && ! -e ${HOME}/.local/bin/cornice-tray-activate ]]; then
+  warn "the install looks stale (a helper exists in the repo but not in ~/.local/bin)"
+fi
+
 section "Session"
 if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
   ok "Hyprland:    running ($HYPRLAND_INSTANCE_SIGNATURE)"

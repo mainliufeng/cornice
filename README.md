@@ -234,6 +234,23 @@ A plugin that fails to load, a panel that opens empty, a takeover that comments
 the wrong line and a fresh install that is missing a file all fail these suites —
 each of those has happened here, which is why they exist.
 
+## When something silently does nothing
+
+The usual cause is an **outdated install**: the shell calls helpers from
+`~/.local/bin`, so a helper added since your last install is simply missing and
+the feature it backs (tray menu clicks, for instance) does nothing at all.
+
+`cornice doctor` checks every helper the shell and the CLI invoke, and says when
+the install looks stale:
+
+```
+cornice doctor        # cornice-tray-activate: missing — re-run ./install.sh
+cornice logs          # the shell logs the exact command when it calls a helper
+```
+
+`./install.sh` verifies its own links afterwards, and the release gate
+(`./test/install-verify.sh`) fails when a shipped helper is not installed.
+
 ## Design notes
 
 [DESIGN.md](DESIGN.md) (Chinese) records the architecture decisions, the

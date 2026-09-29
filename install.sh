@@ -165,6 +165,25 @@ for src in "$source_dir"/cornice*; do
 done
 ((installed)) || { bad "no cornice binaries found in $source_dir"; exit 1; }
 
+# Every shipped helper must resolve after install: a missing link used to fail
+# silently at runtime (the tray menu simply did nothing until the next install).
+broken=0
+for src in "$source_dir"/cornice*; do
+  name=$(basename "$src")
+  target="$bindir/$name"
+  if [[ -L $target && -e $target ]] || [[ -x $target && ! -L $target ]]; then
+    :
+  else
+    bad "$name does not resolve at $target"
+    broken=$((broken + 1))
+  fi
+done
+if ((broken == 0)); then
+  ok "every helper resolves ($(ls "$source_dir"/cornice* | wc -l) installed)"
+else
+  warn "$broken helper(s) missing — runtime features that call them will not work"
+fi
+
 case ":$PATH:" in
   *":$bindir:"*) ok "$bindir is on PATH" ;;
   *) warn "$bindir is NOT on your PATH — add: export PATH=\"$bindir:\$PATH\"" ;;
