@@ -185,8 +185,18 @@ done
 export WAYLAND_DISPLAY="${own##*/}"
 pass "shell display: $WAYLAND_DISPLAY"
 
+# CORNICE_INSTALLED_PREFIX points the suite at an *installed* tree (install.sh
+# --copy or a package root) instead of the working tree, which is how a fresh
+# install gets tested: the tests stay here, the shell comes from there.
+install_prefix="${CORNICE_INSTALLED_PREFIX:-$prefix}"
+if [[ $install_prefix != "$prefix" ]]; then
+  section "installed tree"
+  pass "shell from $install_prefix"
+  [[ -f $install_prefix/shell/shell.qml ]] || fail "no shell.qml under $install_prefix"
+fi
+
 section "shell and IPC"
-"$prefix/bin/cornice-qs" -n -p "$prefix/shell" >"$runtime/shell.log" 2>&1 &
+"$install_prefix/bin/cornice-qs" -n -p "$install_prefix/shell" >"$runtime/shell.log" 2>&1 &
 shell_pid=$!
 
 ready=0
@@ -201,7 +211,7 @@ if ((ready)); then
   expect_eq "socket path" "$runtime/cornice-${USER}.sock" "$(cornice socket)"
 
   plugin_count=$(cornice plugins | jq 'length')
-  on_disk=$(find "$prefix/shell/plugins" -name manifest.json | wc -l)
+  on_disk=$(find "$install_prefix/shell/plugins" -name manifest.json | wc -l)
   if ((plugin_count == on_disk)); then pass "every plugin loaded: $plugin_count/$on_disk"
   else fail "loaded $plugin_count of $on_disk plugins on disk"; fi
 

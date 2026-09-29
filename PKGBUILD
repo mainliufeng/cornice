@@ -20,7 +20,10 @@ pkgdesc="General-purpose Hyprland shell: bar, panels, notifications, launcher, l
 arch=('any')
 url="https://github.com/mainliufeng/cornice"
 license=('custom')   # TODO: pick a licence and drop a LICENSE file in the repo
-depends=('quickshell' 'hyprland' 'jq')
+# glib2 provides gdbus (the logind monitor for suspend/lid locking) and curl is
+# what the weather plugin fetches with — both are used by default plugins, so
+# they are hard dependencies, not optional ones.
+depends=('quickshell' 'hyprland' 'jq' 'glib2' 'curl')
 optdepends=(
   'socat: CLI talks to the shell over its own socket (needed for runtime plugins)'
   'grim: screenshots for `cornice verify`'

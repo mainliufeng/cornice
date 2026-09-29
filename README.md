@@ -103,6 +103,13 @@ tree (there is no public remote yet):
 make pkg        # makepkg -si; installs to /usr/share/cornice + /usr/bin
 ```
 
+Verify the install the same way a release would (installs into a temp prefix and
+runs the whole headless suite against it, including the shipped defaults):
+
+```bash
+./test/install-verify.sh --package   # or: cornice test install
+```
+
 Then add one line to `~/.config/hypr/hyprland.conf`:
 
 ```conf

@@ -6,6 +6,8 @@
 #   headless   private compositor stack: does the shell start, load plugins, paint?
 #   lock       private stack: does the lock screen accept/reject/emergency-unlock?
 #   live       the session you are logged into: is the running shell healthy?
+#   install    install into a temp prefix and run the headless suite against it
+#              (a release gate; not part of the default set because it is slow)
 #
 #   cornice test            everything that applies
 #   cornice test --quick    only the fast, sandboxed suites (takeover, live)
@@ -25,7 +27,7 @@ for arg in "$@"; do
   case "$arg" in
     --quick) quick=1 ;;
     -h | --help) sed -n '2,15p' "$self" | sed 's/^# \?//'; exit 0 ;;
-    takeover | headless | lock | live) suite_args+=("$arg") ;;
+    takeover | headless | lock | live | install) suite_args+=("$arg") ;;
     *) echo "cornice test: unknown argument '$arg'" >&2; exit 2 ;;
   esac
 done
@@ -70,6 +72,7 @@ for suite in "${suite_args[@]}"; do
     takeover) run_suite "takeover (sandbox)" "$test_dir/takeover-test.sh" ;;
     headless) run_suite "headless verify (private compositor)" "$test_dir/headless-verify.sh" ;;
     lock) run_suite "lock verify (private compositor)" "$test_dir/lock-verify.sh" ;;
+    install) run_suite "install verify (fresh install, private compositor)" "$test_dir/install-verify.sh" ;;
     live)
       printf '\n\033[1m── live session ─────────────────────────────────\033[0m\n'
       if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} && -z ${WAYLAND_DISPLAY:-} ]]; then

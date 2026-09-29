@@ -6,7 +6,7 @@
 PREFIX ?= $(HOME)/.local
 
 .PHONY: help check install uninstall run launch stop restart status doctor verify \
-        test test-quick headless lock takeover pkg clean fmt
+        test test-quick headless lock takeover install-verify bench pkg clean fmt
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -57,6 +57,12 @@ lock: ## private compositor: lock screen accept/reject/emergency unlock
 
 takeover: ## sandbox: takeover plan/apply/undo round trip
 	./test/takeover-test.sh
+
+install-verify: ## does a fresh install work? (copy + optional package)
+	./test/install-verify.sh
+
+bench: ## memory/cpu, optionally against waybar+mako+hypridle
+	./test/benchmark.sh --compare
 
 takeover-plan: ## what would `cornice takeover --apply` change?
 	./bin/cornice-takeover
