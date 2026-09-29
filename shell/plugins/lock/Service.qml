@@ -48,6 +48,11 @@ Item {
   // idle (unlocked) | locked (waiting for the password) | authenticating (a PAM
   // attempt is in flight) | failed | unlocking
   property string state: "idle"
+  // Set when a PAM attempt outlives the watchdog (fingerprint readers and Howdy
+  // can block for a long time). Input is accepted again so the prompt can never
+  // become unusable, which is how the user got locked out before.
+  property bool attemptStale: false
+  readonly property bool acceptingInput: (state !== "authenticating" && state !== "unlocking") || attemptStale
   property string message: ""
   property string password: ""
   property string pendingPassword: ""
@@ -204,7 +209,7 @@ Item {
               focus: true
               // Enabled unless an attempt is really in flight: tying this to the
               // state alone is what made the prompt untypable.
-              enabled: !pam.active && root.state !== "unlocking"
+              enabled: root.acceptingInput
 
               Component.onCompleted: forceActiveFocus()
 
@@ -249,6 +254,28 @@ Item {
           }
         }
       }
+    }
+  }
+
+  Timer {
+    id: attemptWatchdog
+    interval: 25000
+    repeat: false
+    onTriggered: {
+      if (root.state !== "authenticating") return
+      root.attemptStale = true
+      root.message = "PAM is still waiting (fingerprint or slow module?) — press Enter to retry"
+      root.journal = root.journal + "|auth:stale"
+      console.warn("cornice: PAM attempt exceeded 25s; re-enabling input")
+    }
+  }
+
+  onStateChanged: {
+    if (state === "authenticating") {
+      attemptStale = false
+      attemptWatchdog.restart()
+    } else {
+      attemptWatchdog.stop()
     }
   }
 
@@ -320,6 +347,7 @@ Item {
     if (password === "") return "empty"
 
     state = "authenticating"
+    attemptStale = false
     message = ""
     pendingPassword = password
     const started = pam.start()
