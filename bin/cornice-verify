@@ -58,7 +58,14 @@ done
 
 section "the bar you are looking at"
 if command -v hyprctl >/dev/null 2>&1; then
-  layers=$(hyprctl layers 2>/dev/null | grep -c "cornice-bar" || true)
+  # A shell that was just (re)started may not have mapped its bar yet, so give it
+  # a moment instead of reporting a false failure.
+  layers=0
+  for _ in $(seq 1 20); do
+    layers=$(hyprctl layers 2>/dev/null | grep -c "cornice-bar" || true)
+    ((layers > 0)) && break
+    sleep 0.25
+  done
   if ((layers > 0)); then pass "a cornice-bar layer surface is mapped"
   else
     fail "no cornice-bar layer surface found — is waybar still running?"
