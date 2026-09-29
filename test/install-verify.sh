@@ -26,6 +26,21 @@ trap cleanup EXIT
 
 failures=0
 
+# What a user gets is what git tracks — not the working tree. Testing the working
+# tree hid a real bug once: `*.png` in .gitignore meant the shipped default
+# wallpaper was never in the repository, so a fresh clone had no background.
+echo "== 0/… export the tracked tree (what a clone contains)"
+mkdir -p "$tmp/source"
+git -C "$prefix" archive HEAD | tar -x -C "$tmp/source"
+if [[ ! -f $tmp/source/wallpapers/default.png ]]; then
+  echo "  FAIL: wallpapers/default.png is not tracked (a fresh clone would have no default wallpaper)"
+  failures=$((failures + 1))
+fi
+if [[ ! -f $tmp/source/LICENSE ]]; then
+  echo "  FAIL: LICENSE is not tracked"
+  failures=$((failures + 1))
+fi
+
 run_against() {
   local label="$1" root="$2"
   echo
@@ -43,8 +58,9 @@ run_against() {
   return "$status"
 }
 
-echo "== 1/… install.sh --copy"
-"$prefix/install.sh" --copy --prefix "$tmp/prefix" >"$tmp/install.log" 2>&1 \
+echo "  tracked files: $(git -C "$prefix" ls-files | wc -l), exported: $(find "$tmp/source" -type f | wc -l)"
+echo "== 1/… install.sh --copy (from the exported tree)"
+"$tmp/source/install.sh" --copy --prefix "$tmp/prefix" >"$tmp/install.log" 2>&1 \
   || { echo "install.sh failed:"; tail -5 "$tmp/install.log"; exit 1; }
 run_against "install.sh --copy" "$tmp/prefix/share/cornice"
 

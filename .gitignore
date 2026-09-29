@@ -1,5 +1,6 @@
-# runtime artifacts
-*.png
+# runtime artifacts (screenshots taken by the suites, shell logs)
+/*.png
+test/*.png
 *.log
 
 # editor / OS noise
