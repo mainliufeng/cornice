@@ -144,9 +144,22 @@ Item {
           blurMax: 48
         }
 
+        // A gradient scrim instead of a flat wash: the desktop stays readable
+        // behind the lock, but the type keeps its contrast.
         Rectangle {
           anchors.fill: parent
-          color: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, root.shotRevision > 0 ? 0.45 : 1)
+          visible: root.shotRevision > 0
+          gradient: Gradient {
+            GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.62) }
+            GradientStop { position: 0.45; color: Qt.rgba(0, 0, 0, 0.30) }
+            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.66) }
+          }
+        }
+
+        Rectangle {
+          anchors.fill: parent
+          visible: root.shotRevision === 0
+          color: Color.background
         }
 
         SystemClock {
@@ -154,59 +167,148 @@ Item {
           precision: SystemClock.Seconds
         }
 
+        // A soft card behind the content: a busy wallpaper should not decide
+        // whether the password prompt is readable.
+        Rectangle {
+          anchors.horizontalCenter: content.horizontalCenter
+          anchors.verticalCenter: content.verticalCenter
+          width: content.width + Style.space(7)
+          height: content.height + Style.space(6)
+          color: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 0.72)
+          border.width: 1
+          border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.10)
+        }
+
         Column {
-          anchors.horizontalCenter: parent.horizontalCenter
-          y: Math.round(parent.height * 0.30)
-          spacing: Style.space(0.6)
+          id: content
 
-          Text {
+          anchors.centerIn: parent
+          anchors.verticalCenterOffset: -Math.round(parent.height * 0.05)
+          spacing: Style.space(1.05)
+
+          // ---- clock ---------------------------------------------------------
+          Row {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: Qt.formatDateTime(surfaceClock.date, "HH:mm:ss")
-            color: Color.foreground
-            font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize * 5
-            font.bold: true
+            spacing: Style.space(0.7)
+
+            Text {
+              text: Qt.formatDateTime(surfaceClock.date, "HH:mm")
+              color: Color.foreground
+              font.family: Style.fontFamily
+              font.pixelSize: Math.round(Style.fontSize * 5.2)
+              font.bold: true
+              font.letterSpacing: -1
+            }
+
+            Text {
+              anchors.bottom: parent.bottom
+              anchors.bottomMargin: Math.round(Style.fontSize * 0.9)
+              text: Qt.formatDateTime(surfaceClock.date, "ss")
+              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.55)
+              font.family: Style.fontFamily
+              font.pixelSize: Style.fontSize * 1.5
+            }
           }
 
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: Qt.formatDateTime(surfaceClock.date, "yyyy.MM.dd")
-            color: Color.muted
+            text: Qt.formatDateTime(surfaceClock.date, "dddd, d MMMM").toUpperCase()
+            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.65)
             font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize * 1.4
+            font.pixelSize: Style.fontSize * 0.95
+            font.letterSpacing: 2
           }
 
-          Item { width: 1; height: Style.space(3) }
+          Item { width: 1; height: Style.space(2.6) }
 
-          // Password box: the visible part is ours, the input is invisible but
-          // focused, so the dots stay centred like hyprlock's.
-          Rectangle {
+          // ---- who is unlocking ----------------------------------------------
+          Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(0.5)
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "\uf023"
+              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.55)
+              font.family: Style.iconFamily
+              font.pixelSize: Style.fontSize
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: Quickshell.env("USER") || ""
+              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.75)
+              font.family: Style.fontFamily
+              font.pixelSize: Style.fontSize * 0.95
+              font.letterSpacing: 1
+            }
+          }
+
+          Item { width: 1; height: Style.space(0.4) }
+
+          // ---- password field ------------------------------------------------
+          Item {
             id: field
 
             anchors.horizontalCenter: parent.horizontalCenter
-            width: Math.round(Style.space(24))
+            width: Math.round(Style.space(26))
             height: Math.round(Style.space(4.6))
-            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.08)
-            border.width: 2
-            border.color: root.state === "failed" ? Color.urgent : Color.surfaceBorder
-            radius: Style.radius
+
+            Rectangle {
+              anchors.fill: parent
+              radius: Style.radius
+              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b,
+                             input.activeFocus ? 0.10 : 0.06)
+
+              Behavior on color {
+                ColorAnimation { duration: 120 }
+              }
+            }
+
+            // The underline carries the state: accent = ready, muted = busy,
+            // urgent = failed.
+            Rectangle {
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              height: 2
+              color: root.state === "failed" ? Color.urgent
+                   : (root.state === "authenticating" || pam.active) ? Color.muted
+                   : Color.accent
+            }
+
+            Text {
+              id: lead
+
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(1.2)
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.state === "failed" ? "\uf00d" : "\uf023"
+              color: root.state === "failed" ? Color.urgent : Color.muted
+              font.family: Style.iconFamily
+              font.pixelSize: Style.fontSize * 1.1
+            }
 
             TextInput {
               id: input
 
-              anchors.fill: parent
-              anchors.leftMargin: Style.space(1.2)
+              anchors.left: lead.right
+              anchors.leftMargin: Style.space(0.9)
+              anchors.right: parent.right
               anchors.rightMargin: Style.space(1.2)
-              horizontalAlignment: TextInput.AlignHCenter
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
               verticalAlignment: TextInput.AlignVCenter
+              horizontalAlignment: TextInput.AlignLeft
               echoMode: TextInput.Password
-              passwordCharacter: "●"
+              passwordCharacter: "\u25cf"
               color: Color.foreground
               selectionColor: Color.accent
               selectedTextColor: Color.background
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize * 1.3
               focus: true
+              clip: true
               // Enabled unless an attempt is really in flight: tying this to the
               // state alone is what made the prompt untypable.
               enabled: root.acceptingInput
@@ -234,24 +336,45 @@ Item {
             }
 
             Text {
-              anchors.centerIn: parent
+              anchors.left: lead.right
+              anchors.leftMargin: Style.space(0.9)
+              anchors.verticalCenter: parent.verticalCenter
               visible: input.text === ""
               text: (root.state === "authenticating" || pam.active) ? "authenticating…" : "Password"
-              color: Color.muted
+              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.45)
               font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize * 1.2
+              font.pixelSize: Style.fontSize * 1.15
+            }
+          }
+
+          // Fixed height so a failure message does not move the field.
+          Item {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.round(Style.space(26))
+            height: Style.space(2.2)
+
+            Text {
+              anchors.centerIn: parent
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: root.message
+              color: root.state === "failed" ? Color.urgent : Color.muted
+              font.family: Style.fontFamily
+              font.pixelSize: Style.fontSize * 0.95
+              elide: Text.ElideRight
             }
           }
 
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            visible: root.message !== ""
-            text: root.message
-            color: root.state === "failed" ? Color.urgent : Color.muted
+            text: "Enter to unlock   ·   Esc to clear"
+            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.40)
             font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize
+            font.pixelSize: Style.fontSize * 0.8
+            font.letterSpacing: 1
           }
-          }
+        }
+
         }
       }
     }
