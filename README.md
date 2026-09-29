@@ -94,7 +94,13 @@ exec-once = cornice-launch
 
 Optional keybindings live in [`config/snippet.hyprland.conf`](config/snippet.hyprland.conf).
 Cornice deliberately does not edit your compositor config, your `~/.config/hypr/*`
-or any package — the only exception is `cornice takeover --apply`, which asks,
+or any package — the only exception is `# configuration you can also script (the panels run these same commands)
+cornice bar list | show <id> | hide <id> | move <id> up|down|left|center|right
+cornice weather place use <name> [--city C | --lat L --lon N] | clear
+cornice clock   zone  use <name> <zone> | clear
+cornice language [list|<code>]
+
+cornice takeover --apply`, which asks,
 shows a plan, keeps backups and can undo itself.
 
 ## Hand over from the old daemons
@@ -139,49 +145,41 @@ cornice test [--quick|takeover|headless|lock|install|live]
 cornice session-env                  # compositor env exports for TTYs/stale shells
 ```
 
-## Several places, several timezones
+## Weather place and world clock
 
-Weather takes a list of places and the clock panel takes a list of zones:
+
+Both take exactly one selection — a place for the weather, a timezone for the
+clock — and you pick it from a list instead of typing it: the weather panel and
+the clock panel each have a search box that filters real results (city lookup for
+the weather, the same lookup for the clock since every city carries its
+timezone), and clicking a row sets it.
 
 ```json
 {
-  "weather": {
-    "intervalMinutes": 15,
-    "locations": [
-      { "name": "Shanghai", "city": "Shanghai" },
-      { "name": "Tokyo",    "city": "Tokyo" },
-      { "name": "Oslo",     "latitude": 59.91, "longitude": 10.75 }
-    ]
-  },
-  "clock": {
-    "worldClocks": [
-      { "name": "Tokyo", "zone": "Asia/Tokyo" },
-      { "name": "Oslo",  "zone": "Europe/Oslo" }
-    ]
-  }
+  "weather": { "place": { "name": "Beijing", "latitude": 39.9075, "longitude": 116.39723 } },
+  "clock":   { "zone":  { "name": "東京", "timezone": "Asia/Tokyo" } }
 }
 ```
 
-Each place is resolved on its own (city name, coordinates, or the IP/timezone
-fallback) and cached separately. Switch places by scrolling the weather widget
-or by clicking a name in the weather panel:
+The name comes from the search result, and the search is made in the configured
+language — so the same place is `Beijing` in an English shell and `北京` in a
+Chinese one. The bar shows that name next to the value: `☁ 北京 20°` for the
+weather, `東京 00:03` for the clock (with no zone configured the clock widget
+just shows the local time).
 
 ```bash
-cornice ipc weather locations     # [{index, name, city, active}, …]
-cornice ipc weather select 1      # switch to the second place
+cornice weather place use "北京" --lat 39.9075 --lon 116.39723   # or --city 北京
+cornice weather place clear
+cornice clock zone use "東京" Asia/Tokyo
+cornice clock zone clear
+cornice clock zones            # every installed timezone, for reference
 ```
 
-Timezone offsets come from the system tzdata (`TZ=<zone> date +%z`), so daylight
-saving is handled for you; anything the shell prints is formatted in the
-configured language. The world-clock list lives in the clock panel, and a clock
-*bar widget* can carry its own zone:
-
-```json
-{ "id": "cn.clock", "label": "Tokyo", "timezone": "Asia/Tokyo", "format": "HH:mm" }
-```
-
-Add such a widget with `cornice bar show cn.clock --section center` and edit its
-options in `config.json` (or through the bar editor panel).
+Older configs keep working: a `weather.locations` list or a `clock.worldClocks`
+list is read by taking its first entry. Writing is guarded — the shell backs up
+`config.json`, refuses a write that fails to parse or that would drop top-level
+keys, and reuses the CLI as the only writer (the panels call the same commands,
+so what you click and what you script cannot drift apart).
 
 ## Language
 

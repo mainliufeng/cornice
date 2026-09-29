@@ -83,7 +83,13 @@ exec-once = cornice-launch
 
 可选的键位片段在 [`config/snippet.hyprland.conf`](config/snippet.hyprland.conf)，
 自己挑着贴。Cornice 不会改你的合成器配置、`~/.config/hypr/*` 或任何系统包 ——
-唯一例外是 `cornice takeover --apply`：它会先给你看计划、备份每个改过的文件、
+唯一例外是 `# 也可以脚本化配置（面板调用的就是这些命令）
+cornice bar list | show <id> | hide <id> | move <id> up|down|left|center|right
+cornice weather place use <名字> [--city 城市 | --lat 纬度 --lon 经度] | clear
+cornice clock   zone  use <名字> <时区> | clear
+cornice language [list|<语言>]
+
+cornice takeover --apply`：它会先给你看计划、备份每个改过的文件、
 并且能一键撤销。
 
 ## 从旧组件接管
@@ -127,6 +133,36 @@ cornice test [--quick|takeover|headless|lock|install|live]
 cornice session-env                  # 输出合成器环境变量（TTY / 过期 shell 用）
 ```
 
+## 天气地区与时区（各只有一个）
+
+天气只有一个地区、时钟只有一个时区，而且都是**从列表里选**，不用手输：天气面板和
+时钟面板各有一个搜索框，输入即筛选真实结果（城市检索；时钟复用同一份检索，因为每个
+城市结果都带时区），点一行即设定。
+
+```json
+{
+  "weather": { "place": { "name": "北京", "latitude": 39.9075, "longitude": 116.39723 } },
+  "clock":   { "zone":  { "name": "東京", "timezone": "Asia/Tokyo" } }
+}
+```
+
+名字来自搜索结果，而搜索是**按当前语言**发出的 —— 所以同一个地方，英文界面下是
+`Beijing`，中文界面下是 `北京`。状态栏把它显示在数值前面：天气 `☁ 北京 20°`，
+时钟 `東京 00:03`（没配时区时，时钟组件显示本地时间）。
+
+```bash
+cornice weather place use "北京" --lat 39.9075 --lon 116.39723   # 也可 --city 北京
+cornice weather place clear
+cornice clock zone use "東京" Asia/Tokyo
+cornice clock zone clear
+cornice clock zones            # 列出系统里所有可用时区
+```
+
+老配置继续可用：`weather.locations` 或 `clock.worldClocks` 列表会被读取其第一条。
+写入有保护：写前备份、解析失败回滚、顶层键变少回滚；并且 CLI 是唯一写入者（面板调用
+的就是这些命令，所以点出来的结果和脚本改出来的结果不会不一致）。
+
+
 ## 配置
 
 `~/.config/cornice/config.json` 会深合并到 [`config/default.json`](config/default.json)
@@ -162,6 +198,7 @@ cornice session-env                  # 输出合成器环境变量（TTY / 过�
 
 `cornice ipc idle inhibit 3600` 可以让 idle 链暂停一小时（下大文件、演示、跑测试），
 `cornice ipc idle release` 提前结束。
+
 
 ## 插件
 

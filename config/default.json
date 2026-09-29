@@ -88,15 +88,12 @@
   },
   "weather": {
     "autoLocate": true,
-    "city": "",
-    "place": "",
-    "latitude": null,
-    "longitude": null,
     "unit": "metric",
-    "intervalMinutes": 15
+    "intervalMinutes": 15,
+    "place": null
   },
   "language": "en",
   "clock": {
-    "worldClocks": []
+    "zone": null
   }
 }
