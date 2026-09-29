@@ -405,7 +405,11 @@ fi
 
 section "keyboard layout"
 layout=$(cornice ipc keylayout status 2>/dev/null || echo '{}')
-if [[ $(jq -r '.layout // ""' <<<"$layout") != "" ]]; then
+# The widget ships hidden by default, so it is only instantiated (and only has
+# anything to report) when the layout asks for it.
+if ! cornice ipc shell config | jq -e '[.bar.layout[][] | .id] | index("cn.keylayout")' >/dev/null 2>&1; then
+  pass "keyboard layout hidden by default — nothing to read"
+elif [[ $(jq -r '.layout // ""' <<<"$layout") != "" ]]; then
   pass "keylayout reads the compositor: $(jq -r '.layout' <<<"$layout") ($(jq -r '.name' <<<"$layout"))"
 else
   fail "keylayout reported nothing (last action: $(jq -r '.lastAction // "?"' <<<"$layout"))"
