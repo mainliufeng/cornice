@@ -7,6 +7,7 @@
   "clipboard.hint": "回车：粘贴   Shift+Delete：删除   Esc：关闭",
   "clipboard.placeholder": "搜索剪贴板历史",
   "clock.sameTime": "本地时间",
+  "clock.searchZone": "搜索时区",
   "clock.world": "世界时间",
   "clock.zoneId": "时区",
   "common.audio": "音频",
@@ -19,6 +20,8 @@
   "common.power": "电源",
   "editor.hint": "回车保存，Esc 取消",
   "editor.name": "名称",
+  "editor.noMatches": "没有匹配",
+  "editor.searching": "搜索中…",
   "emoji.placeholder": "搜索 emoji",
   "launcher.hint": "回车：打开   Shift+回车：在终端执行   Esc：关闭",
   "launcher.placeholder": "搜索应用，或用 > 执行命令",
@@ -70,10 +73,12 @@
   "weather.loading": "加载中…",
   "weather.nextDays": "未来几天",
   "weather.nextHours": "未来几小时",
+  "weather.noResults": "至少输入两个字符",
   "weather.placeCity": "城市",
   "weather.placeholder": "--",
   "weather.refresh": "刷新",
+  "weather.searchCity": "搜索城市",
   "weather.today": "今天",
   "weather.updated": "更新于",
   "weather.wind": "风速"
-}
+}\n

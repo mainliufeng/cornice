@@ -41,6 +41,12 @@ cornice_effective_config() {
 cornice_config_any() {
   local raw
   raw=$(cornice_config_raw)
+  # A file that exists but cannot be read must stop the command: writing an array
+  # derived from "nothing" is how a config gets silently emptied.
+  if [[ $raw == "{}" && -s $(cornice_config_file) ]]; then
+    echo "cornice: $(cornice_config_file) is not readable; refusing to derive state from nothing" >&2
+    return 1
+  fi
   if [[ $raw == "{}" ]]; then
     cornice_effective_config | jq -c "$1"
   else

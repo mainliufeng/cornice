@@ -37,6 +37,39 @@ Item {
     return zones
   }
 
+  // The installed timezone names, read once: the picker filters this list so a
+  // typo cannot become a world clock.
+  property var allZones: []
+
+  readonly property Process zoneList: Process {
+    command: ["bash", "-c",
+      "find /usr/share/zoneinfo -type f -printf '%P\\n' 2>/dev/null | grep -E '^[A-Za-z]+/[A-Za-z_+-]+(/[A-Za-z_+-]+)?$' | sort"]
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        // Drop the posix/ and right/ copies: same zones, different leap-second
+        // bookkeeping, and listing them three times just clutters the picker.
+        root.allZones = String(text).split("\n")
+          .filter(line => line.trim() !== "")
+          .filter(zone => !/^(posix|right)\//.test(zone))
+      }
+    }
+  }
+
+  // Substring match over the "Area/City" name, "Tokyo" finds Asia/Tokyo.
+  function matchZones(query, limit) {
+    const needle = String(query === undefined ? "" : query).trim().toLowerCase()
+    const out = []
+    for (let i = 0; i < allZones.length; i++) {
+      const zone = allZones[i]
+      if (needle !== "" && zone.toLowerCase().indexOf(needle) === -1) continue
+      out.push({ label: zone, detail: root.zoneTime(zone, "HH:mm") === "" ? "" : root.zoneTime(zone, "HH:mm") })
+      if (limit > 0 && out.length >= limit) break
+    }
+    return out
+  }
+
   // zone -> offset in minutes east of UTC
   property var zoneMinutes: ({})
   // Whether the panel is showing its world-clock editor.
@@ -155,7 +188,10 @@ Item {
     onTriggered: root.refresh()
   }
 
-  Component.onCompleted: refresh()
+  Component.onCompleted: {
+    refresh()
+    zoneList.running = true
+  }
 
   function status(): string {
     return JSON.stringify({
@@ -184,6 +220,15 @@ Item {
     function refresh(): string {
       root.refresh()
       return "ok"
+    }
+
+    function zones(query: string): string {
+      const limit = Number(query) > 0 ? Number(query) : 200
+      return JSON.stringify(root.matchZones("", limit).map(entry => entry.label))
+    }
+
+    function match(query: string, limit: string): string {
+      return JSON.stringify(root.matchZones(query, Number(limit) > 0 ? Number(limit) : 12))
     }
 
     function editor(state: string): string {

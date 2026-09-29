@@ -17,6 +17,13 @@ Item {
   // zone's clock (add another clock widget in the bar editor for a second one).
   readonly property string timezone: Util.option(widgetConfig, "timezone", "")
   readonly property string zoneLabel: Util.option(widgetConfig, "label", "")
+  // world: show every clock configured in clock.worldClocks instead of one zone.
+  // A name is only shown when there is more than one, so a single entry stays as
+  // quiet as the local clock.
+  readonly property bool world: Util.option(widgetConfig, "world", false)
+  // The list format is separate from `format`: the local clock may show the
+  // weekday, but repeating it on every entry is just noise.
+  readonly property string worldFormat: Util.option(widgetConfig, "worldFormat", "HH:mm")
   // host.services is the reactive registry (see the weather widget); the
   // service may register after this widget is built, so it is read reactively.
   readonly property var service: (host && host.services) ? host.services["cn.clock"] : null
@@ -25,6 +32,19 @@ Item {
 
   // Fills in the zone time, falling back to the local clock until the service
   // has resolved the offset (revision keeps the binding reactive).
+  function worldText(date, fmt) {
+    if (!service) return ""
+    service.revision // re-render when offsets are (re)resolved
+    const rows = service.rows
+    const parts = []
+    for (let i = 0; i < rows.length; i++) {
+      const text = service.zoneTimeAt(rows[i].zone, fmt, date.getTime())
+      if (text === "") continue
+      parts.push(rows.length > 1 && rows[i].name !== "" ? rows[i].name + " " + text : text)
+    }
+    return parts.join("  ")
+  }
+
   function render(date, fmt) {
     if (timezone === "" || !service) return I18n.dateTime(date, fmt)
     service.revision // dependency: re-render when offsets are re-resolved
@@ -59,8 +79,11 @@ Item {
     anchors.centerIn: parent
     // Locale-aware: "ddd" must render as the configured language's weekday,
     // which Qt.formatDateTime does not do (it uses the process default locale).
-    text: (root.zoneLabel !== "" ? root.zoneLabel + " " : "")
-      + root.render(clock.date, root.showAlt ? root.formatAlt : root.format)
+    text: {
+      const fmt = root.showAlt ? root.formatAlt : root.format
+      if (root.world) return root.worldText(clock.date, root.worldFormat)
+      return (root.zoneLabel !== "" ? root.zoneLabel + " " : "") + root.render(clock.date, fmt)
+    }
     color: Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize

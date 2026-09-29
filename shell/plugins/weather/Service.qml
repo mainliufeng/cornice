@@ -277,6 +277,58 @@ Item {
     return "fetching"
   }
 
+  // City search for the places picker: the user picks from a list instead of
+  // typing a name that may not exist. Coordinates come with the result, so the
+  // place is exact and does not depend on geocoding the typed text again.
+  property var searchResults: []
+  property bool searching: false
+  property string searchError: ""
+
+  function search(query) {
+    const text = String(query === undefined ? "" : query).trim()
+    if (text.length < 2) {
+      searchResults = []
+      searchError = ""
+      return 0
+    }
+    searching = true
+    searchError = ""
+    searchProc.command = ["curl", "-fsS", "--max-time", "10", "--compressed",
+      root.geocodeBase + "?count=8&language=" + encodeURIComponent(I18n.language)
+      + "&format=json&name=" + encodeURIComponent(text)]
+    searchProc.running = false
+    searchProc.running = true
+    return -1
+  }
+
+  readonly property Process searchProc: Process {
+    command: ["true"]
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          const data = JSON.parse(text)
+          root.searchResults = (data.results || []).map(entry => ({
+            name: String(entry.name || ""),
+            region: String(entry.admin1 || ""),
+            country: String(entry.country || entry.country_code || ""),
+            latitude: Number(entry.latitude),
+            longitude: Number(entry.longitude),
+            label: [entry.name, entry.admin1, entry.country_code || entry.country]
+              .filter(part => part).join(", "),
+            detail: [entry.latitude, entry.longitude]
+              .map(value => Number(value).toFixed(2)).join(", ")
+          }))
+        } catch (error) {
+          root.searchResults = []
+          root.searchError = String(error)
+        }
+        root.searching = false
+      }
+    }
+  }
+
   // The command is built explicitly right before every start instead of being a
   // binding: QML re-evaluates bindings lazily, so starting the process used to
   // run the *previous* city's query (switching places was one behind).
@@ -590,6 +642,16 @@ Item {
         city: entry.city || "",
         active: index === root.activeIndex
       })))
+    }
+
+    function search(query: string): string {
+      // Asynchronous: this starts the lookup, then poll `weather results`.
+      root.search(query)
+      return "searching"
+    }
+
+    function results(): string {
+      return JSON.stringify({ searching: root.searching, error: root.searchError, results: root.searchResults })
     }
 
     function editor(state: string): string {

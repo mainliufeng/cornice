@@ -44,6 +44,16 @@
         "key": "label",
         "type": "string",
         "label": "Optional prefix, e.g. Tokyo"
+      },
+      {
+        "key": "world",
+        "type": "boolean",
+        "label": "Show every clock from clock.worldClocks (names only when there is more than one)"
+      },
+      {
+        "key": "worldFormat",
+        "type": "string",
+        "label": "Time format for world: mode (default HH:mm)"
       }
     ]
   },
