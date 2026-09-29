@@ -78,11 +78,19 @@ Arch users can build a package: `make pkg` (`makepkg -si`, installs to
 `/usr/share/cornice` with the CLI in `/usr/bin`). [docs/aur.md](docs/aur.md) has
 the AUR-ready PKGBUILD and the upload procedure.
 
-Then add one line to `~/.config/hypr/hyprland.conf`:
+Then start it — as a systemd user service, so it comes back if it ever dies:
+
+```bash
+./install.sh --service       # installs + enables cornice.service (Restart=always)
+systemctl --user status cornice
+```
+
+or add one line to `~/.config/hypr/hyprland.conf`:
 
 ```conf
 exec-once = cornice-launch
 ```
+
 
 Optional keybindings live in [`config/snippet.hyprland.conf`](config/snippet.hyprland.conf).
 Cornice deliberately does not edit your compositor config, your `~/.config/hypr/*`

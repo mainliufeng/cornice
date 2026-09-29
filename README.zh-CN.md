@@ -67,11 +67,19 @@ Arch 用户可以直接打包：`make pkg`（`makepkg -si`，装到 `/usr/share/
 CLI 软链到 `/usr/bin`）。要发 AUR 的话 [docs/aur.md](docs/aur.md) 里有 AUR 版
 PKGBUILD 与上传流程。
 
-然后在 `~/.config/hypr/hyprland.conf` 加一行：
+然后启动它 —— 推荐用 systemd 用户服务，挂掉了会自动拉回来：
+
+```bash
+./install.sh --service       # 安装并启用 cornice.service（Restart=always）
+systemctl --user status cornice
+```
+
+或者自己在 `~/.config/hypr/hyprland.conf` 加一行：
 
 ```conf
 exec-once = cornice-launch
 ```
+
 
 可选的键位片段在 [`config/snippet.hyprland.conf`](config/snippet.hyprland.conf)，
 自己挑着贴。Cornice 不会改你的合成器配置、`~/.config/hypr/*` 或任何系统包 ——

@@ -5,6 +5,7 @@
 #   ./install.sh --copy          copy instead of symlink (no dev-tree coupling)
 #   ./install.sh --prefix /usr/local
 #   ./install.sh --takeover      also hand the session over (mako/hypridle/…)
+#   ./install.sh --service       install + enable the systemd user service
 #   ./install.sh --uninstall     remove what was installed
 #
 # Never edits a config file and never needs root unless you choose a prefix
@@ -15,6 +16,7 @@ repo=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 prefix="$HOME/.local"
 copy=0
 takeover=0
+service=0
 uninstall=0
 # NB: a `for arg in "$@"` loop cannot consume its own arguments — `shift` inside
 # it has no effect, so --prefix would swallow nothing and its value would be
@@ -27,6 +29,7 @@ while (($#)); do
     --prefix) prefix="${1:?--prefix needs a path}"; shift ;;
     --prefix=*) prefix="${arg#*=}" ;;
     --takeover) takeover=1 ;;
+    --service) service=1 ;;
     --uninstall) uninstall=1 ;;
     -h | --help) sed -n '2,14p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "install.sh: unknown option '$arg'" >&2; exit 2 ;;
@@ -67,6 +70,27 @@ if ((uninstall)); then
   echo "  ~/.local/state/cornice/     takeover backups, health reports"
   echo "Remove the 'exec-once = cornice-launch' line from your Hyprland config to finish."
   exit 0
+fi
+
+# ---------------------------------------------------------------------------
+step "Systemd user service"
+if ((service)); then
+  unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$unit_dir"
+  install -m644 "$repo/config/cornice.service" "$unit_dir/cornice.service"
+  ok "installed $unit_dir/cornice.service"
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  if systemctl --user enable --now cornice.service >/dev/null 2>&1; then
+    ok "enabled and started cornice.service (Restart=always)"
+    echo "  status: systemctl --user status cornice"
+  else
+    warn "could not enable cornice.service — start it manually: systemctl --user enable --now cornice"
+  fi
+else
+  echo "  Running under systemd is recommended: it restarts the shell if it dies."
+  echo "  Add --service to this script, or:"
+  echo "      install -Dm644 $repo/config/cornice.service ~/.config/systemd/user/cornice.service"
+  echo "      systemctl --user daemon-reload && systemctl --user enable --now cornice.service"
 fi
 
 # ---------------------------------------------------------------------------

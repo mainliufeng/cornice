@@ -197,7 +197,13 @@ if [[ $install_prefix != "$prefix" ]]; then
 fi
 
 section "shell and IPC"
-"$install_prefix/bin/cornice-qs" -n -p "$install_prefix/shell" >"$runtime/shell.log" 2>&1 &
+# Run the shell from a *copy* inside the sandbox. Quickshell identifies a
+# configuration by its path, and `cornice restart`/`cornice-qs kill` work by that
+# identity — sharing the path with the developer's live shell meant these suites
+# could (and did) kill the session they were only supposed to test.
+rm -rf "$runtime/shell"
+cp -r "$install_prefix/shell" "$runtime/shell"
+"$install_prefix/bin/cornice-qs" -n -p "$runtime/shell" >"$runtime/shell.log" 2>&1 &
 shell_pid=$!
 
 ready=0

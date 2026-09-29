@@ -1,0 +1,23 @@
+[Unit]
+Description=Cornice — Hyprland shell (bar, panels, notifications, lock, idle)
+Documentation=https://github.com/mainliufeng/cornice
+# Start with the graphical session and stop with it.
+PartOf=graphical-session.target
+After=graphical-session.target
+# Only where there is a Wayland session to draw on.
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+# cornice-launch keeps the shell in the journal and re-launches it on crash;
+# systemd supervises the launcher itself, so nothing can leave the session
+# without a bar (a bash watchdog that dies with its child cannot promise that).
+ExecStart=%h/.local/bin/cornice-launch
+Restart=always
+RestartSec=2
+# A shell that crash-loops should not hammer the CPU forever.
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Install]
+WantedBy=graphical-session.target

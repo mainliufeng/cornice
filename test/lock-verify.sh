@@ -58,6 +58,13 @@ cat >"$XDG_CONFIG_HOME/cornice/config.json" <<JSON
 { "background": { "dir": "$prefix/wallpapers" }, "lock": { "showUser": false } }
 JSON
 
+# Run the shell from a copy inside the sandbox: Quickshell identifies a config by
+# its path, and `cornice restart`/`cornice-qs kill` act on that identity. Sharing
+# the path with the live session meant this suite could kill the developer's own
+# shell (it did).
+rm -rf "$runtime/shell"
+cp -r "$prefix/shell" "$runtime/shell"
+
 cat >"$runtime/hyprland.conf" <<'EOF'
 misc {
     disable_hyprland_logo = true
@@ -121,7 +128,7 @@ export WAYLAND_DISPLAY="${own##*/}"
 pass "headless output ready (display ${WAYLAND_DISPLAY})"
 
 start_shell() {
-  "$prefix/bin/cornice-qs" -n -p "$prefix/shell" >>"$runtime/shell.log" 2>&1 &
+  "$prefix/bin/cornice-qs" -n -p "$runtime/shell" >>"$runtime/shell.log" 2>&1 &
   shell_pid=$!
   for _ in $(seq 1 150); do cornice ping >/dev/null 2>&1 && return 0; sleep 0.1; done
   return 1
