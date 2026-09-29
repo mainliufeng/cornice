@@ -82,10 +82,10 @@ PanelFrame {
 
       Repeater {
         model: root.ready ? [
-          { label: "Feels like", value: Math.round(root.service.apparent) + root.service.temperatureUnit },
-          { label: "Humidity", value: Math.round(root.service.humidity) + "%" },
-          { label: "Wind", value: Math.round(root.service.wind) + " " + root.service.windUnit },
-          { label: "Updated", value: root.service.updatedLabel }
+          { label: I18n.t("weather.feelsLike"), value: Math.round(root.service.apparent) + root.service.temperatureUnit },
+          { label: I18n.t("weather.humidity"), value: Math.round(root.service.humidity) + "%" },
+          { label: I18n.t("weather.wind"), value: Math.round(root.service.wind) + " " + root.service.windUnit },
+          { label: I18n.t("weather.updated"), value: root.service.updatedLabel }
         ] : []
 
         delegate: Column {
@@ -121,7 +121,7 @@ PanelFrame {
     Text {
       width: parent.width
       visible: root.ready && root.hours.length > 0
-      text: "Next hours"
+      text: I18n.t("weather.nextHours")
       color: Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize
@@ -172,7 +172,7 @@ PanelFrame {
     Text {
       width: parent.width
       visible: root.ready && root.days.length > 0
-      text: "Next days"
+      text: I18n.t("weather.nextDays")
       color: Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize
@@ -194,7 +194,7 @@ PanelFrame {
 
           Text {
             width: Style.space(8)
-            text: modelData.label
+            text: modelData.isToday ? I18n.t("weather.today") : I18n.dayName(modelData.date, "ddd")
             color: Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
@@ -235,7 +235,7 @@ PanelFrame {
         if (!root.service) return "Weather service is not loaded"
         if (root.service.status === "error" || root.service.status === "unconfigured")
           return root.service.error !== "" ? root.service.error : "Weather is unavailable"
-        return "Loading…"
+        return I18n.t("weather.loading")
       }
       color: Color.muted
       wrapMode: Text.Wrap
@@ -254,7 +254,7 @@ PanelFrame {
       Text {
         id: refreshLabel
         anchors.centerIn: parent
-        text: "Refresh"
+        text: I18n.t("weather.refresh")
         color: Color.foreground
         font.family: Style.fontFamily
         font.pixelSize: Style.smallFontSize

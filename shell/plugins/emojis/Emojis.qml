@@ -313,7 +313,7 @@ PanelFrame {
     TextField {
       id: field
       width: parent.width
-      placeholder: "Search emoji"
+      placeholder: I18n.t("emoji.placeholder")
       onTextChanged: root.query = text
       onAccepted: root.copy(root.current)
       onCanceled: root.close()

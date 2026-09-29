@@ -53,7 +53,7 @@ PanelFrame {
     for (const section of sections) {
       const entries = shownIn(section)
       out.push({ kind: "header", text: section.toUpperCase() })
-      if (entries.length === 0) out.push({ kind: "empty", text: "nothing" })
+      if (entries.length === 0) out.push({ kind: "empty", text: I18n.t("bar.editor.nothing") })
       for (let index = 0; index < entries.length; index++) {
         const id = entries[index].id
         out.push({
@@ -67,7 +67,7 @@ PanelFrame {
     }
     const hidden = widgets.filter(widget => !isShown(widget.id))
     if (hidden.length > 0) {
-      out.push({ kind: "header", text: "HIDDEN" })
+      out.push({ kind: "header", text: I18n.t("bar.editor.hidden") })
       for (const widget of hidden) {
         out.push({ kind: "hidden", id: widget.id, label: labelFor(widget.id) })
       }
@@ -148,7 +148,7 @@ PanelFrame {
     spacing: Style.space(0.8)
 
     Text {
-      text: "Bar layout"
+      text: I18n.t("bar.editor.title")
       color: Color.foreground
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
@@ -157,7 +157,7 @@ PanelFrame {
 
     Text {
       width: parent.width
-      text: "Add, remove and reorder. Saved to ~/.config/cornice/config.json and applied immediately."
+      text: I18n.t("bar.editor.hint")
       color: Color.muted
       wrapMode: Text.Wrap
       font.family: Style.fontFamily
@@ -222,7 +222,7 @@ PanelFrame {
 
     Text {
       width: parent.width
-      text: "Scriptable too: cornice bar list | show <id> | hide <id> | move <id> up|down|left|center|right"
+      text: I18n.t("bar.editor.scriptable")
       color: Color.muted
       wrapMode: Text.Wrap
       font.family: Style.fontFamily

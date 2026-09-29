@@ -32,6 +32,7 @@ Inspecting the running shell (IPC)
   widgets             Available bar widgets
   config              Effective configuration (defaults merged with yours)
   theme [list|toggle|<name>]   Show, list, cycle or set the theme (persisted)
+  language [list|<code>]       Show, list or set the UI language (persisted)
   reload              Re-read config.json and theme.json
   reload-plugins      Re-scan the plugin directories
   ipc <target> <fn>   Raw IPC call, e.g. cornice ipc shell ping
@@ -154,6 +155,39 @@ case "$command" in
 
   config)
     call shell config
+    ;;
+
+  language)
+    lang_dir="$prefix/i18n"
+    available_languages() { ls -1 "$lang_dir"/*.json 2>/dev/null | sed 's|.*/||; s|\.json$||' | sort; }
+
+    persist_language() {
+      local code=$1 config="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+      mkdir -p "$(dirname "$config")"
+      [[ -f $config ]] || echo '{}' >"$config"
+      local tmp
+      tmp=$(mktemp)
+      jq --arg l "$code" '.language = $l' "$config" >"$tmp" && mv "$tmp" "$config"
+    }
+
+    case "${1:-}" in
+      "")
+        call i18n status 2>/dev/null | jq -r '.language // "en"'
+        ;;
+      list)
+        available_languages
+        ;;
+      *)
+        code="$1"
+        if ! available_languages | grep -qx "$code"; then
+          echo "cornice: no translations for '$code' (available: $(available_languages | tr '\n' ' '))" >&2
+          exit 1
+        fi
+        persist_language "$code"
+        call shell reloadConfig >/dev/null 2>&1 || timeout 5 "$qs" ipc -p "$config_dir" call shell reloadConfig >/dev/null 2>&1 || true
+        echo "$code"
+        ;;
+    esac
     ;;
 
   theme)

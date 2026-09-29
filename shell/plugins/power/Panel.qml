@@ -58,7 +58,7 @@ PanelFrame {
 
     Text {
       width: parent.width
-      text: "Power"
+      text: I18n.t("common.power")
       color: Color.foreground
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
@@ -68,7 +68,7 @@ PanelFrame {
     Text {
       width: parent.width
       visible: root.percent < 0
-      text: "no battery on this machine"
+      text: I18n.t("panel.noBattery")
       color: Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize

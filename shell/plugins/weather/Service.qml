@@ -99,7 +99,7 @@ Item {
   readonly property bool hasData: !isNaN(temperature)
   readonly property string temperatureLabel: hasData ? Math.round(temperature) + "°" : "--"
   readonly property string updatedLabel: updatedAt === 0 ? "never"
-    : Qt.formatDateTime(new Date(updatedAt), "HH:mm")
+    : I18n.dateTime(new Date(updatedAt), "HH:mm")
 
   // ---- WMO weather codes ---------------------------------------------------
   function glyphFor(value, day) {
@@ -118,42 +118,22 @@ Item {
     return "\u{F0590}"
   }
 
+  readonly property string locale: I18n.language
+
   function labelFor(value) {
-    if (value < 0) return "Unknown"
-    if (value === 0) return "Clear"
-    if (value === 1) return "Mainly clear"
-    if (value === 2) return "Partly cloudy"
-    if (value === 3) return "Overcast"
-    if (value === 45 || value === 48) return "Fog"
-    if (value === 51) return "Light drizzle"
-    if (value === 53) return "Drizzle"
-    if (value === 55) return "Heavy drizzle"
-    if (value === 56 || value === 57) return "Freezing drizzle"
-    if (value === 61) return "Light rain"
-    if (value === 63) return "Rain"
-    if (value === 65) return "Heavy rain"
-    if (value === 66 || value === 67) return "Freezing rain"
-    if (value === 71) return "Light snow"
-    if (value === 73) return "Snow"
-    if (value === 75) return "Heavy snow"
-    if (value === 77) return "Snow grains"
-    if (value === 80) return "Light showers"
-    if (value === 81) return "Showers"
-    if (value === 82) return "Violent showers"
-    if (value === 85 || value === 86) return "Snow showers"
-    if (value === 95) return "Thunderstorm"
-    if (value === 96 || value === 99) return "Thunderstorm, hail"
-    return "Unknown"
+    // Weather codes are translated through the shell's table (i18n/weather.code.*),
+    // so the wording follows the configured language instead of being hardcoded.
+    return I18n.t("weather.code." + value)
   }
+
 
   function hourLabel(iso) {
     const parsed = new Date(iso)
-    return isNaN(parsed.getTime()) ? "" : Qt.formatDateTime(parsed, "HH:mm")
+    return isNaN(parsed.getTime()) ? "" : I18n.dateTime(parsed, "HH:mm")
   }
 
   function dayLabel(iso) {
-    const parsed = new Date(iso + "T12:00:00")
-    return isNaN(parsed.getTime()) ? "" : Qt.formatDateTime(parsed, "ddd")
+    return I18n.dayName(iso + "T12:00:00", "ddd")
   }
 
   // ---- fetching ------------------------------------------------------------
@@ -218,7 +198,8 @@ Item {
       busy = true
       error = ""
       geocode.command = ["curl", "-fsS", "--max-time", "10", "--compressed",
-        root.geocodeBase + "?count=1&language=en&format=json&name="
+        root.geocodeBase + "?count=1&language=" + encodeURIComponent(I18n.language)
+      + "&format=json&name="
         + encodeURIComponent(timezoneCity)]
       geocodingTimezone = true
       geocode.running = true
@@ -251,7 +232,8 @@ Item {
 
   readonly property Process geocode: Process {
     command: ["curl", "-fsS", "--max-time", "10", "--compressed",
-      root.geocodeBase + "?count=1&language=en&format=json&name="
+      root.geocodeBase + "?count=1&language=" + encodeURIComponent(I18n.language)
+      + "&format=json&name="
       + encodeURIComponent(root.city)]
 
     stdout: StdioCollector {
@@ -377,7 +359,7 @@ Item {
       if (isNaN(at.getTime()) || at.getTime() < now - 3600000) continue
       hours.push({
         time: times[index],
-        label: Qt.formatDateTime(at, "HH:mm"),
+        label: I18n.dateTime(at, "HH:mm"),
         temperature: Number(temps[index]),
         code: Number(codes[index])
       })
@@ -393,7 +375,10 @@ Item {
     for (let index = 0; index < dayTimes.length; index++) {
       days.push({
         date: dayTimes[index],
-        label: index === 0 ? "Today" : root.dayLabel(dayTimes[index]),
+        // Language-neutral: the panel renders the label, so switching language
+        // re-translates instead of waiting for the next fetch.
+        date: dayTimes[index],
+        isToday: index === 0,
         high: Number(maxes[index]),
         low: Number(mins[index]),
         code: Number(dayCodes[index])

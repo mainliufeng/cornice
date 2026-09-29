@@ -171,7 +171,7 @@ Item {
       Text {
         id: replyLabel
         anchors.centerIn: parent
-        text: "Reply"
+        text: I18n.t("notifications.reply")
         color: Color.foreground
         font.family: Style.fontFamily
         font.pixelSize: Style.smallFontSize

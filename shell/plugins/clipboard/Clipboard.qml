@@ -148,7 +148,7 @@ PanelFrame {
       TextField {
         id: field
         width: parent.width - count.width
-        placeholder: "Search clipboard history"
+        placeholder: I18n.t("clipboard.placeholder")
         onTextChanged: root.query = text
         onAccepted: root.paste(root.current)
         onCanceled: root.close()
@@ -167,7 +167,7 @@ PanelFrame {
 
     Text {
       width: parent.width
-      text: "Enter: paste   Shift+Delete: remove   Esc: close"
+      text: I18n.t("clipboard.hint")
       color: Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize

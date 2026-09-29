@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.i18n",
+  "name": "Translations",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Loads the translation tables for the configured language into qs.Commons.I18n",
+  "kinds": ["service"],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

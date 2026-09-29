@@ -91,7 +91,7 @@ Item {
 
           Text {
             width: parent.width
-            text: "Authentication required"
+            text: I18n.t("lock.authRequired")
             color: Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
@@ -210,7 +210,7 @@ Item {
           Text {
             id: authorizeText
             anchors.centerIn: parent
-            text: "Authenticate"
+            text: I18n.t("lock.authenticate")
             color: Color.workspaceActiveText
             font.family: Style.fontFamily
             font.pixelSize: Style.smallFontSize
@@ -232,7 +232,7 @@ Item {
           Text {
             id: cancelText
             anchors.centerIn: parent
-            text: "Cancel"
+            text: I18n.t("common.cancel")
             color: Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.smallFontSize

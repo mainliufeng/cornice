@@ -94,5 +94,6 @@
     "longitude": null,
     "unit": "metric",
     "intervalMinutes": 15
-  }
+  },
+  "language": "en"
 }

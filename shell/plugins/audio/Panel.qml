@@ -42,7 +42,7 @@ PanelFrame {
 
     Text {
       width: parent.width
-      text: "Audio"
+      text: I18n.t("common.audio")
       color: Color.foreground
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
@@ -92,7 +92,7 @@ PanelFrame {
             Text {
               anchors.verticalCenter: parent.verticalCenter
               visible: !!(root.sink && root.sink.audio && root.sink.audio.muted)
-              text: "muted"
+              text: I18n.t("common.muted")
               color: Color.workspaceActiveText
               font.family: Style.fontFamily
               font.pixelSize: Style.smallFontSize

@@ -39,7 +39,7 @@ PanelFrame {
 
     Text {
       width: parent.width
-      text: "Bluetooth"
+      text: I18n.t("common.bluetooth")
       color: Color.foreground
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
@@ -49,7 +49,7 @@ PanelFrame {
     Text {
       width: parent.width
       visible: !root.adapter
-      text: "no bluetooth adapter"
+      text: I18n.t("panel.noBluetooth")
       color: Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize

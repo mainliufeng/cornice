@@ -421,7 +421,7 @@ Item {
 
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: "Enter to unlock   ·   Esc to clear"
+            text: I18n.t("lock.hint")
             color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.40)
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize * 0.8

@@ -136,7 +136,7 @@ PanelFrame {
     TextField {
       id: field
       width: parent.width
-      placeholder: "Search applications, or > to run a command"
+      placeholder: I18n.t("launcher.placeholder")
       onTextChanged: root.query = text
       onAccepted: root.accept(false)
       onShiftAccepted: root.accept(true)

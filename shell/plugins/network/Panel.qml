@@ -68,7 +68,7 @@ PanelFrame {
 
     Text {
       width: parent.width
-      text: "Network"
+      text: I18n.t("common.network")
       color: Color.foreground
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
@@ -217,7 +217,7 @@ PanelFrame {
           TextField {
             id: pskField
             width: parent.width - connectButton.width - Style.space(0.6)
-            placeholder: "password for " + modelData.name
+            placeholder: I18n.t("lock.passwordFor") + modelData.name
             onAccepted: root.connect(modelData, pskField.text)
             onCanceled: root.selectedSsid = ""
           }
@@ -232,7 +232,7 @@ PanelFrame {
             Text {
               id: connectText
               anchors.centerIn: parent
-              text: "Connect"
+              text: I18n.t("common.connect")
               color: Color.workspaceActiveText
               font.family: Style.fontFamily
               font.pixelSize: Style.smallFontSize

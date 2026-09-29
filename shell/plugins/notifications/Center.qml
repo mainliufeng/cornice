@@ -34,7 +34,7 @@ PanelFrame {
       Text {
         anchors.verticalCenter: parent.verticalCenter
         width: parent.width - controls.width - Style.space(1)
-        text: "Notifications" + (root.unread > 0 ? "  (" + root.unread + " new)" : "")
+        text: I18n.t("notifications.title") + (root.unread > 0 ? "  (" + root.unread + " new)" : "")
         color: Color.foreground
         elide: Text.ElideRight
         font.family: Style.fontFamily
@@ -78,7 +78,7 @@ PanelFrame {
           Text {
             id: clearLabel
             anchors.centerIn: parent
-            text: "Clear"
+            text: I18n.t("common.clear")
             color: Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.smallFontSize
@@ -102,7 +102,7 @@ PanelFrame {
     Text {
       width: parent.width
       visible: root.entries.length === 0
-      text: "Nothing yet."
+      text: I18n.t("notifications.empty")
       color: Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize

@@ -80,6 +80,8 @@ ShellRoot {
     const merged = Util.deepMerge(defaults, userConfig || ({}))
     config = merged
     Theme.name = Util.option(merged, "theme", "mono")
+    // The cn.i18n service watches this and loads the matching table.
+    I18n.language = Util.option(merged, "language", "en")
   }
 
   readonly property FileView defaultsFile: FileView {

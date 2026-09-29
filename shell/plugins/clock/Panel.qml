@@ -59,7 +59,7 @@ PanelFrame {
 
   readonly property string monthLabel: {
     const date = new Date(shownYear, shownMonth, 1)
-    return Qt.formatDateTime(date, "MMMM yyyy")
+    return I18n.dateTime(date, "MMMM yyyy")
   }
 
   Column {
@@ -115,7 +115,9 @@ PanelFrame {
       spacing: 0
 
       Repeater {
-        model: ["M", "T", "W", "T", "F", "S", "S"]
+        // Weekday headers follow the language (and the locale's first day of
+        // week is applied when the grid is built).
+        model: I18n.weekdayNames("ddd")
 
         delegate: Text {
           required property var modelData
@@ -156,7 +158,7 @@ PanelFrame {
 
     Text {
       width: parent.width
-      text: Qt.formatDateTime(clock.date, "dddd d MMMM yyyy")
+      text: I18n.dateTime(clock.date, "dddd d MMMM yyyy")
       color: Color.muted
       horizontalAlignment: Text.AlignHCenter
       font.family: Style.fontFamily

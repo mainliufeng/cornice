@@ -391,6 +391,37 @@ else
   warn "no session bus; inline reply not exercised"
 fi
 
+section "translations"
+# Every key the shell asks for must exist, and the shipped tables must agree —
+# a typo would otherwise render as the key itself (or an empty label).
+# Strip both quotes, and drop dynamic prefixes (I18n.t("weather.code." + n)).
+keys=$(grep -rhoE 'I18n\.t\("[^"]+"' "$prefix/shell" | sed 's/I18n\.t("//; s/"$//' \
+  | grep -v '\.$' | sort -u | jq -R -s -c 'split("\n") | map(select(length>0))')
+if [[ -n $keys ]]; then
+  missing=$(cornice ipc i18n missing "$keys" 2>/dev/null || echo '[]')
+  if [[ $(jq 'length' <<<"$missing") == 0 ]]; then
+    pass "every I18n key used in QML exists ($(jq 'length' <<<"$keys") keys)"
+  else
+    fail "keys with no translation: $(jq -r 'join(", ")' <<<"$missing")"
+  fi
+else
+  fail "no I18n keys found in the shell sources"
+fi
+
+python3 - "$prefix/i18n" <<'PY'
+import json, pathlib, sys
+folder = pathlib.Path(sys.argv[1])
+tables = {p.stem: json.loads(p.read_text()) for p in sorted(folder.glob("*.json"))}
+base = tables.get("en", {})
+missing = {name: [k for k in base if k not in table] for name, table in tables.items() if name != "en"}
+missing = {name: keys for name, keys in missing.items() if keys}
+if missing:
+    print("  FAIL  tables missing keys:", missing)
+    sys.exit(1)
+print(f"  PASS  {len(tables)} language tables agree ({len(base)} keys: {', '.join(tables)})")
+PY
+if [[ $? != 0 ]]; then fail "language tables disagree"; else pass "language tables agree"; fi
+
 section "tray menu activation"
 # The helper must keep its timestamp inside DBusMenu's uint32 field: a 13-digit
 # millisecond value made gdbus reject every click before it was sent (silently).
