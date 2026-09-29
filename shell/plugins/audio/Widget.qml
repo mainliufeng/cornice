@@ -66,8 +66,11 @@ Item {
     }
 
     onWheel: wheel => {
-      const delta = wheel.angleDelta.y > 0 ? 1 : -1
-      Util.exec("wpctl set-volume @DEFAULT_AUDIO_SINK@ " + (delta * root.step) + "%+")
+      // wpctl takes the direction as part of the value: "5%+" raises, "5%-"
+      // lowers. Passing a negative number with "+" (which is what this used to
+      // do) is parsed as an option, so scrolling down did nothing.
+      const direction = wheel.angleDelta.y > 0 ? "+" : "-"
+      Util.exec("wpctl set-volume @DEFAULT_AUDIO_SINK@ " + root.step + "%" + direction)
     }
   }
 

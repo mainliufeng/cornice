@@ -21,7 +21,7 @@ UINPUT_PATH = "/dev/uinput"
 EV_SYN, EV_KEY, EV_REL = 0x00, 0x01, 0x02
 SYN_REPORT = 0
 BTN_LEFT, BTN_RIGHT, BTN_MIDDLE = 0x110, 0x111, 0x112
-REL_X, REL_Y = 0x00, 0x01
+REL_X, REL_Y, REL_WHEEL = 0x00, 0x01, 0x08
 BUS_USB, UINPUT_MAX_NAME_SIZE = 0x03, 80
 
 # ioctl numbers from <linux/uinput.h>
@@ -53,6 +53,8 @@ def main():
     parser.add_argument("--button", choices=("left", "right", "middle"), default="left")
     parser.add_argument("--move-only", action="store_true",
                         help="move the pointer there and stop (for hover checks)")
+    parser.add_argument("--wheel", type=int, default=0,
+                        help="scroll notches: positive up, negative down (no click)")
     parser.add_argument("--settle", type=float, default=0.06)
     parser.add_argument("--iterations", type=int, default=20)
     args = parser.parse_args()
@@ -75,7 +77,7 @@ def main():
         fcntl.ioctl(dev, UI_SET_EVBIT, EV_KEY)
         fcntl.ioctl(dev, UI_SET_EVBIT, EV_REL)
         fcntl.ioctl(dev, UI_SET_KEYBIT, button)
-        for axis in (REL_X, REL_Y):
+        for axis in (REL_X, REL_Y, REL_WHEEL):
             fcntl.ioctl(dev, UI_SET_RELBIT, axis)
 
         # struct uinput_user_dev is 80 + 8 + 4 + 4*(ABS_CNT*4) bytes; the kernel
@@ -116,6 +118,17 @@ def main():
         print(f"cursor now: {landed} (target {target})")
         if landed is None or abs(landed[0] - target[0]) > 3 or abs(landed[1] - target[1]) > 3:
             print("warning: pointer is not on target; click may miss", file=sys.stderr)
+
+        if args.wheel:
+            notch = 1 if args.wheel > 0 else -1
+            for _ in range(abs(args.wheel)):
+                write_event(dev, EV_REL, REL_WHEEL, notch)
+                write_event(dev, EV_SYN, SYN_REPORT, 0)
+                dev.flush()
+                time.sleep(0.05)
+            time.sleep(0.2)
+            fcntl.ioctl(dev, UI_DEV_DESTROY)
+            return 0
 
         if args.move_only:
             # Hover checks need the pointer on the widget without pressing it
