@@ -79,11 +79,10 @@ Item {
         registry: bar.registry
         entries: bar.leftEntries
         section: "left"
-        // Stop before the centre clock: a long window title must never run under
-        // it. Widgets that can elide (active-window, media) get their own
-        // maxWidth from their inline config.
-        width: Math.max(0, Math.round((parent.width - centerSection.width) / 2 - Style.padding * 2))
-        clip: true
+        // Cap the *maximum* width instead of setting a fixed one: a fixed width
+        // would leave the widgets sitting at the section's left edge (the right
+        // section then looks like it is floating in the middle).
+        maxWidth: Math.max(0, Math.round((parent.width - centerSection.width) / 2 - Style.padding * 2))
       }
 
       BarSection {
@@ -106,8 +105,7 @@ Item {
         registry: bar.registry
         entries: bar.rightEntries
         section: "right"
-        width: Math.max(0, Math.round((parent.width - centerSection.width) / 2 - Style.padding * 2))
-        clip: true
+        maxWidth: Math.max(0, Math.round((parent.width - centerSection.width) / 2 - Style.padding * 2))
       }
 
       // Diagnostics beat a silently empty bar.
