@@ -31,14 +31,14 @@ Item {
   // Glyphs verified against the bar font: the MDI wifi-strength set renders,
   // while F1EB is the full-strength arc. (FAA8/FAA9 render as empty boxes.)
   readonly property string icon: {
-    if (!activeDevice) return "\uf05e1"
-    if (wired) return "\uf0200"
+    if (!activeDevice) return "\u{F05E1}"
+    if (wired) return "\u{F0200}"
     const signal = strongestSignal()
-    if (!online) return "\uf05e1"
-    if (signal >= 75) return "\uf0925"
-    if (signal >= 50) return "\uf0924"
-    if (signal >= 25) return "\uf0923"
-    return "\uf0922"
+    if (!online) return "\u{F05E1}"
+    if (signal >= 75) return "\u{F0925}"
+    if (signal >= 50) return "\u{F0924}"
+    if (signal >= 25) return "\u{F0923}"
+    return "\u{F0922}"
   }
 
   function strongestSignal() {

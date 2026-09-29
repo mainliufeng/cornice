@@ -19,7 +19,7 @@ Item {
   // Same glyph set and order as the waybar config this replaces: percentage
   // first, then the icon (F026 off / F027 low / F028 high).
   readonly property string icon: {
-    if (muted || percent === 0) return "\uf0581"
+    if (muted || percent === 0) return "\u{F0581}"
     if (percent < 40) return "\uf027"
     return "\uf028"
   }

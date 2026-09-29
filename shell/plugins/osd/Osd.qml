@@ -74,7 +74,7 @@ PanelFrame {
 
   // Matches the bar and the old waybar config.
   function iconForVolume(percent, isMuted) {
-    if (isMuted || percent === 0) return "\uf0581"
+    if (isMuted || percent === 0) return "\u{F0581}"
     if (percent < 40) return "\uf027"
     return "\uf028"
   }

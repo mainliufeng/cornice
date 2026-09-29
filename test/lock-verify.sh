@@ -14,6 +14,13 @@ prefix=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export CORNICE_PATH="$prefix"
 export PATH="$prefix/bin:$PATH"
 
+# Leftovers from a harness that was killed before its cleanup ran: an orphaned
+# headless Hyprland keeps a core at 100% forever (this is what once had a laptop
+# fan screaming for 11 hours). Sweep them before starting a new run.
+pkill -f "Hyprland -c /tmp/cn" 2>/dev/null
+pkill -f "mutter --headless --wayland --wayland-display=cornice" 2>/dev/null
+sleep 0.3
+
 runtime=$(mktemp -d /tmp/cnl-XXXXXX)
 keep=${CORNICE_KEEP_ARTIFACTS:-0}
 mutter_pid=""; dbus_pid=""; shell_pid=""
