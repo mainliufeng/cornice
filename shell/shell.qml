@@ -43,6 +43,14 @@ ShellRoot {
   // first-party plugins can talk to them without a round trip through IPC.
   property var services: ({})
 
+  // Exposed so plugins can introspect the shell (the bar layout editor lists the
+  // available bar widgets, for instance).
+  readonly property var registry: pluginRegistry
+
+  function barWidgets() {
+    return pluginRegistry.barWidgets()
+  }
+
   // Summonable plugin instances: [{ id, entry, payload }].
   property var summoned: []
 

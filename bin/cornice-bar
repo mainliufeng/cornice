@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# cornice bar — inspect and edit the bar layout.
+#
+# The bar is a list of widget entries per section (left/centre/right). Entries are
+# kept as objects, so per-widget settings survive a move. Everything here edits
+# ~/.config/cornice/config.json (only the `bar.layout` key, merged into whatever
+# is there) and then asks the shell to reload, so the change is live.
+#
+#   cornice bar list                     # what is shown where, and what is available
+#   cornice bar show cn.weather          # add a widget (section optional)
+#   cornice bar hide cn.weather          # remove it from the bar
+#   cornice bar move cn.weather up       # up|down|top|bottom, or left|center|right
+#   cornice bar edit                     # open the editor panel
+set -uo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+bin_dir=$(dirname "$self")
+prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
+export CORNICE_PATH="$prefix"
+export PATH="$bin_dir:$PATH"
+
+user_config="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+
+die() { echo "cornice bar: $1" >&2; exit 1; }
+need_jq() { command -v jq >/dev/null 2>&1 || die "jq is required"; }
+
+sections=(left center right)
+
+current_layout() { # the effective layout, defaults merged with the user's file
+  timeout 5 cornice ipc shell config 2>/dev/null | jq -c '.bar.layout' 2>/dev/null
+}
+
+available_widgets() {
+  timeout 5 cornice widgets 2>/dev/null | jq -r '.[] | "\(.id)\t\(.displayName // .id)\t\(.category // "")"'
+}
+
+write_layout() { # write_layout <layout-json>
+  need_jq
+  local layout="$1" dir tmp
+  dir=$(dirname "$user_config")
+  mkdir -p "$dir"
+  tmp=$(mktemp "$dir/.config.XXXXXX")
+  if [[ -s $user_config ]] && jq -e . "$user_config" >/dev/null 2>&1; then
+    jq --argjson layout "$layout" '.bar.layout = $layout' "$user_config" >"$tmp"
+  else
+    jq -n --argjson layout "$layout" '{bar: {layout: $layout}}' >"$tmp"
+  fi
+  mv "$tmp" "$user_config"
+  timeout 5 cornice reload >/dev/null 2>&1 || true
+}
+
+find_section() { # find_section <layout> <id> → section name or empty
+  local layout="$1" id="$2" section
+  for section in "${sections[@]}"; do
+    if jq -e --arg id "$id" --arg s "$section" '.[$s] | map(.id) | index($id)' <<<"$layout" >/dev/null 2>&1; then
+      echo "$section"
+      return 0
+    fi
+  done
+  return 1
+}
+
+command="${1:-list}"
+shift || true
+
+case "$command" in
+  list)
+    need_jq
+    layout=$(current_layout)
+    [[ -n $layout && $layout != "null" ]] || die "the shell is not answering (cornice start)"
+    echo "Shown on the bar:"
+    for section in "${sections[@]}"; do
+      printf '  %-6s ' "$section"
+      jq -r --arg s "$section" '.[$s] | map(.id) | join(", ")' <<<"$layout"
+    done
+    shown=$(jq -r '[.[][]] | map(.id) | join(" ")' <<<"$layout")
+    echo
+    echo "Available but hidden:"
+    while IFS=$'\t' read -r id name _category; do
+      [[ -n $id ]] || continue
+      case " $shown " in *" $id "*) continue ;; esac
+      printf '  %-16s %s\n' "$id" "$name"
+    done < <(available_widgets)
+    ;;
+
+  show)
+    need_jq
+    id="${1:-}"; [[ -n $id ]] || die "usage: cornice bar show <widget-id> [--section left|center|right] [--index N]"
+    shift || true
+    section=""; index=""
+    while (($#)); do
+      case "$1" in
+        --section) section="${2:-}"; shift 2 ;;
+        --index) index="${2:-}"; shift 2 ;;
+        *) die "unknown option '$1'" ;;
+      esac
+    done
+    layout=$(current_layout)
+
+    # Already visible? Move within its section instead of duplicating it.
+    if existing=$(find_section "$layout" "$id"); then
+      section="$existing"
+    fi
+    if [[ -z $section ]]; then
+      hint=$(timeout 5 cornice widgets 2>/dev/null | jq -r --arg id "$id" '.[] | select(.id==$id) | .defaultSection // "right"' | head -1)
+      section="${hint:-right}"
+    fi
+    entry=$(jq -cn --arg id "$id" '{id: $id}')
+    next=$(jq -c --arg s "$section" --argjson e "$entry" --arg id "$id" '
+      .[$s] = ((.[$s] // []) | map(select(.id != $id)) + [$e])' <<<"$layout")
+    if [[ -n $index ]]; then
+      next=$(jq -c --arg s "$section" --arg id "$id" --argjson i "$index" '
+        .[$s] = ((.[$s] | map(select(.id != $id))) as $rest
+          | $rest[0:$i] + [{id: $id}] + $rest[$i:])' <<<"$next")
+    fi
+    write_layout "$next"
+    echo "cornice bar: $id shown in $section"
+    ;;
+
+  hide)
+    need_jq
+    id="${1:-}"; [[ -n $id ]] || die "usage: cornice bar hide <widget-id>"
+    layout=$(current_layout)
+    next=$(jq -c --arg id "$id" '
+      with_entries(.value = (.value | map(select(.id != $id))))' <<<"$layout")
+    write_layout "$next"
+    echo "cornice bar: $id hidden"
+    ;;
+
+  move)
+    need_jq
+    id="${1:-}"; where="${2:-}"; [[ -n $id && -n $where ]] || die "usage: cornice bar move <widget-id> up|down|top|bottom|left|center|right"
+    layout=$(current_layout)
+    section=$(find_section "$layout" "$id") || die "$id is not on the bar"
+    case "$where" in
+      left | center | right)
+        next=$(jq -c --arg from "$section" --arg to "$where" --arg id "$id" '
+          .[$from] = (.[ $from ] | map(select(.id != $id)))
+          | .[$to] = ((.[$to] // []) + [{id: $id}])' <<<"$layout")
+        ;;
+      top | bottom)
+        next=$(jq -c --arg s "$section" --arg id "$id" --arg where "$where" '
+          (.[ $s ] | map(select(.id != $id))) as $rest
+          | (.[ $s ] | map(select(.id == $id)) | .[0]) as $entry
+          | .[ $s ] = (if $where == "top" then [$entry] + $rest else $rest + [$entry] end)' <<<"$layout")
+        ;;
+      up | down)
+        delta=$([[ $where == up ]] && echo -1 || echo 1)
+        next=$(jq -c --arg s "$section" --arg id "$id" --argjson d "$delta" '
+          (.[ $s ] | map(.id) | index($id)) as $i
+          | (.[ $s ]) as $list
+          | ($i + $d) as $j
+          | if $j < 0 or $j >= ($list | length) then $list
+            else $list | (.[$i] = $list[$j]) | (.[$j] = $list[$i]) end as $swapped
+          | .[ $s ] = $swapped' <<<"$layout")
+        ;;
+      *) die "unknown direction '$where'" ;;
+    esac
+    write_layout "$next"
+    echo "cornice bar: $id moved $where"
+    ;;
+
+  edit)
+    timeout 5 cornice panel cn.bar-editor '{}' >/dev/null 2>&1 || die "could not open the editor"
+    echo "cornice bar: editor opened"
+    ;;
+
+  -h | --help)
+    sed -n '2,16p' "$self" | sed 's/^# \?//'
+    ;;
+
+  *)
+    die "unknown command '$command' (list|show|hide|move|edit)"
+    ;;
+esac

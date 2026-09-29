@@ -54,7 +54,7 @@ if ((plugin_count >= 21)); then pass "plugins: $plugin_count"; else fail "only $
 bar=$(timeout 5 cornice widgets | jq -r '[.[].id] | length' 2>/dev/null || echo 0)
 if ((bar > 0)); then pass "bar widgets available: $bar"; else fail "no bar widgets registered"; fi
 
-for target in shell notifications osd idle lock weather keylayout media background; do
+for target in shell notifications osd idle lock weather media background; do
   if timeout 5 cornice targets | jq -e --arg t "$target" 'index($t)' >/dev/null 2>&1; then
     pass "ipc target: $target"
   else
@@ -138,8 +138,10 @@ fi
 layout=$(timeout 5 cornice ipc keylayout status 2>/dev/null || echo "")
 if [[ -n $layout ]]; then
   pass "keyboard layout: $(jq -r '.layout // "?"' <<<"$layout") ($(jq -r '.name // ""' <<<"$layout"))"
+elif timeout 5 cornice ipc shell config 2>/dev/null | jq -e '[.bar.layout[][] | .id] | index("cn.keylayout")' >/dev/null 2>&1; then
+  fail "keylayout is on the bar but does not answer on its own target"
 else
-  fail "keylayout does not answer on its own target"
+  pass "keyboard layout hidden by default (nothing to check)"
 fi
 
 idle_state=$(timeout 5 cornice ipc idle status 2>/dev/null || echo "")

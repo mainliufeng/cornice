@@ -193,6 +193,10 @@ install_prefix="${CORNICE_INSTALLED_PREFIX:-$prefix}"
 if [[ $install_prefix != "$prefix" ]]; then
   section "installed tree"
   pass "shell from $install_prefix"
+  # CORNICE_PATH decides where plugins come from, so the installed-tree run has to
+  # point it at that tree — otherwise it quietly loads the working tree's plugins
+  # and the comparison of loaded vs on-disk plugins is meaningless.
+  export CORNICE_PATH="$install_prefix"
   [[ -f $install_prefix/shell/shell.qml ]] || fail "no shell.qml under $install_prefix"
 fi
 
@@ -222,13 +226,25 @@ if ((ready)); then
   if ((plugin_count == on_disk)); then pass "every plugin loaded: $plugin_count/$on_disk"
   else fail "loaded $plugin_count of $on_disk plugins on disk"; fi
 
-  for target in shell notifications osd idle lock weather keylayout media background; do
-    if cornice targets | jq -e --arg t "$target" 'index($t)' >/dev/null; then
+  targets=$(cornice targets)
+  for target in shell notifications osd idle lock weather media background; do
+    if jq -e --arg t "$target" 'index($t)' <<<"$targets" >/dev/null; then
       pass "ipc target present: $target"
     else
       fail "ipc target missing: $target"
     fi
   done
+  # A bar widget that is not on the bar is never instantiated, so it has no IPC
+  # target — assert keylayout only when the layout actually shows it.
+  if cornice ipc shell config | jq -e '[.bar.layout[][] | .id] | index("cn.keylayout")' >/dev/null 2>&1; then
+    if jq -e 'index("keylayout")' <<<"$targets" >/dev/null; then
+      pass "ipc target present: keylayout (widget is on the bar)"
+    else
+      fail "keylayout is on the bar but its ipc target is missing"
+    fi
+  else
+    pass "keylayout hidden by default — no target expected"
+  fi
 
   missing=$(cornice widgets | jq -r '[.[].id]' \
     | jq -r --argjson want '["cn.workspaces","cn.active-window","cn.clock","cn.media","cn.indicators","cn.tray","cn.network","cn.bluetooth","cn.audio","cn.power"]' \

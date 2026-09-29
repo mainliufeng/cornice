@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.bar-editor",
+  "name": "Bar layout editor",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Choose which bar widgets are visible and in what order (drives `cornice bar`)",
+  "kinds": ["panel"],
+  "entryPoints": {
+    "panel": "Editor.qml"
+  }
+}

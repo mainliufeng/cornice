@@ -51,6 +51,7 @@ Machine
   doctor              Check dependencies, compositor and conflicts
   health              Print the health report saved at the last shell start
   verify              Check the running shell inside your real session
+  bar [cmd]           Bar layout: list | show <id> | hide <id> | move <id> up|down|… | edit
   takeover [--apply]  Take over from mako/hypridle/waybar/polkit-gnome (plan first!)
   test [--quick|suite]  Run the test suites (takeover, headless, lock, live)
   session-env         Print compositor env exports (for TTYs / stale shells)
@@ -335,6 +336,10 @@ case "$command" in
 
   verify)
     exec "$bin_dir/cornice-verify" "$@"
+    ;;
+
+  bar)
+    exec "$bin_dir/cornice-bar" "$@"
     ;;
 
   takeover)
