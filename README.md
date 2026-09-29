@@ -1,56 +1,58 @@
 # Cornice
 #
-# A Hyprland shell built on Quickshell: one process for the bar and, later,
-# panels, notifications and the launcher.
+# A Hyprland shell built on Quickshell: one process for the bar, panels,
+# notifications, the launcher, the lock screen and idle handling.
 #
 # Design notes live in DESIGN.md. This file records how to run it and where the
 # boundaries are.
 
 ## Status
 
-**P0 + P1 + P2 complete and verified** (33/33 checks in the headless harness).
+Implemented and verified on a real Hyprland session (and in a private headless
+compositor stack in CI-ish runs):
 
-- **Bar** — workspaces, active window, media (MPRIS), clock, indicators,
-  system tray, network, bluetooth, audio, power, spacer. Config-driven layout,
+- **Bar** — workspaces, active window, media (MPRIS), clock, indicators, system
+  tray, network, bluetooth, audio, power, spacer. Config-driven layout,
   deep-merged user config, themed through tokens.
 - **Panels** — clock/calendar, audio (sink/mic volumes, device list), network
   (Wi-Fi list + connect), bluetooth (scan, pair, connect), power (battery,
-  power profiles, session actions), notification centre.
+  profiles, session actions), media (cover, progress, transport, volume,
+  player switching), notification centre.
 - **Notifications** — the shell owns `org.freedesktop.Notifications`: popups,
-  history, do-not-disturb, action buttons, and a centre panel.
+  history, do-not-disturb, action buttons, centre panel. It reclaims the bus
+  name if another daemon disappears mid-session.
 - **OSD** — volume/microphone/brightness overlay that also follows PipeWire
-  volume changes (so volume keys show it without any wiring).
+  volume changes, so the volume keys show it with no wiring.
 - **Launcher** — desktop entries with live filtering, keyboard navigation and a
   `>` run-command mode.
-- **IPC** — the shell serves its own socket (`~/.local/share/cornice` style JSON
-  line protocol) so plugins keep their own targets even though they load at
-  runtime; `cornice ipc <target> <method> [args]` plus convenience verbs.
-- **Verification** — `test/headless-verify.sh` (private compositor, never
-  touches your GPU or session) and `cornice verify` (checks the shell you are
-  looking at, inside a real Hyprland session).
+- **Clipboard / emoji** — cliphist-backed history (type to filter, Enter copies,
+  images previewed) and a searchable emoji picker.
+- **Lock screen** — PAM-backed, `loginctl lock-session` aware, refuses to lock
+  when PAM is unusable, releases an abandoned lock, and documents the TTY
+  recovery path when a lock client dies.
+- **Polkit agent** — in-shell authentication dialog (so `polkit-gnome` can go).
+- **Wallpaper** — static layer with per-workspace overrides that yields to
+  mpvpaper/hyprpaper/swaybg/swww/wbg unless `background.force` is set.
+- **Idle** — dim, display-off and lock with separate AC/battery timeouts, idle
+  inhibitor awareness, and a startup self-heal for a dimmed backlight left by a
+  crash.
+- **IPC** — the shell serves its own socket (JSON-lines) so plugins keep their
+  own targets even though they load at runtime.
+- **Takeover** — `cornice takeover` finds the daemons cornice replaces
+  (mako/dunst/swaync, hypridle, waybar, polkit-gnome, …), shows a plan, and
+  comments them out with a backup and a one-command undo.
 
-Not implemented yet: lock screen, polkit agent, wallpaper, clipboard overlay.
+Verification:
 
-Verified by `test/headless-verify.sh` (exit 0, 33 checks), which:
-1. creates a private session bus, then starts a headless mutter and a **nested
-   Hyprland** inside it — the Wayland backend, never DRM, so your real GPU,
-   screen and desktop are untouched;
-2. creates a headless output in that compositor and runs the shell there;
-3. asserts IPC over the shell's own socket, all 15 plugins, every bar widget,
-   and each of the six panels opening and closing;
-4. delivers a real notification over D-Bus and checks the popup, the history
-   and the do-not-disturb behaviour;
-5. opens a window (kitty) to prove widgets react to compositor state, types
-   into the launcher with `wtype`;
-6. screenshots the result and asserts both the bar strip and the panel/OSD
-   surfaces actually painted.
+| Suite | What it covers |
+| --- | --- |
+| `test/headless-verify.sh` | private compositor: startup, every plugin, every bar widget, every panel, notifications over D-Bus, painting |
+| `test/lock-verify.sh` | private compositor: lock success/failure/emergency unlock, never touches the live PAM stack |
+| `test/takeover-test.sh` | sandbox: takeover plan/apply/idempotence/backup/undo round trip |
+| `cornice verify` | the session you are actually looking at |
 
-The assertion is visual as well as programmatic: workspace pills 1–5 (active
-one highlighted), the focused window title, `Mon HH:MM`, and the battery
-percentage all render.
-
-Not implemented yet: panels, notifications, OSD, launcher, lock screen.
-Audio is wired but only shows when PipeWire is reachable.
+`cornice test` runs the applicable ones; `cornice test --quick` skips the two
+that build a private compositor.
 
 ## Requirements
 
@@ -58,49 +60,75 @@ Audio is wired but only shows when PipeWire is reachable.
 - Quickshell — `sudo pacman -S quickshell` (Arch `extra`)
 - `jq` or `python3` (to read plugin manifests)
 - A Nerd Font for the bar glyphs
-- Optional: `wpctl` (PipeWire volume), `fc-list` (doctor)
+- Optional, one per feature: `socat` (CLI → runtime plugins), `grim`
+  (screenshots in `cornice verify`), `wpctl`/WirePlumber (audio), `bluez`
+  (bluetooth), `brightnessctl` (brightness OSD), `cliphist` (clipboard
+  history), `light` (idle dimming), `NetworkManager` (network panel), a Nerd
+  Font (`ttf-nerd-fonts-symbols`) for the bar glyphs, `fc-list` (doctor)
 
 ## Install
 
 ```bash
 git clone <this repo> ~/Code/self/cornice
-for f in cornice cornice-doctor cornice-launch cornice-restart cornice-qs; do
-  ln -sfn "$PWD/bin/$f" ~/.local/bin/$f     # ~/.local/bin must be on PATH
-done
-cornice doctor
+cd ~/Code/self/cornice
+./install.sh                 # symlink the CLI into ~/.local/bin, check deps
 ```
 
-Quickshell is needed. Prefer the package (`sudo pacman -S quickshell`, Arch
-`extra`). Without sudo, `bin/cornice-qs` falls back to a user-local vendor tree
-at `~/.local/share/cornice/vendor/root`, which is enough to develop and test;
-`cornice doctor` tells you which of the two is in use.
+`./install.sh` never needs root and never edits a config file. Options:
 
-Then add to `~/.config/hypr/hyprland.conf` — Cornice never edits it for you:
+```bash
+./install.sh --copy              # self-contained tree in ~/.local/share/cornice
+./install.sh --prefix /usr/local # somewhere else
+./install.sh --takeover          # also hand over from mako/hypridle/… (see below)
+./install.sh --uninstall         # remove the binaries (config and state stay)
+make install                     # same as ./install.sh
+```
+
+Arch users can build a package instead — the PKGBUILD builds from the working
+tree (there is no public remote yet):
+
+```bash
+make pkg        # makepkg -si; installs to /usr/share/cornice + /usr/bin
+```
+
+Then add one line to `~/.config/hypr/hyprland.conf`:
 
 ```conf
 exec-once = cornice-launch
 ```
 
-Cornice deliberately does **not** touch:
+Cornice deliberately does **not** edit your Hyprland config, your
+`~/.config/hypr/*`, or any package — except through `cornice takeover --apply`,
+which does it explicitly, visibly, with backups. Optional keybinds live in
+`config/snippet.hyprland.conf`; paste what you want.
 
-- `~/.config/hypr/hyprland.conf` (you paste the snippet yourself)
-- `~/.config/hypr/*` (your lock screen, idle daemon, wallpaper stay yours)
-- any system package or service
-
-Rollback is `cornice stop` plus deleting the line you added.
+Rollback: `cornice stop`, remove the `exec-once` line, `./install.sh --uninstall`.
 
 ## Commands
 
 ```bash
-cornice start | stop | restart | status
-cornice ping | version | plugins | widgets | targets | socket | config | theme [name]
-cornice reload | reload-plugins
-cornice panel <plugin-id> [json]   # toggle any panel
-cornice launcher | notifications | dnd [on|off]
+# lifecycle
+cornice start | stop | restart | status | logs | health
+cornice launch                       # foreground, with the watchdog
+
+# inspecting the running shell
+cornice ping | version | plugins | widgets | targets | socket | path
+cornice config | theme [list|toggle|<name>] | reload | reload-plugins
+cornice ipc <target> <method> [args] # raw IPC, e.g. cornice ipc idle status
+
+# things you bind to keys
+cornice launcher | clipboard | emojis | notifications | dnd [on|off]
+cornice panel <plugin-id> [json]     # toggle any panel
 cornice osd volume | microphone | brightness | hide
-cornice doctor                    # environment, conflicts, config
-cornice verify                    # the running shell, in your real session
-cornice logs
+cornice lock [status|try <pw>|emergency-unlock]
+cornice background [status|set <path>|next|prev|clear|reload]
+
+# machine
+cornice doctor                       # dependencies, compositor, conflicts
+cornice verify                       # the shell you are looking at
+cornice takeover [--apply|--undo]    # hand over from mako/hypridle/waybar/…
+cornice test [--quick|takeover|headless|lock|live]
+cornice session-env                  # compositor env exports for TTYs/stale shells
 ```
 
 ## Configuration
@@ -122,6 +150,25 @@ you only write what differs:
 ```
 
 Arrays are replaced, objects are merged. `cornice config` prints the result.
+The keys that are not just bar layout:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `theme` | `"mono"` | active theme (`mono` dark, `dawn` light) |
+| `background.enabled` | `true` | paint a static wallpaper layer |
+| `background.dir` | `~/Pictures/wallpapers` | directory scanned for images |
+| `background.mode` | `"fill"` | `fill` / `fit` / `stretch` / `center` / `tile` |
+| `background.perWorkspace` | `{}` | `{"2": "/path/to.png"}` overrides |
+| `background.force` | `false` | take over even if mpvpaper/hyprpaper/swaybg/swww runs |
+| `notifications.takeover` | `true` | reclaim `org.freedesktop.Notifications` if it is free |
+| `idle.dimAc` / `idle.dimBattery` | `60` / `0` | seconds before the backlight dims (0 = never) |
+| `idle.screenOffAc` / `idle.screenOffBattery` | `120` / `300` | seconds before the display turns off |
+| `idle.lock` | `300` | seconds before the session locks |
+| `idle.respectInhibitors` | `false` | if true, apps holding an idle inhibitor also block dim/lock (browsers hold them for all sorts of reasons, so this is off by default) |
+
+`cornice ipc idle inhibit 3600` holds the idle chain off for an hour (and
+`cornice ipc idle release` ends it early) — for long downloads, presentations,
+or a test run that should not trip the lock screen.
 
 ## Themes
 
@@ -131,7 +178,7 @@ theme with `~/.config/cornice/theme.json`; switch by name with
 
 ## Plugins
 
-A plugin is a directory with a `manifest.json`:
+A plugin is a directory with a `manifest.json` and QML:
 
 ```json
 {
@@ -139,22 +186,35 @@ A plugin is a directory with a `manifest.json`:
   "id": "me.hello",
   "name": "Hello",
   "version": "0.1.0",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "Widget.qml" }
+  "kinds": ["bar-widget", "panel"],
+  "entryPoints": { "barWidget": "Widget.qml", "panel": "Panel.qml" }
 }
 ```
 
-Built-in plugins live in `shell/plugins/`, yours in
-`~/.config/cornice/plugins/<id>/`. A bar widget is a QML `Item` that declares:
+Built-ins live in `shell/plugins/<group>/<id>/`, yours in
+`~/.config/cornice/plugins/<id>/`. Entry points are instantiated with `host`
+(the shell: `config`, `services`, `summon`, `toggle`) and `plugin` (the
+manifest). Bar widgets additionally receive `widgetConfig` (their entry in
+`config.json`). Run `cornice reload-plugins` after adding one.
 
-```qml
-property var host          // the ShellRoot: config, registries, IPC
-property var plugin        // this plugin's manifest
-property var widgetConfig  // the entry from config.json
-```
+**Full guide: [docs/plugin-api.md](docs/plugin-api.md)** — kinds, the service
+pattern, `PanelFrame`, `ShellIpc`, theming rules and the traps that have already
+bitten this codebase (five-digit glyph escapes, anchors on plugin roots, …).
 
-Plugin code runs inside the shell process, unsandboxed — same trust model as
-any dotfile. Run `cornice reload-plugins` after adding one.
+## Idle
+
+`cn.idle` replaces hypridle: three `IdleMonitor`s for dim, display-off and lock,
+with separate AC and battery timeouts (see the configuration table). It uses the
+backlight for dimming — like the `idle.sh` it replaced — and restores the
+previous level at startup, so a crash cannot leave the screen dim.
+
+Events worth knowing:
+
+- any input un-dims and turns the display back on;
+- `cornice ipc idle status` reports `dimmed`, `screenOff`, `inhibited`, the
+  effective timeouts and whether the lock service is loaded;
+- the lock step refuses to run when the compositor already reports a locked
+  session (acquiring a second lock used to kill the whole shell).
 
 ## Wallpaper
 
@@ -183,6 +243,33 @@ cornice background clear         # back to dir/path
 
 `force: true` draws even while another wallpaper tool runs (they will overlap, so
 pick one). Without a `path`/`dir`, the shipped `wallpapers/default.png` is used.
+
+## Taking over from other daemons
+
+Cornice replaces mako/dunst/swaync (notifications), hypridle (idle), waybar
+(bar) and a polkit agent. Running those next to it gives duplicate popups, two
+bars, or notifications that never reach the shell, so:
+
+```bash
+cornice takeover            # plan only: what would change, and why
+cornice takeover --apply    # comment those lines out, stop the units
+cornice takeover --undo     # restore the newest backup
+```
+
+What it does, exactly:
+
+- finds `exec-once`/`exec` lines whose **command name** matches a competitor
+  (a path that merely mentions `mako`, like a log helper, is left alone);
+- finds matching **systemd user units** (`mako.service`, `hypridle.service`, …)
+  and stops + disables them;
+- comments the lines out with a `# cornice takeover:` marker — it never deletes
+  a line, and a second run changes nothing;
+- writes every touched file plus the unit states to
+  `~/.local/state/cornice/takeover/<timestamp>/` before touching anything;
+- leaves alone what cornice yields to (hyprpaper/swaybg/swww/mpvpaper),
+  night-light daemons, and cliphist (which cornice uses).
+
+Then reload: `hyprctl reload` (or `cornice takeover --reload`).
 
 ## If a lock client dies
 
@@ -221,3 +308,14 @@ verify pointer interactions such as "clicking the bar opens the panel".
 `XDG_RUNTIME_DIR`, runs the shell there, asserts IPC answers, screenshots the
 bar with `grim`, and tears everything down. Your session, your config and your
 running bar are untouched.
+
+Everything above is also available as one command:
+
+```bash
+cornice test            # takeover sandbox + headless + lock + live
+cornice test --quick    # only the suites that need no private compositor
+```
+
+The suites deliberately fail loudly on the checks that have historically been
+wrong (a plugin that does not load, a panel that opens empty, a sidebar that
+paints nothing, a takeover that comments the wrong line).

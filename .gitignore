@@ -7,3 +7,6 @@
 *.swp
 core.*
 *.core
+pkg/
+src/
+*.pkg.tar.*
