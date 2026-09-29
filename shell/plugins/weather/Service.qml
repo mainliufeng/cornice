@@ -575,6 +575,12 @@ Item {
             if (!isNaN(Number(saved.latitude)) && !isNaN(Number(saved.longitude))) {
               root.latitude = Number(saved.latitude)
               root.longitude = Number(saved.longitude)
+              // Ignore a cache that belongs to a different place: changing the
+              // configured city must not keep showing the previous one.
+              if (saved.locationKey !== undefined && saved.locationKey !== root.locationKey) {
+                locationCache.path = ""
+                return
+              }
               if (root.place === "" && saved.place) root.place = String(saved.place)
               root.locatedBy = String(saved.locatedBy || "cache")
             }
@@ -621,6 +627,7 @@ Item {
         error: root.error,
         place: root.place,
         locatedBy: root.locatedBy,
+        locationKey: root.locationKey,
         activeIndex: root.activeIndex,
         editorOpen: root.editorOpen,
         activeName: root.activeName,
