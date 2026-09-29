@@ -44,9 +44,18 @@ Item {
     // with hasThemeIcon() instead of discovering it afterwards. Try the plain
     // name as well as the -symbolic variant: fcitx asks for
     // "input-keyboard-symbolic", which breeze does not carry.
-    const name = icon.startsWith("image://icon/")
+    const inner = icon.startsWith("image://icon/")
       ? icon.slice("image://icon/".length)
       : icon
+
+    // The icon provider also hands out *file paths* wrapped as
+    // image://icon/<abs path>?path=<dir>. Apps using the tray-icon crate (Clash
+    // Verge) do exactly that; treating the path as a theme icon name made the
+    // lookup fail and drew a generic circle instead of the app's icon.
+    const asPath = inner.split("?")[0]
+    if (asPath.startsWith("/")) return "file://" + asPath
+
+    const name = inner
     const candidates = [name]
     if (name.endsWith("-symbolic")) candidates.push(name.slice(0, -"-symbolic".length))
     else candidates.push(name + "-symbolic")
