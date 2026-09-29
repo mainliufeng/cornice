@@ -168,6 +168,7 @@ PanelFrame {
     EditList {
       width: parent.width
       visible: root.editing
+      allowAdd: false // adding only through the picker below: select, never type
       rows: (root.service && root.service.locations ? root.service.locations : []).map(entry => [entry.name, entry.city])
       fields: [I18n.t("editor.name"), I18n.t("weather.placeCity")]
       error: root.editError
@@ -177,6 +178,29 @@ PanelFrame {
       onUpdateRequested: (index, values) => root.runCommand(
         "place set " + index + " --name " + Util.shellQuote(values[0]) + " --city " + Util.shellQuote(values[1]))
       onRemoveRequested: index => root.runCommand("place remove " + index)
+    }
+
+    // Adding a place: search, then pick. The coordinates come with the picked
+    // result, so nothing has to be typed from memory.
+    PickerList {
+      id: placePicker
+      width: parent.width
+      visible: root.editing
+      placeholder: I18n.t("weather.searchCity")
+      emptyText: I18n.t("weather.noResults")
+      busy: !!root.service && root.service.searching
+      items: (root.service && root.service.searchResults ? root.service.searchResults : [])
+        .map(entry => ({ label: entry.label, detail: entry.detail }))
+
+      onQueryChanged: if (root.service) root.service.search(query)
+
+      onPicked: index => {
+        const entry = root.service ? root.service.searchResults[index] : null
+        if (!entry) return
+        root.runCommand("place add " + Util.shellQuote(entry.label)
+          + " --lat " + entry.latitude + " --lon " + entry.longitude)
+        placePicker.clear()
+      }
     }
 
     // ---- details -----------------------------------------------------------

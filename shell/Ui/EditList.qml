@@ -23,6 +23,9 @@ Item {
   property var rows: []
   property var fields: []
   property string error: ""
+  // When false the caller supplies its own "add" affordance — the pickers do,
+  // because a place or a zone must be chosen from a list, not typed.
+  property bool allowAdd: true
 
   signal addRequested(var values)
   signal updateRequested(int index, var values)
@@ -37,7 +40,7 @@ Item {
     const out = []
     for (let i = 0; i < root.rows.length; i++)
       out.push({ adding: false, index: i, values: root.rows[i] })
-    out.push({ adding: true, index: -1, values: blank() })
+    if (root.allowAdd) out.push({ adding: true, index: -1, values: blank() })
     return out
   }
 
@@ -75,6 +78,7 @@ Item {
         id: rowItem
         required property var modelData
 
+        visible: !modelData.adding || root.allowAdd
         width: content.width
         spacing: Style.space(0.6)
 

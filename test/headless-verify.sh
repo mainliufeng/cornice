@@ -430,6 +430,35 @@ else
   fail "weather service did not answer"
 fi
 
+section "panels open"
+# The editors live in panels, and a QML mistake there does not show up anywhere
+# else: the plugin list still looks fine and the panel simply never opens. So
+# open each one and check it really reports itself open.
+for panel in cn.weather cn.clock cn.audio cn.media cn.notifications cn.bar-editor cn.launcher; do
+  cornice ipc shell summon "$panel" '{}' >/dev/null 2>&1
+  sleep 0.6
+  state=$(cornice ipc shell windows 2>/dev/null | jq -r --arg id "$panel" '[.[] | select(.id == $id) | .open] | first' 2>/dev/null)
+  if [[ $state == "true" ]]; then
+    pass "$panel opens"
+  else
+    fail "$panel did not open (state: ${state:-none})"
+  fi
+  cornice ipc shell hide "$panel" >/dev/null 2>&1
+done
+
+# ...and the editors inside them.
+cornice ipc shell summon cn.weather '{}' >/dev/null 2>&1
+sleep 0.6
+cornice ipc weather editor on >/dev/null 2>&1
+sleep 0.6
+if [[ $(cornice ipc weather status 2>/dev/null | jq -r .editorOpen) == "true" ]]; then
+  pass "the weather places editor can be turned on while the panel is open"
+else
+  fail "the weather places editor did not turn on"
+fi
+cornice ipc weather editor off >/dev/null 2>&1
+cornice ipc shell hide cn.weather >/dev/null 2>&1
+
 section "editing places and zones"
 # These are the exact commands the panel editors run, so a broken CLI would take
 # the in-panel editing down with it.

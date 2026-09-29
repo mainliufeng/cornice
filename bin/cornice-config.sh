@@ -78,7 +78,24 @@ cornice_config_edit() {
     rm -f "$tmp"
     return 1
   fi
+  # Safety net: keep the previous file, and refuse a write that loses top-level
+  # keys (which is how a config can end up quietly emptied).
+  local backup="${file}.previous"
+  cp -f "$file" "$backup" 2>/dev/null || true
   mv "$tmp" "$file" || return 1
+  if ! jq -e . "$file" >/dev/null 2>&1; then
+    mv -f "$backup" "$file" 2>/dev/null
+    echo "cornice: refusing to keep an unparsable config, restored the previous one" >&2
+    return 1
+  fi
+  local before after
+  before=$(jq 'keys | length' "$backup" 2>/dev/null || echo 0)
+  after=$(jq 'keys | length' "$file" 2>/dev/null || echo 0)
+  if ((after < before)); then
+    mv -f "$backup" "$file" 2>/dev/null
+    echo "cornice: the edit would have dropped $((before - after)) top-level key(s); restored the previous config" >&2
+    return 1
+  fi
   timeout 5 cornice reload >/dev/null 2>&1 || true
   return 0
 }
