@@ -147,12 +147,21 @@ Item {
               onEntered: row.hovered = true
               onExited: row.hovered = false
               onClicked: {
+                const entry = row.modelData
                 try {
-                  row.modelData.display()
+                  // A DBusMenu entry is activated with sendTriggered(): the app
+                  // owns the action and only learns about the click through that
+                  // call. display() is for entries with children (it opens the
+                  // submenu), which is why "Quit" used to close the menu and
+                  // nothing else.
+                  if (!entry.hasChildren && typeof entry.sendTriggered === "function")
+                    entry.sendTriggered()
+                  else
+                    entry.display()
                 } catch (e) {
                   console.warn("cornice: menu entry failed: " + e)
                 }
-                root.entryChosen(row.modelData)
+                root.entryChosen(entry)
                 root.close()
               }
             }
