@@ -84,7 +84,7 @@ handled_components=(
 component_by_pattern() {
   local line="$1" entry patterns pattern token base candidates=()
   # Match on the *command names* in the line, not on substrings: a path like
-  # ~/dotfiles/linux/desktop/mako/notify-log.py mentions mako but is not mako.
+  # A path like ~/scripts/mako-notify-log.py mentions mako but is not mako.
   read -r -a tokens <<<"$line"
   for token in "${tokens[@]}"; do
     token="${token%\&}"

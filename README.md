@@ -1,5 +1,7 @@
 # Cornice
 #
+# MIT licensed. See LICENSE.
+#
 # A Hyprland shell built on Quickshell: one process for the bar, panels,
 # notifications, the launcher, the lock screen and idle handling.
 #
@@ -81,10 +83,12 @@ that build a private compositor.
 ## Install
 
 ```bash
-git clone <this repo> ~/Code/self/cornice
+git clone https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
 cd ~/Code/self/cornice
 ./install.sh                 # symlink the CLI into ~/.local/bin, check deps
 ```
+
+![the bar](docs/screenshots/bar.png)
 
 `./install.sh` never needs root and never edits a config file. Options:
 
