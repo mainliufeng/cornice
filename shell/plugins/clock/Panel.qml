@@ -9,7 +9,7 @@ PanelFrame {
 
   edge: "top"
   panelWidth: 300
-  panelHeight: 420
+  panelHeight: 470
   takesKeyboard: false
 
   // The world-clock section reads offsets from the clock service.
@@ -162,11 +162,10 @@ PanelFrame {
     // ---- world clocks ------------------------------------------------------
     Column {
       width: parent.width
-      readonly property var svc: root.service
-      visible: svc && svc.rows.length > 0
+      visible: root.service && root.service.rows.length > 0
       spacing: Style.space(0.6)
 
-      readonly property int revision: svc ? svc.revision : 0
+      readonly property int revision: root.service ? root.service.revision : 0
 
       Item { width: 1; height: Style.space(0.4) }
 
@@ -178,7 +177,7 @@ PanelFrame {
       }
 
       Repeater {
-        model: parent.svc ? parent.svc.rows : []
+        model: root.service ? root.service.rows : []
 
         delegate: Row {
           required property var modelData
@@ -199,8 +198,8 @@ PanelFrame {
             }
 
             Text {
-              text: (parent.svc ? parent.svc.zoneTime(modelData.zone, "ddd d MMM") : "")
-                + "   " + (parent.svc ? parent.svc.zoneDiff(modelData.zone) : "")
+              text: (root.service ? root.service.zoneTime(modelData.zone, "ddd d MMM") : "")
+                + "   " + (root.service ? root.service.zoneDiff(modelData.zone) : "")
               color: Color.muted
               font.family: Style.fontFamily
               font.pixelSize: Style.smallFontSize
@@ -209,7 +208,7 @@ PanelFrame {
 
           Text {
             id: zoneTime
-            text: parent.svc ? parent.svc.zoneTime(modelData.zone, "HH:mm") : ""
+            text: root.service ? root.service.zoneTime(modelData.zone, "HH:mm") : ""
             color: Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
