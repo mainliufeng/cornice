@@ -59,7 +59,7 @@
     "terminalApps": []
   },
   "background": {
-    "enabled": false,
+    "enabled": true,
     "path": "",
     "dir": "",
     "mode": "fill",

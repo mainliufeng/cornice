@@ -131,8 +131,12 @@ else
 fi
 
 section "Background"
-if pgrep -x mpvpaper >/dev/null 2>&1; then
-  ok "video wallpaper running (mpvpaper) — cornice's background layer stays idle"
+other_wallpaper=""
+for tool in mpvpaper hyprpaper swaybg swww-daemon wbg; do
+  pgrep -x "$tool" >/dev/null 2>&1 && other_wallpaper="$tool" && break
+done
+if [[ -n $other_wallpaper ]]; then
+  ok "another wallpaper tool is running ($other_wallpaper) — cornice's background layer stays idle"
 else
   bg_enabled=$(jq -r '.background.enabled // false' "$prefix/config/default.json" 2>/dev/null || echo false)
   user_config="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"

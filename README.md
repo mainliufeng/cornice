@@ -158,8 +158,9 @@ any dotfile. Run `cornice reload-plugins` after adding one.
 
 ## Wallpaper
 
-The background layer is off by default and steps aside whenever a video
-wallpaper (mpvpaper) is running. To use static images instead:
+The background layer ships enabled with a built-in default wallpaper (so a fresh
+install is never a flat colour) and steps aside for any other wallpaper tool —
+mpvpaper, hyprpaper, swaybg, swww-daemon, wbg. To use your own images:
 
 ```json
 {
@@ -180,7 +181,8 @@ cornice background set ~/x.png   # one-off override
 cornice background clear         # back to dir/path
 ```
 
-`force: true` draws even while mpvpaper runs (they will overlap, so pick one).
+`force: true` draws even while another wallpaper tool runs (they will overlap, so
+pick one). Without a `path`/`dir`, the shipped `wallpapers/default.png` is used.
 
 ## Support hooks
 

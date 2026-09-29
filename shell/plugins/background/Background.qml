@@ -33,8 +33,13 @@ Item {
   readonly property bool force: Util.option(settings, "force", false)
   readonly property string mode: Util.option(settings, "mode", "fill")
 
-  property bool videoWallpaper: false
-  readonly property bool active: wanted && (!videoWallpaper || force)
+  // Another wallpaper tool owns the background too. Video wallpapers are the
+  // obvious case (mpvpaper), but hyprpaper/swaybg/swww/wbg count as well — the
+  // layer steps aside for all of them unless `force` is set.
+  readonly property var otherWallpaperTools: ["mpvpaper", "hyprpaper", "swaybg", "swww-daemon", "wbg"]
+  property string otherWallpaperTool: ""
+  readonly property bool videoWallpaper: otherWallpaperTool === "mpvpaper"
+  readonly property bool active: wanted && (otherWallpaperTool === "" || force)
 
   // Files available when `dir` is used, and the chosen index.
   property var images: []
@@ -48,6 +53,10 @@ Item {
     if (value.startsWith("~")) return (Quickshell.env("HOME") || "") + value.slice(1)
     return value
   }
+
+  // A shipped default so a fresh install is not a flat colour.
+  readonly property string shippedDefault: (Quickshell.env("CORNICE_PATH") || "/usr/share/cornice")
+    + "/wallpapers/default.png"
 
   readonly property string singlePath: expand(Util.option(settings, "path", ""))
   readonly property string directory: expand(Util.option(settings, "dir", ""))
@@ -64,7 +73,8 @@ Item {
     const perWorkspace = workspacePath(workspaceId)
     if (perWorkspace !== "") return perWorkspace
     if (images.length > 0) return images[index % images.length]
-    return singlePath
+    if (singlePath !== "") return singlePath
+    return shippedDefault
   }
 
   readonly property var monitors: Hyprland.monitors ? Hyprland.monitors.values : []
@@ -79,17 +89,19 @@ Item {
 
   // ---- video wallpaper detection -------------------------------------------
   Process {
-    id: videoProbe
+    id: wallpaperProbe
 
-    command: ["sh", "-c", "pgrep -x mpvpaper >/dev/null 2>&1 && echo yes || echo no"]
+    command: ["sh", "-c",
+      "for tool in " + otherWallpaperTools.join(" ") + "; do " +
+      "pgrep -x \"$tool\" >/dev/null 2>&1 && { echo \"$tool\"; exit 0; }; done; echo \"\""]
     running: true
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        const running = String(text).trim() === "yes"
-        if (running !== root.videoWallpaper) {
-          root.videoWallpaper = running
-          console.log("cornice: video wallpaper " + (running ? "detected — background layer idle" : "gone — background layer active"))
+        const tool = String(text).trim()
+        if (tool !== root.otherWallpaperTool) {
+          root.otherWallpaperTool = tool
+          console.log("cornice: wallpaper tool " + (tool === "" ? "gone — background layer active" : "\"" + tool + "\" detected — background layer idle"))
         }
       }
     }
@@ -99,7 +111,7 @@ Item {
     interval: 15000
     running: true
     repeat: true
-    onTriggered: videoProbe.running = true
+    onTriggered: wallpaperProbe.running = true
   }
 
   // ---- directory listing ---------------------------------------------------
@@ -198,6 +210,7 @@ Item {
         enabled: root.wanted,
         active: root.active,
         videoWallpaper: root.videoWallpaper,
+        otherWallpaperTool: root.otherWallpaperTool,
         forced: root.force,
         mode: root.mode,
         directory: root.directory,
