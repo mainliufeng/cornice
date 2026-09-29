@@ -508,7 +508,11 @@ Item {
     // Only a *fresh* forecast may name the place, and only when nothing else
     // told us where we are: a cached forecast from a previous location must not
     // relabel the bar.
-    if (fromCache !== true && root.place === "" && data.timezone) root.place = String(data.timezone)
+    // The API's timezone is only a last resort for a name: a configured place
+      // already has one (localized), and showing "Asia/Shanghai" instead of 北京
+      // is worse than showing nothing.
+      if (fromCache !== true && root.place === "" && root.activeName === "" && data.timezone)
+        root.place = String(data.timezone)
     root.updatedAt = Date.now()
     root.dataFromCache = fromCache === true
     root.status = "ready"
