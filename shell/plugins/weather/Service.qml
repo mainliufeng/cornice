@@ -360,9 +360,13 @@ Item {
           if (!first) throw new Error("no match for '" + root.city + "'")
           root.latitude = Number(first.latitude)
           root.longitude = Number(first.longitude)
+          // Prefer an explicit place name, then the configured (localized) name —
+          // coordinates-only configs used to fall through to the API's timezone
+          // name, which is how "Asia/Shanghai" ended up as the place label.
           root.place = root.configuredPlace !== ""
             ? root.configuredPlace
-            : [first.name, first.country_code].filter(part => part).join(", ")
+            : (root.activeName !== "" ? root.activeName
+               : [first.name, first.country_code].filter(part => part).join(", "))
           root.locatedBy = root.geocodingTimezone ? "timezone" : "city"
           root.rememberLocation()
           root.fetch()
