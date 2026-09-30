@@ -206,6 +206,10 @@ Item {
       return JSON.stringify(openerCounts)
     }
 
+    function menuState(): string {
+      return JSON.stringify(menu.inspect())
+    }
+
     function dump(): string {
       const out = []
       for (let i = 0; i < root.items.length; i++) {
