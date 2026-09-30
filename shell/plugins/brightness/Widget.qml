@@ -3,12 +3,14 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 
-// Backlight control, the same shape as the audio widget: a single glyph that
-// carries the level, the percentage on hover, and the wheel for changing it.
+// Backlight control, shaped like the audio widget: one glyph that carries the
+// level, the percentage on hover, the wheel to change it, and a left click that
+// just shows the brightness OSD (so clicking always does something visible).
 //
-// The backlight is read straight from sysfs (what the OSD does too), so no extra
-// tool has to be installed; writing goes through `light`, which the idle plugin
-// already uses for dimming.
+// Reading goes through `light -G` (the same tool the idle plugin uses to dim),
+// falling back to sysfs. Never render a placeholder glyph when the value is not
+// known yet: a widget that shows "?" cannot be told apart from the rest, which is
+// exactly how it was reported ("the gear one does not respond").
 Item {
   id: root
 
@@ -19,19 +21,33 @@ Item {
   readonly property int step: Math.max(1, Math.round(Util.option(widgetConfig, "step", 5)))
   property int percent: -1
   property bool hovered: false
+  property bool busy: false
 
   readonly property bool known: percent >= 0
-  readonly property string glyph: {
-    if (percent < 0) return "\u{F0590}"
-    if (percent >= 66) return "\uf185" // sun
-    if (percent >= 33) return "\uf185"
-    return "\uf186"                     // near-dark: the same family, dimmer
-  }
+  // One family only (FontAwesome sun), dimmed glyph at the low end.
+  readonly property string glyph: (percent >= 0 && percent < 33) ? "\uf186" : "\uf185"
 
   implicitHeight: Style.widgetHeight
   implicitWidth: label.implicitWidth + Style.space(1)
 
+  function parse(text) {
+    const value = Number(String(text).trim().split(/\s+/)[0])
+    if (!isNaN(value) && value >= 0) return Math.round(value)
+    const parts = String(text).trim().split(/\s+/)
+    if (parts.length === 2) {
+      const maximum = Number(parts[1])
+      if (maximum > 0) return Math.round((Number(parts[0]) / maximum) * 100)
+    }
+    return -1
+  }
+
   function refresh() {
+    if (busy) return
+    busy = true
+    reader.command = ["bash", "-c",
+      "if command -v light >/dev/null 2>&1; then light -G; else " +
+      "for d in /sys/class/backlight/*; do [ -r \"$d/brightness\" ] || continue; " +
+      "printf '%s %s' \"$(cat $d/brightness)\" \"$(cat $d/max_brightness)\"; break; done; fi"]
     reader.running = false
     reader.running = true
   }
@@ -42,36 +58,28 @@ Item {
     writer.command = ["light", "-S", String(clamped)]
     writer.running = false
     writer.running = true
-    // The OSD plugin already knows how to draw the level.
     Util.exec("cornice ipc osd brightness")
   }
 
   Process {
     id: reader
-    command: ["bash", "-c",
-      "for d in /sys/class/backlight/*; do [ -r \"$d/brightness\" ] || continue; " +
-      "printf '%s %s' \"$(cat $d/brightness)\" \"$(cat $d/max_brightness)\"; break; done"]
+    command: ["true"]
 
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        const parts = String(text).trim().split(/\s+/)
-        if (parts.length !== 2) {
-          root.percent = -1
-          return
-        }
-        const current = Number(parts[0])
-        const maximum = Number(parts[1])
-        root.percent = maximum > 0 ? Math.round((current / maximum) * 100) : -1
+        const value = root.parse(text)
+        if (value !== root.percent) console.log("cornice brightness: " + (value >= 0 ? value + "%" : "unavailable"))
+        root.percent = value
+        root.busy = false
       }
     }
   }
 
-  // `light` writes the value; its result is not read back, the sysfs read is.
   Process {
     id: writer
     command: ["true"]
-    onRunningChanged: if (!running) refresh()
+    onRunningChanged: if (!running) root.refresh()
   }
 
   Text {
@@ -79,6 +87,7 @@ Item {
     anchors.centerIn: parent
     text: root.hovered && root.known ? root.percent + "%" : root.glyph
     color: Color.barForeground
+    opacity: root.known ? 1 : 0.5
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }
@@ -88,7 +97,11 @@ Item {
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
     onHoveredChanged: root.hovered = hovered
-    onClicked: root.refresh()
+    onClicked: {
+      root.refresh()
+      // Always give feedback, even before the value is known.
+      Util.exec("cornice ipc osd brightness")
+    }
   }
 
   WheelHandler {
@@ -98,19 +111,15 @@ Item {
         root.refresh()
         return
       }
-      const up = event.angleDelta.y > 0
-      root.setPercent(root.percent + (up ? root.step : -root.step))
+      root.setPercent(root.percent + (event.angleDelta.y > 0 ? root.step : -root.step))
     }
   }
 
   Component.onCompleted: refresh()
-  onPercentChanged: refreshTimer.restart()
 
-  // Another tool may have changed the backlight (the idle plugin dims it); keep
-  // the glyph honest without polling hard.
   Timer {
-    id: refreshTimer
     interval: 5000
+    running: true
     repeat: true
     onTriggered: root.refresh()
   }
