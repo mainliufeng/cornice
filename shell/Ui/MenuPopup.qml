@@ -60,10 +60,22 @@ Item {
     anchors.top: true
     anchors.left: true
     margins.top: Style.barHeight + Style.space(0.5)
-    margins.left: Math.max(0, Math.round(root.anchorX))
+    // The tray sits at the right edge, so a menu anchored at the icon would run
+    // off the screen; clamp it to the screen edges (that is what made a menu look
+    // "covered": its right part simply was not on screen).
+    readonly property real screenWidth: screen ? screen.width : 1280
+    readonly property real clampedLeft: Math.max(0, Math.min(Math.round(root.anchorX),
+      screenWidth - implicitWidth - Style.space(0.5)))
+    margins.left: clampedLeft
 
     implicitWidth: Math.max(180, Math.min(root.preferredWidth, column.implicitWidth + Style.space(3)))
-    implicitHeight: Math.max(Style.widgetHeight, column.implicitHeight + Style.space(1.6))
+    // An SNI menu can be taller than the screen (nm-applet lists every Wi-Fi
+    // network): cap it to the space below the bar and let it scroll, instead of
+    // letting the compositor clip the bottom — which is what "the menu is
+    // covered" looked like.
+    readonly property real availableHeight: (screen ? screen.height : 1080) - margins.top - Style.space(1)
+    implicitHeight: Math.min(availableHeight,
+      Math.max(Style.widgetHeight, column.implicitHeight + Style.space(1.6)))
 
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "cornice-menu"
@@ -73,9 +85,17 @@ Item {
       anchors.fill: parent
       padding: Style.space(0.7)
 
-      Column {
+      Flickable {
+        id: scroll
+        anchors.fill: parent
+        // Scrolls when the menu is taller than the screen; harmless otherwise.
+        contentHeight: column.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
+        Column {
         id: column
-        width: parent.width
+        width: scroll.width
         spacing: 1
 
         Repeater {
@@ -206,4 +226,5 @@ Item {
       onTriggered: root.close()
     }
   }
+}
 }
