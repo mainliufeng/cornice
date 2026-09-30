@@ -4,7 +4,7 @@
   "name": "Active window",
   "version": "0.1.0",
   "author": "cornice",
-  "description": "Title of the focused window",
+  "description": "Current workspace windows with click-to-focus icons and the focused title",
   "kinds": [
     "bar-widget"
   ],
@@ -17,14 +17,18 @@
     "allowMultiple": false,
     "defaultSection": "left",
     "defaults": {
-      "maxWidth": 260
+      "maxWidth": 260,
+      "showWindows": true,
+      "maxIcons": 6
     },
     "schema": [
       {
         "key": "maxWidth",
         "type": "number",
         "label": "Maximum width in pixels"
-      }
+      },
+      { "key": "showWindows", "type": "boolean", "label": "Show workspace window icons" },
+      { "key": "maxIcons", "type": "number", "label": "Maximum window slots before overflow" }
     ]
   }
 }

@@ -13,6 +13,12 @@ Loader {
   property var registry: null
   property var entry: ({})
   property string section: ""
+  property real availableWidth: -1
+
+  function updateBudget() {
+    if (item && item.hasOwnProperty("availableWidth")) item.availableWidth = availableWidth
+  }
+  onAvailableWidthChanged: updateBudget()
 
   readonly property var plugin: (registry && entry && entry.id) ? registry.byId(entry.id) : null
 
@@ -46,5 +52,8 @@ Loader {
   Component.onCompleted: rebuild()
   onWidgetUrlChanged: rebuild()
   onStatusChanged: if (status === Loader.Error) console.warn("cornice: bar widget failed to load: " + widgetUrl)
-  onLoaded: if (item && item.hasOwnProperty("section")) item.section = root.section
+  onLoaded: {
+    if (item && item.hasOwnProperty("section")) item.section = root.section
+    updateBudget()
+  }
 }

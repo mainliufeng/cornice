@@ -272,6 +272,8 @@ else
   echo "--- shell.log ---"; tail -40 "$runtime/shell.log"
 fi
 
+source "$prefix/test/window-switcher-verify.sh"
+
 section "compositor state drives the widgets"
 if command -v kitty >/dev/null 2>&1; then
   hyprctl dispatch exec kitty >/dev/null 2>&1

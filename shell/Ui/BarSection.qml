@@ -20,7 +20,18 @@ Row {
   // under the centre clock.
   clip: true
 
+  function availableFor(index) {
+    if (maxWidth < 0) return -1
+    let used = spacing * Math.max(0, entries.length - 1)
+    for (let i = 0; i < widgets.count; i++) {
+      const widget = widgets.itemAt(i)
+      if (i !== index && widget && widget.visible) used += widget.width
+    }
+    return Math.max(0, maxWidth - used)
+  }
+
   Repeater {
+    id: widgets
     model: root.entries
 
     delegate: BarWidgetLoader {
@@ -31,6 +42,7 @@ Row {
       registry: root.registry
       entry: modelData
       section: root.section
+      availableWidth: root.availableFor(index)
     }
   }
 }
