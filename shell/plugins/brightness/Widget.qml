@@ -28,7 +28,9 @@ Item {
 
   readonly property bool known: percent >= 0
   // One family only (FontAwesome sun), dimmed glyph at the low end.
-  readonly property string glyph: (percent >= 0 && percent < 33) ? "\uf186" : "\uf185"
+  readonly property string glyph: "\uf185" // one glyph only: a second codepoint may not exist in the font
+  // Level is carried by opacity instead (same information, no missing glyph).
+  readonly property real glyphOpacity: percent < 0 ? 0.45 : (0.45 + 0.55 * (percent / 100))
 
   implicitHeight: Style.widgetHeight
   implicitWidth: label.implicitWidth + Style.space(1)
@@ -90,8 +92,8 @@ Item {
     anchors.centerIn: parent
     text: root.hovered && root.known ? root.percent + "%" : root.glyph
     color: Color.barForeground
-    opacity: root.known ? 1 : 0.5
-    font.family: Style.iconFamily
+    opacity: root.glyphOpacity
+    font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }
 
