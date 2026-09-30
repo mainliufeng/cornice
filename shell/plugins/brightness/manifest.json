@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.brightness",
+  "name": "Brightness",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Screen backlight: icon in the bar, scroll to change, hover for the percentage",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Brightness",
+    "category": "Display",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "step": 5
+    },
+    "schema": [
+      {
+        "key": "step",
+        "type": "number",
+        "label": "Percent per scroll notch"
+      }
+    ]
+  },
+  "keepLoaded": true
+}
