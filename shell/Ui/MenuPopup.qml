@@ -37,6 +37,35 @@ Item {
     return entries().length
   }
 
+  // Submenus: QsMenuEntry carries its own handle, so the same renderer can show
+  // the children one level down, with a "back" row to come out again. Without
+  // this, "Available networks ›" in nm-applet's menu could not be opened at all
+  // (the click only called display(), which does nothing on a submenu).
+  property var handleStack: []
+
+  function canOpen(entry) {
+    if (!entry) return false
+    if (entry.hasChildren === true) return true
+    const kids = entry.children
+    return kids !== undefined && kids !== null && kids.length > 0
+  }
+
+  function openSubmenu(entry) {
+    if (!canOpen(entry) || !entry.menu) return false
+    handleStack = handleStack.concat([handle])
+    handle = entry.menu
+    return true
+  }
+
+  function goBack() {
+    if (handleStack.length === 0) return
+    const stack = handleStack.slice()
+    handle = stack.pop()
+    handleStack = stack
+  }
+
+  onHandleChanged: if (handle === null) handleStack = []
+
   function close() {
     handle = null
   }
@@ -97,6 +126,50 @@ Item {
         id: column
         width: scroll.width
         spacing: 1
+
+        // Back row, only while inside a submenu.
+        Item {
+          visible: root.handleStack.length > 0
+          width: column.width
+          height: visible ? Style.widgetHeight : 0
+
+          Rectangle {
+            anchors.fill: parent
+            radius: Style.radius
+            color: backHover.containsMouse ? Color.hover : "transparent"
+          }
+
+          Row {
+            anchors.fill: parent
+            anchors.leftMargin: Style.space(0.7)
+            spacing: Style.space(0.6)
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(1.6)
+              text: "\uf060"
+              color: Color.muted
+              font.family: Style.fontFamily
+              font.pixelSize: Style.smallFontSize
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: I18n.t("common.back")
+              color: Color.foreground
+              font.family: Style.fontFamily
+              font.pixelSize: Style.fontSize
+            }
+          }
+
+          MouseArea {
+            id: backHover
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.goBack()
+          }
+        }
 
         Repeater {
           model: root.entries()
@@ -176,9 +249,10 @@ Item {
               onClicked: {
                 const entry = row.modelData
                 try {
-                  if (entry.hasChildren) {
-                    // Submenus are not rendered by this panel (yet): open them the
-                    // only way we can and leave the menu where it is.
+                  if (root.canOpen(entry)) {
+                    // Enter the submenu in place; the row click must not close the
+                    // menu, which is what the early return does.
+                    if (root.openSubmenu(entry)) return
                     entry.display()
                   } else if (typeof entry.sendTriggered === "function") {
                     // A DBusMenuItem knows how to tell its app about the click.
