@@ -28,7 +28,10 @@ Item {
 
   readonly property bool known: percent >= 0
   // One family only (FontAwesome sun), dimmed glyph at the low end.
-  readonly property string glyph: "\uf185" // one glyph only: a second codepoint may not exist in the font
+  // U+F0EB (bulb). Note U+F185 looks like a *sun* in most icon sets but this
+  // machine's font (Hack Nerd Font) draws it as a cog — which is how the widget
+  // was reported as "the gear one". The bulb is unambiguous here.
+  readonly property string glyph: "\uf0eb"
   // Level is carried by opacity instead (same information, no missing glyph).
   readonly property real glyphOpacity: percent < 0 ? 0.45 : (0.45 + 0.55 * (percent / 100))
 
