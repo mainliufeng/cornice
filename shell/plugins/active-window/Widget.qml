@@ -369,7 +369,7 @@ Item {
         buttons: buttons, overflow: root.overflowWindows.map(window => window.address),
         moreX: Math.round(origin.x + more.x + more.width / 2), pickerOpen: picker.isOpen,
         tooltipVisible: tooltip.visible, budget: root.budget, width: root.implicitWidth,
-        pickerRows: pickerRows, title: root.title })
+        pickerRows: pickerRows, pickerMoving: overflowList.moving, title: root.title })
     }
   }
 }

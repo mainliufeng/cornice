@@ -1,6 +1,9 @@
 {
   "bar.editor.hidden": "已隐藏",
-  "bar.editor.hint": "增删与排序，保存到 ~/.config/cornice/config.json 并立即生效。",
+  "bar.editor.hint": "每个组件都可选左、中、右；上下箭头调整区域内顺序。更改自动保存并立即生效。",
+  "bar.editor.left": "左",
+  "bar.editor.center": "中",
+  "bar.editor.right": "右",
   "bar.editor.nothing": "无",
   "bar.editor.scriptable": "也可用命令：cornice bar list | show <id> | hide <id> | move <id> up|down|left|center|right",
   "bar.editor.title": "状态栏布局",

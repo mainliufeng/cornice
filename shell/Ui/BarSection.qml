@@ -9,6 +9,21 @@ Row {
   property var host: null
   property var registry: null
   property var entries: []
+  property var modelEntries: []
+  function syncEntries() {
+    if (JSON.stringify(modelEntries) === JSON.stringify(entries)) return
+    // Let old widget handlers unregister before loading the replacement rows.
+    // Unchanged sections retain their widget instances and local state.
+    modelEntries = []
+    rebuildTimer.restart()
+  }
+  onEntriesChanged: syncEntries()
+  Component.onCompleted: syncEntries()
+  Timer {
+    id: rebuildTimer
+    interval: 16
+    onTriggered: root.modelEntries = root.entries
+  }
   property string section: ""
   // Sections are bounded so a long window title or media string can never run
   // under the centre clock; widgets that support maxWidth elide themselves.
@@ -32,7 +47,7 @@ Row {
 
   Repeater {
     id: widgets
-    model: root.entries
+    model: root.modelEntries
 
     delegate: BarWidgetLoader {
       required property var modelData

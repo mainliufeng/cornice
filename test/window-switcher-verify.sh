@@ -77,6 +77,10 @@ target=$(jq -r '.pickerRows[0].address' <<<"$state")
 if [[ $row_x =~ ^[0-9]+$ && $row_y =~ ^[0-9]+$ ]]; then
   # Scroll with the real pointer, then select the last (long title) entry.
   window_pointer "$((panel_x + row_x))" "$((panel_y + row_y))" scroll
+  for _ in $(seq 1 30); do
+    [[ $(window_state | jq -r '.pickerMoving') == false ]] && break
+    sleep 0.1
+  done
   state=$(window_state)
   grim "$runtime/window-overflow-scrolled.png"
   read -r row_x row_y <<<"$(jq -r '.pickerRows[-1] | [.x,.y] | join(" ")' <<<"$state")"

@@ -19,7 +19,8 @@ prefix="${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}"
 export CORNICE_PATH="$prefix"
 export PATH="$bin_dir:$PATH"
 
-user_config="${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+. "$bin_dir/cornice-config.sh"
+user_config=$(cornice_config_file)
 
 die() { echo "cornice bar: $1" >&2; exit 1; }
 need_jq() { command -v jq >/dev/null 2>&1 || die "jq is required"; }
@@ -27,7 +28,14 @@ need_jq() { command -v jq >/dev/null 2>&1 || die "jq is required"; }
 sections=(left center right)
 
 current_layout() { # the effective layout, defaults merged with the user's file
-  timeout 5 cornice ipc shell config 2>/dev/null | jq -c '.bar.layout' 2>/dev/null
+  local raw effective
+  raw=$(cornice_config_raw)
+  [[ $raw != '{}' || ! -s $user_config ]] || die "config is not valid JSON; refusing to edit it"
+  effective=$(cornice_effective_config)
+  # Reload is asynchronous; the file contains the latest edits, even when the
+  # shell is still showing the previous layout. Preserve defaults for unset sides.
+  jq -cn --argjson raw "$raw" --argjson effective "$effective" \
+    '$effective.bar.layout + ($raw.bar.layout // {})'
 }
 
 available_widgets() {
@@ -36,17 +44,7 @@ available_widgets() {
 
 write_layout() { # write_layout <layout-json>
   need_jq
-  local layout="$1" dir tmp
-  dir=$(dirname "$user_config")
-  mkdir -p "$dir"
-  tmp=$(mktemp "$dir/.config.XXXXXX")
-  if [[ -s $user_config ]] && jq -e . "$user_config" >/dev/null 2>&1; then
-    jq --argjson layout "$layout" '.bar.layout = $layout' "$user_config" >"$tmp"
-  else
-    jq -n --argjson layout "$layout" '{bar: {layout: $layout}}' >"$tmp"
-  fi
-  mv "$tmp" "$user_config"
-  timeout 5 cornice reload >/dev/null 2>&1 || true
+  cornice_config_edit '.bar.layout = $layout' --argjson layout "$1" || die "could not save the layout"
 }
 
 find_section() { # find_section <layout> <id> → section name or empty
@@ -66,7 +64,7 @@ shift || true
 case "$command" in
   list)
     need_jq
-    layout=$(current_layout)
+    layout=$(current_layout) || exit 1
     [[ -n $layout && $layout != "null" ]] || die "the shell is not answering (cornice start)"
     echo "Shown on the bar:"
     for section in "${sections[@]}"; do
@@ -90,28 +88,31 @@ case "$command" in
     section=""; index=""
     while (($#)); do
       case "$1" in
-        --section) section="${2:-}"; shift 2 ;;
-        --index) index="${2:-}"; shift 2 ;;
+        --section) (($# >= 2)) || die "--section requires left|center|right"; section="$2"; shift 2 ;;
+        --index) (($# >= 2)) || die "--index requires a non-negative integer"; index="$2"; shift 2 ;;
         *) die "unknown option '$1'" ;;
       esac
     done
-    layout=$(current_layout)
+    layout=$(current_layout) || exit 1
 
-    # Already visible? Move within its section instead of duplicating it.
+    # Reuse an existing widget and its options; an explicit section takes priority.
     if existing=$(find_section "$layout" "$id"); then
-      section="$existing"
+      [[ -n $section ]] || section="$existing"
     fi
     if [[ -z $section ]]; then
       hint=$(timeout 5 cornice widgets 2>/dev/null | jq -r --arg id "$id" '.[] | select(.id==$id) | .defaultSection // "right"' | head -1)
       section="${hint:-right}"
     fi
-    entry=$(jq -cn --arg id "$id" '{id: $id}')
+    case "$section" in left|center|right) ;; *) die "unknown section '$section'" ;; esac
+    [[ -z $index || $index =~ ^[0-9]+$ ]] || die "index must be a non-negative integer"
+    entry=$(jq -c --arg id "$id" '[.[][] | select(.id == $id)][0] // {id: $id}' <<<"$layout")
     next=$(jq -c --arg s "$section" --argjson e "$entry" --arg id "$id" '
-      .[$s] = ((.[$s] // []) | map(select(.id != $id)) + [$e])' <<<"$layout")
+      with_entries(.value |= map(select(.id != $id)))
+      | .[$s] = ((.[$s] // []) + [$e])' <<<"$layout")
     if [[ -n $index ]]; then
-      next=$(jq -c --arg s "$section" --arg id "$id" --argjson i "$index" '
+      next=$(jq -c --arg s "$section" --arg id "$id" --argjson e "$entry" --argjson i "$index" '
         .[$s] = ((.[$s] | map(select(.id != $id))) as $rest
-          | $rest[0:$i] + [{id: $id}] + $rest[$i:])' <<<"$next")
+          | $rest[0:$i] + [$e] + $rest[$i:])' <<<"$next")
     fi
     write_layout "$next"
     echo "cornice bar: $id shown in $section"
@@ -120,7 +121,7 @@ case "$command" in
   hide)
     need_jq
     id="${1:-}"; [[ -n $id ]] || die "usage: cornice bar hide <widget-id>"
-    layout=$(current_layout)
+    layout=$(current_layout) || exit 1
     next=$(jq -c --arg id "$id" '
       with_entries(.value = (.value | map(select(.id != $id))))' <<<"$layout")
     write_layout "$next"
@@ -130,13 +131,16 @@ case "$command" in
   move)
     need_jq
     id="${1:-}"; where="${2:-}"; [[ -n $id && -n $where ]] || die "usage: cornice bar move <widget-id> up|down|top|bottom|left|center|right"
-    layout=$(current_layout)
+    layout=$(current_layout) || exit 1
     section=$(find_section "$layout" "$id") || die "$id is not on the bar"
     case "$where" in
       left | center | right)
         next=$(jq -c --arg from "$section" --arg to "$where" --arg id "$id" '
-          .[$from] = (.[ $from ] | map(select(.id != $id)))
-          | .[$to] = ((.[$to] // []) + [{id: $id}])' <<<"$layout")
+          if $from == $to then . else
+            (.[ $from ] | map(select(.id == $id)) | .[0]) as $entry
+            | .[$from] = (.[ $from ] | map(select(.id != $id)))
+            | .[$to] = ((.[$to] // []) + [$entry])
+          end' <<<"$layout")
         ;;
       top | bottom)
         next=$(jq -c --arg s "$section" --arg id "$id" --arg where "$where" '

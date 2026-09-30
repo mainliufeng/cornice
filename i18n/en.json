@@ -1,6 +1,9 @@
 {
   "bar.editor.hidden": "HIDDEN",
-  "bar.editor.hint": "Add, remove and reorder. Saved to ~/.config/cornice/config.json and applied immediately.",
+  "bar.editor.hint": "Choose Left, Center or Right for any widget; arrows reorder within a section. Changes are saved and applied immediately.",
+  "bar.editor.left": "L",
+  "bar.editor.center": "C",
+  "bar.editor.right": "R",
   "bar.editor.nothing": "nothing",
   "bar.editor.scriptable": "Scriptable too: cornice bar list | show <id> | hide <id> | move <id> up|down|left|center|right",
   "bar.editor.title": "Bar layout",

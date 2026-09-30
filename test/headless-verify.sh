@@ -273,6 +273,7 @@ else
 fi
 
 source "$prefix/test/window-switcher-verify.sh"
+source "$prefix/test/bar-editor-verify.sh"
 
 section "compositor state drives the widgets"
 if command -v kitty >/dev/null 2>&1; then

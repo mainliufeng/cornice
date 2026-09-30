@@ -67,6 +67,7 @@ Item {
         name: plugin.name,
         displayName: meta.displayName || plugin.name,
         category: meta.category || "",
+        defaultSection: meta.defaultSection || "right",
         origin: plugin.origin
       })
     }

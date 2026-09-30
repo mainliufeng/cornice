@@ -41,7 +41,7 @@ PanelFrame {
   function labelFor(id) {
     for (const widget of widgets) {
       if (widget.id !== id) continue
-      return (widget.barWidget && widget.barWidget.displayName) || widget.name || id
+      return widget.displayName || widget.name || id
     }
     return id
   }
@@ -59,6 +59,7 @@ PanelFrame {
         out.push({
           kind: "widget",
           id: id,
+          section: section,
           label: labelFor(id),
           up: index > 0,
           down: index < entries.length - 1
@@ -79,11 +80,32 @@ PanelFrame {
     Util.exec("cornice bar " + command)
   }
 
+  function placementActions(row) {
+    return sections.map(section => ({
+      glyph: I18n.t("bar.editor." + section),
+      command: row.kind === "hidden"
+        ? "show " + Util.shellQuote(row.id) + " --section " + section
+        : "move " + Util.shellQuote(row.id) + " " + section,
+      enabled: row.section !== section,
+      selected: row.section === section
+    }))
+  }
+
   component RowShell: Rectangle {
     id: shell
     property string label: ""
     property bool muted: false
     property var actions: []
+    function inspect() {
+      const out = []
+      for (let i = 0; i < actionButtons.count; i++) {
+        const button = actionButtons.itemAt(i)
+        const point = button.mapToItem(editor.window.contentItem, button.width / 2, button.height / 2)
+        out.push({ command: button.modelData.command, enabled: button.enabled,
+          x: Math.round(point.x), y: Math.round(point.y) })
+      }
+      return out
+    }
 
     // NB: inside an inline `component` declaration, `root` is the component
     // itself — using it here made the row reference its own width and collapse
@@ -113,20 +135,22 @@ PanelFrame {
       spacing: Style.space(0.3)
 
       Repeater {
+        id: actionButtons
         model: shell.actions
 
         delegate: Rectangle {
           required property var modelData
+          enabled: modelData.enabled !== false
 
           width: Style.widgetHeight
           height: Style.widgetHeight
           radius: Style.radius
-          color: hoverArea.containsMouse ? Color.accent : Color.background
+          color: modelData.selected || (enabled && hoverArea.containsMouse) ? Color.accent : Color.background
 
           Text {
             anchors.centerIn: parent
             text: parent.modelData.glyph
-            color: Color.foreground
+            color: parent.modelData.selected ? Color.background : parent.enabled ? Color.foreground : Color.muted
             font.family: Style.iconFamily
             font.pixelSize: Style.smallFontSize
           }
@@ -144,10 +168,12 @@ PanelFrame {
   }
 
   Column {
+    id: contentColumn
     anchors.fill: parent
     spacing: Style.space(0.8)
 
     Text {
+      id: titleLabel
       text: I18n.t("bar.editor.title")
       color: Color.foreground
       font.family: Style.fontFamily
@@ -156,6 +182,7 @@ PanelFrame {
     }
 
     Text {
+      id: hintLabel
       width: parent.width
       text: I18n.t("bar.editor.hint")
       color: Color.muted
@@ -165,8 +192,10 @@ PanelFrame {
     }
 
     Flickable {
+      id: scroll
       width: parent.width
-      height: parent.height - Style.widgetHeight * 2.4
+      height: Math.max(Style.widgetHeight, parent.height - titleLabel.height
+        - hintLabel.height - footerLabel.height - parent.spacing * 3)
       contentHeight: list.implicitHeight
       clip: true
       boundsBehavior: Flickable.StopAtBounds
@@ -177,10 +206,16 @@ PanelFrame {
         spacing: Style.space(0.4)
 
         Repeater {
+          id: rowItems
           model: editor.rows
 
           delegate: Item {
             required property var modelData
+            function inspect() {
+              return { id: modelData.id || "", kind: modelData.kind,
+                section: modelData.section || "", actions: modelData.kind === "widget"
+                  ? shownRow.inspect() : modelData.kind === "hidden" ? hiddenRow.inspect() : [] }
+            }
 
             width: list.width
             height: modelData.kind === "header"
@@ -198,22 +233,22 @@ PanelFrame {
             }
 
             RowShell {
+              id: shownRow
               visible: parent.modelData.kind === "widget"
               label: parent.modelData.label || ""
-              actions: parent.modelData.kind === "widget" ? [
-                { glyph: "\u{F062}", command: "move " + parent.modelData.id + " up", enabled: parent.modelData.up },
-                { glyph: "\u{F063}", command: "move " + parent.modelData.id + " down", enabled: parent.modelData.down },
-                { glyph: "\u{F00D}", command: "hide " + parent.modelData.id, enabled: true }
-              ] : []
+              actions: parent.modelData.kind === "widget" ? editor.placementActions(parent.modelData).concat([
+                { glyph: "\u{F062}", command: "move " + Util.shellQuote(parent.modelData.id) + " up", enabled: parent.modelData.up },
+                { glyph: "\u{F063}", command: "move " + Util.shellQuote(parent.modelData.id) + " down", enabled: parent.modelData.down },
+                { glyph: "\u{F00D}", command: "hide " + Util.shellQuote(parent.modelData.id), enabled: true }
+              ]) : []
             }
 
             RowShell {
+              id: hiddenRow
               visible: parent.modelData.kind === "hidden"
               label: parent.modelData.label || ""
               muted: true
-              actions: parent.modelData.kind === "hidden" ? [
-                { glyph: "\u{F067}", command: "show " + parent.modelData.id, enabled: true }
-              ] : []
+              actions: parent.modelData.kind === "hidden" ? editor.placementActions(parent.modelData) : []
             }
           }
         }
@@ -221,12 +256,24 @@ PanelFrame {
     }
 
     Text {
+      id: footerLabel
       width: parent.width
       text: I18n.t("bar.editor.scriptable")
       color: Color.muted
       wrapMode: Text.Wrap
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize
+    }
+  }
+  ShellIpc {
+    target: "barEditor"
+    function state(): string {
+      const rows = []
+      for (let i = 0; i < rowItems.count; i++) rows.push(rowItems.itemAt(i).inspect())
+      const origin = scroll.mapToItem(editor.window.contentItem, 0, 0)
+      return JSON.stringify({ open: editor.isOpen, rows: rows,
+        moving: scroll.moving,
+        viewport: { x: origin.x, y: origin.y, width: scroll.width, height: scroll.height } })
     }
   }
 }

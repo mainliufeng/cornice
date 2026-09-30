@@ -4,10 +4,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include <wayland-client.h>
 #include "virtual-pointer.h"
 
 static struct zwlr_virtual_pointer_manager_v1 *manager;
+static uint32_t event_time(void) {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return (uint32_t)(now.tv_sec * 1000 + now.tv_nsec / 1000000);
+}
 
 static void global(void *data, struct wl_registry *registry, uint32_t name,
                    const char *interface, uint32_t version) {
@@ -40,22 +46,21 @@ int main(int argc, char **argv) {
   // Removing and recreating the seat's device can clear a compositor focus grab.
   if (argc == 6 && !strcmp(argv[5], "interactive")) {
     char line[128], action[32];
-    uint32_t stamp = 1;
     while (fgets(line, sizeof(line), stdin)) {
       if (sscanf(line, "%u %u %31s", &x, &y, action) != 3) return 2;
-      zwlr_virtual_pointer_v1_motion_absolute(pointer, stamp++, x, y, width, height);
+      zwlr_virtual_pointer_v1_motion_absolute(pointer, event_time(), x, y, width, height);
       zwlr_virtual_pointer_v1_frame(pointer);
       wl_display_roundtrip(display);
       usleep(100000);
       if (!strcmp(action, "click")) {
-        zwlr_virtual_pointer_v1_button(pointer, stamp++, 0x110, WL_POINTER_BUTTON_STATE_PRESSED);
+        zwlr_virtual_pointer_v1_button(pointer, event_time(), 0x110, WL_POINTER_BUTTON_STATE_PRESSED);
         zwlr_virtual_pointer_v1_frame(pointer);
         wl_display_roundtrip(display);
         usleep(30000);
-        zwlr_virtual_pointer_v1_button(pointer, stamp++, 0x110, WL_POINTER_BUTTON_STATE_RELEASED);
-      } else if (!strcmp(action, "scroll")) {
-        zwlr_virtual_pointer_v1_axis(pointer, stamp++, WL_POINTER_AXIS_VERTICAL_SCROLL,
-                                     wl_fixed_from_int(400));
+        zwlr_virtual_pointer_v1_button(pointer, event_time(), 0x110, WL_POINTER_BUTTON_STATE_RELEASED);
+      } else if (!strcmp(action, "scroll") || !strncmp(action, "scroll:", 7)) {
+        zwlr_virtual_pointer_v1_axis(pointer, event_time(), WL_POINTER_AXIS_VERTICAL_SCROLL,
+                                     wl_fixed_from_int(!strcmp(action, "scroll") ? 400 : atoi(action + 7)));
       } else if (strcmp(action, "hover")) return 2;
       zwlr_virtual_pointer_v1_frame(pointer);
       wl_display_roundtrip(display);
