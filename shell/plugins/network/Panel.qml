@@ -11,7 +11,7 @@ PanelFrame {
 
   edge: "top"
   panelWidth: 400
-  panelHeight: 460
+  panelHeight: 560
   takesKeyboard: false
 
   property string selectedSsid: ""
@@ -165,6 +165,7 @@ PanelFrame {
 
       delegate: Column {
         required property var modelData
+        required property int index
 
         width: list.width
         spacing: Style.space(0.4)
@@ -213,6 +214,9 @@ PanelFrame {
           width: parent.width
           spacing: Style.space(0.6)
           visible: root.selectedSsid === modelData.name
+          // The field appears below the row, which can be outside the viewport:
+          // scroll it in, otherwise expanding looks like nothing happened.
+          onVisibleChanged: if (visible) list.positionViewAtIndex(index, ListView.Contain)
 
           TextField {
             id: pskField

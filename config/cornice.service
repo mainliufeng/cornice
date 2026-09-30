@@ -6,6 +6,10 @@ PartOf=graphical-session.target
 After=graphical-session.target
 # Only where there is a Wayland session to draw on.
 ConditionEnvironment=WAYLAND_DISPLAY
+# A shell that crash-loops should not hammer the CPU forever (these belong to
+# [Unit]; in [Service] systemd silently ignores them).
+StartLimitIntervalSec=60
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -15,9 +19,6 @@ Type=simple
 ExecStart=%h/.local/bin/cornice-launch
 Restart=always
 RestartSec=2
-# A shell that crash-loops should not hammer the CPU forever.
-StartLimitIntervalSec=60
-StartLimitBurst=10
 
 [Install]
 WantedBy=graphical-session.target
