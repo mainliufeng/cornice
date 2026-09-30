@@ -286,6 +286,7 @@ else
   echo "--- shell.log ---"; tail -40 "$runtime/shell.log"
 fi
 
+source "$prefix/test/bar-alignment-verify.sh"
 source "$prefix/test/window-switcher-verify.sh"
 source "$prefix/test/bar-editor-verify.sh"
 

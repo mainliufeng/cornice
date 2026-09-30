@@ -27,6 +27,15 @@ QtObject {
     ? Theme.metrics.iconFamily
     : fontFamily
 
+  // Centre the theme's normal text line once. Individual labels can include
+  // taller fallback glyphs (Chinese weekdays) or smaller place names; aligning
+  // their baselines keeps them level without relying on their bounding boxes.
+  readonly property FontMetrics barFontMetrics: FontMetrics {
+    font.family: root.fontFamily
+    font.pixelSize: root.fontSize
+  }
+  readonly property real barTextBaseline: Math.round((widgetHeight - barFontMetrics.height) / 2 + barFontMetrics.ascent)
+
   function space(multiplier) {
     return Math.round(gap * multiplier)
   }

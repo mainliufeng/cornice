@@ -42,6 +42,18 @@ Item {
   }
   readonly property bool atBottom: position === "bottom"
 
+  function textGeometry(item, surface) {
+    const out = []
+    if (!item || !item.visible) return out
+    if (item.text !== undefined && item.baselineOffset !== undefined && item.font !== undefined) {
+      const point = item.mapToItem(surface.contentItem, 0, 0)
+      out.push({ text: String(item.text), y: point.y, height: item.height,
+        baseline: point.y + item.baselineOffset, pixelSize: item.font.pixelSize })
+    }
+    for (const child of item.children || []) out.push(...textGeometry(child, surface))
+    return out
+  }
+
   Variants {
     model: Quickshell.screens
 
@@ -136,7 +148,10 @@ Item {
           out.push({
             id: child.entry.id,
             x: Math.round(point.x),
+            y: point.y,
+            height: child.height,
             width: Math.round(child.width),
+            text: bar.textGeometry(child.item, part.surface),
             section: part.section.section
           })
         }

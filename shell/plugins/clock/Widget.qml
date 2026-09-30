@@ -79,7 +79,8 @@ Item {
 
   Text {
     id: label
-    anchors.centerIn: parent
+    anchors.horizontalCenter: parent.horizontalCenter
+    y: Style.barTextBaseline - baselineOffset
     // Locale-aware: "ddd" must render as the configured language's weekday,
     // which Qt.formatDateTime does not do (it uses the process default locale).
     text: {

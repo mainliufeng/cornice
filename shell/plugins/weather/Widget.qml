@@ -47,10 +47,11 @@ Item {
     id: content
 
     anchors.centerIn: parent
+    height: root.height
     spacing: Style.space(0.5)
 
     Text {
-      anchors.verticalCenter: parent.verticalCenter
+      y: Style.barTextBaseline - baselineOffset
       text: root.glyph
       color: root.ready ? Color.barForeground : Color.muted
       font.family: Style.iconFamily
@@ -58,7 +59,7 @@ Item {
     }
 
     Text {
-      anchors.verticalCenter: parent.verticalCenter
+      y: Style.barTextBaseline - baselineOffset
       text: root.temperature
       color: root.ready ? Color.barForeground : Color.muted
       font.family: Style.fontFamily
@@ -66,7 +67,7 @@ Item {
     }
 
     Text {
-      anchors.verticalCenter: parent.verticalCenter
+      y: Style.barTextBaseline - baselineOffset
       visible: root.showPlace && root.place !== ""
       text: root.place
       color: Color.muted
