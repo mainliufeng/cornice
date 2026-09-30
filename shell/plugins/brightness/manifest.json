@@ -17,7 +17,7 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "step": 5
+      "step": 2
     },
     "schema": [
       {

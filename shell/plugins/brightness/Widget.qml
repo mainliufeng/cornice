@@ -22,6 +22,9 @@ Item {
   property int percent: -1
   property bool hovered: false
   property bool busy: false
+  // Wheel deltas arrive in small pieces on some devices; accumulate them so one
+  // notch is one step instead of a jump.
+  property real pending: 0
 
   readonly property bool known: percent >= 0
   // One family only (FontAwesome sun), dimmed glyph at the low end.
@@ -88,7 +91,7 @@ Item {
     text: root.hovered && root.known ? root.percent + "%" : root.glyph
     color: Color.barForeground
     opacity: root.known ? 1 : 0.5
-    font.family: Style.fontFamily
+    font.family: Style.iconFamily
     font.pixelSize: Style.fontSize
   }
 
