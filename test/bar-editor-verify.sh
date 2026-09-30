@@ -24,27 +24,34 @@ editor_pointer() {
 }
 editor_state() { cornice ipc barEditor state; }
 editor_click() {
-  local id="$1" suffix="$2" state button x y panel_x panel_y viewport_y viewport_bottom
+  local id="$1" suffix="$2" state row x y panel_x panel_y section viewport_y viewport_bottom
   for _ in $(seq 1 12); do
-    for _ in $(seq 1 30); do
-      [[ $(editor_state | jq -r '.moving') == false ]] && break
-      sleep 0.1
-    done
     state=$(editor_state)
-    button=$(jq -c --arg id "$id" --arg suffix "$suffix" '.rows[] | select(.id == $id) | .actions[] | select(.command | endswith($suffix))' <<<"$state" | head -1)
-    [[ -n $button ]] || { fail "editor action missing: $id $suffix"; return 1; }
+    row=$(jq -c --arg id "$id" '.rows[] | select(.id == $id)' <<<"$state" | head -1)
+    [[ -n $row ]] || { fail "editor row missing: $id"; return 1; }
     read -r panel_x panel_y <<<"$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-panel")] | first | [.x,.y] | join(" ")')"
-    x=$(jq -r '.x' <<<"$button"); y=$(jq -r '.y' <<<"$button")
-    viewport_y=$(jq '.viewport.y | floor' <<<"$state")
-    viewport_bottom=$(jq '.viewport.y + .viewport.height | floor' <<<"$state")
-    if (( y >= viewport_y && y < viewport_bottom )); then
-      editor_pointer "$((panel_x + x))" "$((panel_y + y))"
-      return
+    x=$(jq -r '.menu.x' <<<"$row"); y=$(jq -r '.menu.y' <<<"$row")
+    section=$(jq -r '.section' <<<"$row")
+    if [[ $section != hidden ]]; then
+      viewport_y=$(jq --arg section "$section" '.columns[] | select(.section == $section) | .viewport.y | floor' <<<"$state")
+      viewport_bottom=$(jq --arg section "$section" '.columns[] | select(.section == $section) | .viewport | .y + .height | floor' <<<"$state")
+      if (( y < viewport_y || y >= viewport_bottom )); then
+        if (( y < viewport_y )); then delta=-100; else delta=100; fi
+        editor_pointer "$((panel_x + x - 80))" "$((panel_y + viewport_y + 60))" "scroll:$delta"
+        sleep 0.5
+        continue
+      fi
     fi
-    if (( y < viewport_y )); then delta=-100; else delta=100; fi
-    editor_pointer "$((panel_x + 120))" "$((panel_y + viewport_y + 60))" "scroll:$delta"
+    editor_pointer "$((panel_x + x))" "$((panel_y + y))"
+    state=$(editor_state)
+    [[ -f $runtime/bar-editor-menu.png ]] || grim "$runtime/bar-editor-menu.png"
+    action=$(jq -c --arg suffix "$suffix" '.menu[] | select(.command | endswith($suffix))' <<<"$state")
+    [[ -n $action ]] || { fail "editor menu action missing: $id $suffix ($state)"; return 1; }
+    x=$(jq -r '.x' <<<"$action"); y=$(jq -r '.y' <<<"$action")
+    editor_pointer "$((panel_x + x))" "$((panel_y + y))"
+    return
   done
-  fail "editor action could not be scrolled into view: $id $suffix"
+  fail "editor row could not be scrolled into view: $id"
 }
 expect_placement() {
   local id="$1" section="$2"
@@ -58,7 +65,8 @@ expect_placement() {
 cornice bar edit >/dev/null
 sleep 0.4
 state=$(editor_state)
-expect_eq "every visible and hidden widget has three placement choices" "true"   "$(jq '[.rows[] | select(.kind == "widget" or .kind == "hidden") | [.actions[] | select(.command | test(" (left|center|right)$"))] | length] | all(. == 3)' <<<"$state")"
+expect_eq "the editor mirrors the three actual bar sections" '["left","center","right"]' "$(jq -c '[.columns[].section]' <<<"$state")"
+expect_eq "visible and hidden widgets each have one menu entry" "true" "$(jq '.rows | all(.menu.x > 0 and .menu.y > 0)' <<<"$state")"
 grim "$runtime/bar-editor-before.png"
 for destination in center left right; do
   editor_click cn.weather " $destination"
@@ -66,6 +74,36 @@ for destination in center left right; do
   expect_eq "weather options survive moving to $destination" "$expected_entry"     "$(cornice ipc shell config | jq -c --arg section "$destination" '.bar.layout[$section][] | select(.id == "cn.weather")')"
   grim "$runtime/bar-editor-$destination.png"
 done
+state=$(editor_state)
+read -r panel_x panel_y <<<"$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-panel")] | first | [.x,.y] | join(" ")')"
+editor_drag() {
+  local id="$1" destination="$2" position="$3" state sx sy dx dy
+  state=$(editor_state)
+  read -r sx sy <<<"$(jq -r --arg id "$id" '.rows[] | select(.id == $id) | [.drag.x,.drag.y] | join(" ")' <<<"$state")"
+  if [[ $destination == outside ]]; then dx=30; dy=30
+  else
+    read -r dx dy <<<"$(jq -r --arg section "$destination" --arg position "$position" '.columns[] | select(.section == $section) | [.viewport.x + 70, (if $position == "start" then .viewport.y + 4 else .viewport.y + .viewport.height - 10 end)] | map(floor) | join(" ")' <<<"$state")"
+  fi
+  editor_pointer "$((panel_x + sx))" "$((panel_y + sy))" press
+  editor_pointer "$((panel_x + sx - 20))" "$((panel_y + sy))" hover
+  editor_pointer "$((panel_x + dx))" "$((panel_y + dy))" hover
+  expect_eq "dragging $id displays a live drag preview" true "$(editor_state | jq -r '.dragActive')"
+  grim "$runtime/bar-editor-drag.png"
+  editor_pointer "$((panel_x + dx))" "$((panel_y + dy))" release
+}
+editor_drag cn.weather center start
+expect_placement cn.weather center
+expect_eq "dragging chooses the exact insertion position" "cn.weather" "$(cornice ipc shell config | jq -r '.bar.layout.center[0].id')"
+expect_eq "dragging preserves the widget's inline options" "$expected_entry" "$(cornice ipc shell config | jq -c '.bar.layout.center[0]')"
+editor_drag cn.weather center end
+expect_eq "dragging within a column reorders its widgets" cn.weather "$(cornice ipc shell config | jq -r '.bar.layout.center[-1].id')"
+before_cancel=$(cornice ipc shell config | jq -c '.bar.layout')
+editor_drag cn.weather outside start
+expect_eq "dropping outside the columns leaves the layout unchanged" "$before_cancel" "$(cornice ipc shell config | jq -c '.bar.layout')"
+editor_drag cn.brightness left start
+expect_placement cn.brightness left
+expect_eq "dragging a hidden widget restores it at the requested position" cn.brightness "$(cornice ipc shell config | jq -r '.bar.layout.left[0].id')"
+editor_click cn.brightness "cn.brightness'"
 editor_click cn.network " center"
 expect_placement cn.network center
 editor_click cn.weather "cn.weather'"
@@ -82,6 +120,8 @@ expect_eq "consecutive moves preserve both placements" "true"   "$(jq '(.bar.lay
 cornice bar show cn.weather --section center --index 0 >/dev/null
 sleep 0.4
 expect_eq "show respects an explicit section for an existing widget" "cn.weather"   "$(cornice ipc shell config | jq -r '.bar.layout.center[0].id')"
+panel_region=$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-panel")] | first | "\(.x),\(.y) \(.w)x\(.h)"')
+grim -g "$panel_region" "$runtime/bar-editor-preview.png"
 cornice ipc shell hide cn.bar-editor >/dev/null
 kill "$hover_pointer_pid" 2>/dev/null
 wait "$hover_pointer_pid" 2>/dev/null || true

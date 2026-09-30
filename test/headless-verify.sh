@@ -179,6 +179,20 @@ if grep -qE "drm: (Starting backend|Registered gpu)" "$hypr_log" 2>/dev/null; th
 fi
 pass "no DRM backend was opened (parent GPU untouched)"
 
+# Aquamarine's noop seat can still open the host's libinput devices even when
+# its DRM backend fails. Disable those devices only in this private compositor,
+# before creating any virtual test input, so typing/moving on the real desktop
+# cannot change the test's focus, clear grabs or move its cursor.
+hyprctl devices -j >"$runtime/initial-input-devices.json"
+while IFS= read -r device; do
+  [[ -n $device ]] || continue
+  if [[ $(hyprctl keyword "device[$device]:enabled" false) != ok ]]; then
+    fail "could not isolate private input device: $device"
+    exit 1
+  fi
+done < <(jq -r '(.mice[]?, .keyboards[]?, .touch[]?) | .name' "$runtime/initial-input-devices.json")
+pass "host input devices disabled in the private compositor"
+
 hyprctl output create headless >/dev/null 2>&1
 for _ in $(seq 1 50); do
   hyprctl -j monitors 2>/dev/null | jq -e '.[] | select(.name | startswith("HEADLESS"))' >/dev/null 2>&1 && break

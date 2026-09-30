@@ -114,6 +114,8 @@ else
 fi
 command -v hyprctl >/dev/null 2>&1 && ok "hyprctl: $(command -v hyprctl)" \
   || { bad "hyprctl not found (cornice targets Hyprland)"; missing=1; }
+command -v flock >/dev/null 2>&1 && ok "flock: serialized window focus" \
+  || { bad "flock not found — install util-linux"; missing=1; }
 command -v socat >/dev/null 2>&1 && ok "socat: $(command -v socat)" \
   || warn "no socat — the CLI falls back to 'qs ipc', which cannot see runtime plugins"
 command -v grim >/dev/null 2>&1 && ok "grim: screenshots for 'cornice verify'" \

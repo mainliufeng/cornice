@@ -58,6 +58,9 @@ int main(int argc, char **argv) {
         wl_display_roundtrip(display);
         usleep(30000);
         zwlr_virtual_pointer_v1_button(pointer, event_time(), 0x110, WL_POINTER_BUTTON_STATE_RELEASED);
+      } else if (!strcmp(action, "press") || !strcmp(action, "release")) {
+        zwlr_virtual_pointer_v1_button(pointer, event_time(), 0x110,
+          !strcmp(action, "press") ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED);
       } else if (!strcmp(action, "scroll") || !strncmp(action, "scroll:", 7)) {
         zwlr_virtual_pointer_v1_axis(pointer, event_time(), WL_POINTER_AXIS_VERTICAL_SCROLL,
                                      wl_fixed_from_int(!strcmp(action, "scroll") ? 400 : atoi(action + 7)));

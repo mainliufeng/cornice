@@ -47,6 +47,36 @@ sleep 0.2
 expect_eq "one click focuses the selected real window" "$target" "$(hyprctl activewindow -j | jq -r '.address')"
 expect_eq "focused highlight tracks the compositor" "$target" "$(window_state | jq -r '.focused')"
 expect_eq "focusing preserves icon order" "$original_order" "$(window_state | jq -c '[.windows[].address]')"
+expect_eq "normal focus leaves the cursor on the clicked icon" "$click_x $click_y" \
+  "$(hyprctl cursorpos -j | jq -r '[.x,.y] | join(" ")')"
+
+section "window switcher preserves maximized and fullscreen mode"
+hyprctl keyword cursor:no_warps 0 >/dev/null
+hyprctl keyword misc:on_focus_under_fullscreen 2 >/dev/null
+original_warps=$(hyprctl -j getoption cursor:no_warps | jq -cS .)
+original_fullscreen_policy=$(hyprctl -j getoption misc:on_focus_under_fullscreen | jq -cS .)
+for mode in 1 2; do
+  hyprctl dispatch fullscreenstate "$mode $mode" >/dev/null
+  state=$(window_state)
+  target=$(hyprctl clients -j | jq -r --arg active "$(hyprctl activewindow -j | jq -r '.address')" '.[] | select(.workspace.id == 1 and .address != $active) | .address' | head -1)
+  if [[ $mode == 1 ]]; then
+    read -r click_x click_y <<<"$(jq -r --arg address "$target" '.buttons[] | select(.address == $address) | [.x,.y] | join(" ")' <<<"$state")"
+    window_pointer "$click_x" "$click_y"
+    expected_cursor="$click_x $click_y"
+  else
+    # True fullscreen covers a Top-layer bar; exercise the same real focusing
+    # helper directly, without inventing a visible/clickable bar in that mode.
+    expected_cursor=$(hyprctl cursorpos -j | jq -r '[.x,.y] | join(" ")')
+    "$prefix/bin/cornice-focus-window" "$target" 1
+    sleep 0.3
+  fi
+  expect_eq "mode $mode focuses the selected real window" "$target" "$(hyprctl activewindow -j | jq -r '.address')"
+  expect_eq "mode $mode remains on the selected window" "$mode" "$(hyprctl activewindow -j | jq -r '.fullscreen')"
+  expect_eq "mode $mode does not warp the cursor" "$expected_cursor" "$(hyprctl cursorpos -j | jq -r '[.x,.y] | join(" ")')"
+  expect_eq "mode $mode restores the original cursor policy" "$original_warps" "$(hyprctl -j getoption cursor:no_warps | jq -cS .)"
+  expect_eq "mode $mode restores the original fullscreen policy" "$original_fullscreen_policy" "$(hyprctl -j getoption misc:on_focus_under_fullscreen | jq -cS .)"
+done
+hyprctl dispatch fullscreenstate '0 0' >/dev/null
 
 # Enough real windows to exhaust the bar's available width.
 for i in $(seq 3 9); do

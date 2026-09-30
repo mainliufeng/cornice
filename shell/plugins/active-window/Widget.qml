@@ -83,7 +83,8 @@ Item {
     interval: 60
     onTriggered: {
       if (root.windows.some(window => window.address === root.pendingFocus))
-        Hyprland.dispatch("focuswindow address:" + root.pendingFocus)
+        Quickshell.execDetached([(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice")
+          + "/bin/cornice-focus-window", root.pendingFocus, String(root.workspaceId)])
       root.pendingFocus = ""
       root.requestRefresh()
     }
