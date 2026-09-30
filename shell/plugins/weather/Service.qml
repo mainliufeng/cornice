@@ -136,17 +136,17 @@ Item {
   // ---- WMO weather codes ---------------------------------------------------
   function glyphFor(value, day) {
     if (value < 0) return "\u{F0590}"                       // unknown → cloudy
-    if (value === 0) return day ? "\u{F059C}" : "\u{F0595}" // sunny / night
-    if (value === 1) return day ? "\u{F059C}" : "\u{F0596}" // mainly clear
-    if (value === 2) return day ? "\u{F0597}" : "\u{F0596}" // partly cloudy
+    if (value === 0) return day ? "\u{F0599}" : "\u{F0594}" // sunny / night
+    if (value === 1) return day ? "\u{F0599}" : "\u{F0594}" // mainly clear
+    if (value === 2) return day ? "\u{F0595}" : "\u{F0F31}" // partly cloudy
     if (value === 3) return "\u{F0590}"                     // overcast
     if (value === 45 || value === 48) return "\u{F0591}"    // fog
-    if (value >= 51 && value <= 57) return "\u{F0599}"      // drizzle
-    if (value >= 61 && value <= 67) return "\u{F0598}"      // rain
-    if (value >= 71 && value <= 77) return "\u{F059A}"      // snow
-    if (value >= 80 && value <= 82) return "\u{F0598}"      // showers
-    if (value === 85 || value === 86) return "\u{F059A}"    // snow showers
-    if (value >= 95) return "\u{F0593}"                     // thunderstorm
+    if (value >= 51 && value <= 57) return "\u{F0597}"      // drizzle
+    if (value >= 61 && value <= 67) return "\u{F0597}"      // rain
+    if (value >= 71 && value <= 77) return "\u{F0598}"      // snow
+    if (value >= 80 && value <= 82) return "\u{F0596}"      // showers
+    if (value === 85 || value === 86) return "\u{F0F36}"    // snow showers
+    if (value >= 95) return "\u{F067E}"                     // thunderstorm
     return "\u{F0590}"
   }
 
@@ -531,12 +531,15 @@ Item {
     id: cache
     path: ""
     blockWrites: true
+    // Optional caches do not exist on the first run.
+    printErrors: false
   }
 
   FileView {
     id: locationCache
     path: ""
     blockWrites: true
+    printErrors: false
   }
 
   Process {

@@ -22,7 +22,9 @@ Item {
   // still loading; never let that reach a .length or a model.
   readonly property var rows: (items === undefined || items === null) ? [] : items
 
-  readonly property real rowHeight: Style.space(2.6)
+  property real rowHeight: Style.space(2.6)
+  property int textSize: Style.fontSize
+  property int detailSize: Style.smallFontSize
 
   implicitWidth: 320
   implicitHeight: field.implicitHeight + Style.space(0.5)
@@ -32,6 +34,13 @@ Item {
     field.text = ""
     query = ""
     field.forceFocus()
+  }
+
+  function inspect(surface) {
+    const fieldPoint = field.mapToItem(surface, field.width / 2, field.height / 2)
+    const rowPoint = list.mapToItem(surface, list.width / 2, rowHeight / 2)
+    return { count: rows.length, query: query, field: { x: fieldPoint.x, y: fieldPoint.y },
+      first: { x: rowPoint.x, y: rowPoint.y } }
   }
 
   // The picker exists to be searched, so it takes the keyboard when it appears.
@@ -76,7 +85,7 @@ Item {
           color: Color.foreground
           elide: Text.ElideRight
           font.family: Style.fontFamily
-          font.pixelSize: Style.fontSize
+          font.pixelSize: root.textSize
         }
 
         Text {
@@ -85,7 +94,7 @@ Item {
           text: modelData.detail === undefined ? "" : modelData.detail
           color: Color.muted
           font.family: Style.fontFamily
-          font.pixelSize: Style.smallFontSize
+          font.pixelSize: root.detailSize
         }
       }
 

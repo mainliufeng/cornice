@@ -8,8 +8,9 @@ PanelFrame {
   id: root
 
   edge: "top"
-  panelWidth: 300
-  panelHeight: 470
+  panelWidth: Math.min(480, window.screen ? window.screen.width - Style.space(8) : 480)
+  panelHeight: Math.min(editing ? 600 : 720, window.screen ? window.screen.height - Style.barHeight - Style.space(4) : 720)
+  readonly property int bodySize: Style.fontSize + 2
   takesKeyboard: false
 
   // The world-clock section reads offsets from the clock service.
@@ -35,7 +36,7 @@ PanelFrame {
     precision: SystemClock.Minutes
   }
 
-  onOpened: resetToToday()
+  onOpened: { resetToToday(); if (service) service.editorOpen = false }
 
   function resetToToday() {
     const now = clock.date
@@ -69,272 +70,237 @@ PanelFrame {
         today: day === today.day && shownMonth === today.month && shownYear === today.year
       })
     }
+    while (out.length < 42) out.push({ label: "", today: false })
     return out
   }
 
   readonly property string monthLabel: {
     const date = new Date(shownYear, shownMonth, 1)
-    return I18n.dateTime(date, "MMMM yyyy")
+    return I18n.dateTime(date, I18n.t("clock.monthFormat"))
   }
 
-  Column {
+  Flickable {
+    id: viewport
     anchors.fill: parent
-    spacing: Style.space(0.8)
-
-    Row {
-      width: parent.width
-      spacing: Style.space(0.6)
-
-      Text {
-        id: prev
-        text: "\uf104"
-        color: Color.foreground
-        font.family: Style.iconFamily
-        font.pixelSize: Style.fontSize
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
-          onClicked: root.shiftMonth(-1)
-        }
-      }
-
-      Text {
-        width: parent.width - prev.width - next.width - Style.space(1.2)
-        text: root.monthLabel
-        color: Color.foreground
-        horizontalAlignment: Text.AlignHCenter
-        font.family: Style.fontFamily
-        font.pixelSize: Style.fontSize
-        font.bold: true
-      }
-
-      Text {
-        id: next
-        text: "\uf105"
-        color: Color.foreground
-        font.family: Style.iconFamily
-        font.pixelSize: Style.fontSize
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
-          onClicked: root.shiftMonth(1)
-        }
-      }
-    }
-
-    Grid {
-      id: grid
-
-      width: parent.width
-      columns: 7
-      spacing: 0
-
-      Repeater {
-        // Weekday headers follow the language (and the locale's first day of
-        // week is applied when the grid is built).
-        model: I18n.weekdayNames("ddd")
-
-        delegate: Text {
-          required property var modelData
-          width: grid.width / 7
-          height: Style.space(2)
-          text: modelData
-          color: Color.muted
-          horizontalAlignment: Text.AlignHCenter
-          verticalAlignment: Text.AlignVCenter
-          font.family: Style.fontFamily
-          font.pixelSize: Style.smallFontSize
-        }
-      }
-
-      Repeater {
-        model: root.cells
-
-        delegate: Rectangle {
-          required property var modelData
-
-          width: grid.width / 7
-          height: Style.space(2.4)
-          color: modelData.today ? Color.workspaceActive : "transparent"
-          radius: Style.radius
-
-          Text {
-            anchors.centerIn: parent
-            text: modelData.label
-            color: modelData.today ? Color.workspaceActiveText : Color.foreground
-            font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize
-          }
-        }
-      }
-    }
-
-    Item { width: 1; height: 1 }
-
-    // ---- world clocks ------------------------------------------------------
+    anchors.margins: Style.space(1.5)
+    contentHeight: body.implicitHeight
+    boundsBehavior: Flickable.StopAtBounds
+    clip: true
     Column {
-      width: parent.width
-      spacing: Style.space(0.6)
-
-      readonly property int revision: root.service ? root.service.revision : 0
-
-      Item { width: 1; height: Style.space(0.4) }
-
+      id: body
+      width: viewport.width
+      spacing: Style.space(2)
+      Column {
+        width: parent.width
+        spacing: Style.space(0.7)
+        Text { text: I18n.t("clock.sameTime"); color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
+        Text {
+          text: I18n.dateTime(clock.date, "HH:mm")
+          color: Color.foreground
+          font.family: Style.fontFamily
+          font.pixelSize: Style.fontSize * 3.6
+        }
+        Text {
+          width: parent.width
+          text: I18n.dateTime(clock.date, I18n.t("clock.dateFormat"))
+          color: Color.muted
+          font.family: Style.fontFamily
+          font.pixelSize: root.bodySize
+          elide: Text.ElideRight
+        }
+      }
       Item {
         width: parent.width
-        height: Math.max(worldTitle.height, zoneToggle.height)
-
+        height: Style.space(5.5)
+        visible: !root.editing
         Text {
-          id: worldTitle
           anchors.left: parent.left
           anchors.verticalCenter: parent.verticalCenter
-          text: I18n.t("clock.world")
-          color: Color.muted
+          width: parent.width - monthActions.width - Style.space(1)
+          text: root.monthLabel
+          color: Color.foreground
           font.family: Style.fontFamily
-          font.pixelSize: Style.smallFontSize
+          font.pixelSize: root.bodySize
+          font.bold: true
+          elide: Text.ElideRight
         }
-
-        Item {
-          id: zoneToggle
+        Row {
+          id: monthActions
           anchors.right: parent.right
-          width: Style.space(2.4)
-          height: Style.space(2.4)
-
-          Text {
-            anchors.centerIn: parent
-            text: root.editing ? "\u{F012C}" : "\u{F03EB}" // check / pencil
-            color: zoneToggleArea.containsMouse ? Color.accent : Color.muted
+          spacing: Style.space(0.5)
+          PanelButton { id: prev; width: height; glyph: "\uf104"; onClicked: root.shiftMonth(-1) }
+          PanelButton { id: next; width: height; glyph: "\uf105"; onClicked: root.shiftMonth(1) }
+          PanelButton { id: todayButton; label: I18n.t("weather.today"); filled: true; onClicked: root.resetToToday() }
+        }
+      }
+      Grid {
+        id: grid
+        visible: !root.editing
+        width: parent.width
+        columns: 7
+        spacing: Style.space(0.5)
+        Repeater {
+          model: I18n.weekdayNames("ddd")
+          delegate: Text {
+            required property var modelData
+            width: (grid.width - grid.spacing * 6) / 7
+            height: Style.space(3.5)
+            text: modelData
+            color: Color.muted
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
             font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize
+            font.pixelSize: Style.smallFontSize
           }
-
-          MouseArea {
-            id: zoneToggleArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-              if (root.service) root.service.editorOpen = !root.service.editorOpen
-              root.editError = ""
+        }
+        Repeater {
+          model: root.cells
+          delegate: Rectangle {
+            required property var modelData
+            width: (grid.width - grid.spacing * 6) / 7
+            height: Style.space(5.2)
+            color: modelData.today ? Color.workspaceActive : "transparent"
+            radius: Style.radius
+            Text {
+              anchors.centerIn: parent
+              text: modelData.label
+              color: modelData.today ? Color.workspaceActiveText : Color.foreground
+              font.family: Style.fontFamily
+              font.pixelSize: root.bodySize
+              font.bold: modelData.today
             }
           }
         }
       }
-
-
-      Row {
+      Column {
         width: parent.width
-        visible: root.editing
-        spacing: Style.space(0.6)
-
-        Text {
-          width: parent.width - clearZone.width
-          text: {
-            const rows = root.service ? root.service.rows : []
-            return rows.length > 0 ? rows[0].name + "   " + rows[0].zone : I18n.t("clock.noZones")
-          }
-          color: Color.foreground
-          elide: Text.ElideRight
-          font.family: Style.fontFamily
-          font.pixelSize: Style.fontSize
-        }
-
+        spacing: Style.space(1.5)
+        readonly property int revision: root.service ? root.service.revision : 0
         Item {
-          id: clearZone
-          width: Style.space(2.4)
-          height: Style.space(2.4)
-
+          width: parent.width
+          height: Style.space(5.5)
           Text {
-            anchors.centerIn: parent
-            text: "\u{F0156}"
-            color: clearZoneArea.containsMouse ? Color.accent : Color.muted
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: I18n.t("clock.world")
+            color: Color.muted
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
           }
-
-          MouseArea {
-            id: clearZoneArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
+          PanelButton {
+            id: zoneToggle
+            anchors.right: parent.right
+            label: I18n.t(root.editing ? "editor.done" : "clock.manage")
+            filled: true
+            onClicked: if (root.service) root.service.editorOpen = !root.service.editorOpen
+          }
+        }
+        Item {
+          width: parent.width
+          height: Style.space(5.5)
+          visible: root.editing
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width - clearZone.width - Style.space(1)
+            text: {
+              const rows = root.service ? root.service.rows : []
+              return rows.length > 0 ? rows[0].name + " · " + rows[0].zone : I18n.t("clock.noZones")
+            }
+            color: Color.foreground
+            elide: Text.ElideRight
+            font.family: Style.fontFamily
+            font.pixelSize: root.bodySize
+          }
+          PanelButton {
+            id: clearZone
+            anchors.right: parent.right
+            glyph: "\u{F0156}"
             onClicked: root.runCommand("zone clear")
           }
         }
-      }
-
-      PickerList {
-        id: zonePicker
-        width: parent.width
-        visible: root.editing
-        placeholder: I18n.t("clock.searchZone")
-        emptyText: I18n.t("editor.noMatches")
-        busy: !!root.citySearch && root.citySearch.searching
-        // Same city search as the weather panel: every result carries a timezone,
-        // and the name is already localized by the configured language.
-        items: (root.citySearch && root.citySearch.searchResults ? root.citySearch.searchResults : [])
-          .filter(entry => entry.timezone !== "")
-          .map(entry => ({ label: entry.name + " — " + entry.timezone, detail: entry.country }))
-
-        onQueryChanged: if (root.citySearch) root.citySearch.search(query)
-
-        onPicked: index => {
-          const list = root.citySearch ? root.citySearch.searchResults.filter(entry => entry.timezone !== "") : []
-          const entry = list[index]
-          if (!entry) return
-          root.runCommand("zone use " + Util.shellQuote(entry.name) + " " + Util.shellQuote(entry.timezone))
-          zonePicker.clear()
+        PickerList {
+          id: zonePicker
+          width: parent.width
+          visible: root.editing
+          rowHeight: Style.space(5.5)
+          textSize: root.bodySize
+          maxVisible: 4
+          placeholder: I18n.t("clock.searchZone")
+          emptyText: I18n.t("editor.noMatches")
+          busy: !!root.citySearch && root.citySearch.searching
+          items: (root.citySearch ? root.citySearch.searchResults || [] : []).filter(entry => entry.timezone !== "")
+            .map(entry => ({ label: entry.name + " — " + entry.timezone, detail: entry.country }))
+          onQueryChanged: if (root.citySearch) root.citySearch.search(query)
+          onPicked: index => {
+            const list = root.citySearch ? root.citySearch.searchResults.filter(entry => entry.timezone !== "") : []
+            const entry = list[index]
+            if (!entry) return
+            root.runCommand("zone use " + Util.shellQuote(entry.name) + " " + Util.shellQuote(entry.timezone))
+            zonePicker.clear()
+          }
         }
-      }
-
-      Repeater {
-        visible: !root.editing
-        model: root.service ? root.service.rows : []
-
-        delegate: Row {
-          required property var modelData
+        Column {
           width: parent.width
           spacing: Style.space(1)
-
-          Column {
-            width: parent.width - zoneTime.width - Style.space(1)
-            spacing: 0
-
-            Text {
-              width: parent.width
-              text: modelData.name
-              color: Color.foreground
-              elide: Text.ElideRight
-              font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize
+          visible: !root.editing
+          Repeater {
+            model: root.service ? root.service.rows : []
+            delegate: Rectangle {
+              required property var modelData
+              width: body.width
+              height: Style.space(9)
+              color: Color.surface
+              radius: Style.radius
+              Column {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(1.5)
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - zoneTime.width - Style.space(4)
+                spacing: Style.space(0.5)
+                Text {
+                  width: parent.width
+                  text: modelData.name
+                  color: Color.foreground
+                  elide: Text.ElideRight
+                  font.family: Style.fontFamily
+                  font.pixelSize: root.bodySize
+                }
+                Text {
+                  width: parent.width
+                  text: root.service.zoneTime(modelData.zone, "ddd d MMM") + " · " + root.service.zoneDiff(modelData.zone)
+                  color: Color.muted
+                  elide: Text.ElideRight
+                  font.family: Style.fontFamily
+                  font.pixelSize: Style.smallFontSize
+                }
+              }
+              Text {
+                id: zoneTime
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(1.5)
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.service.zoneTime(modelData.zone, "HH:mm")
+                color: Color.foreground
+                font.family: Style.fontFamily
+                font.pixelSize: Style.largeFontSize + 4
+              }
             }
-
-            Text {
-              text: (root.service ? root.service.zoneTime(modelData.zone, "ddd d MMM") : "")
-                + "   " + (root.service ? root.service.zoneDiff(modelData.zone) : "")
-              color: Color.muted
-              font.family: Style.fontFamily
-              font.pixelSize: Style.smallFontSize
-            }
-          }
-
-          Text {
-            id: zoneTime
-            text: root.service ? root.service.zoneTime(modelData.zone, "HH:mm") : ""
-            color: Color.foreground
-            font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize
           }
         }
       }
     }
-
-    Text {
-      width: parent.width
-      text: I18n.dateTime(clock.date, "dddd d MMMM yyyy")
-      color: Color.muted
-      horizontalAlignment: Text.AlignHCenter
-      font.family: Style.fontFamily
-      font.pixelSize: Style.smallFontSize
+  }
+  function action(item, name) {
+    const point = item.mapToItem(window.contentItem, item.width / 2, item.height / 2)
+    return { name: name, x: point.x, y: point.y }
+  }
+  ShellIpc {
+    target: "clockPanel"
+    function state(): string {
+      return JSON.stringify({ open: root.isOpen, editing: root.editing, width: root.panelWidth, height: root.panelHeight,
+        year: root.shownYear, month: root.shownMonth, contentHeight: body.implicitHeight, viewportHeight: viewport.height,
+        actions: [root.action(prev, "prev"), root.action(next, "next"), root.action(todayButton, "today"), root.action(zoneToggle, "edit")],
+        picker: zonePicker.inspect(root.window.contentItem) })
     }
   }
 }

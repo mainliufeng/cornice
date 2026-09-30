@@ -211,7 +211,7 @@ Item {
 
         Rectangle {
           anchors.fill: parent
-          visible: root.shotRevision === 0
+          visible: root.backgroundSource === ""
           color: Color.background
         }
 
@@ -225,8 +225,8 @@ Item {
         Rectangle {
           anchors.horizontalCenter: content.horizontalCenter
           anchors.verticalCenter: content.verticalCenter
-          width: content.width + Style.space(7)
-          height: content.height + Style.space(6)
+          width: Math.min(parent.width - Style.space(4), content.width + Style.space(8))
+          height: content.height + Style.space(8) * content.density
           color: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 0.72)
           border.width: 1
           border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.10)
@@ -235,9 +235,11 @@ Item {
         Column {
           id: content
 
+          width: Math.min(480, parent.width - Style.space(12))
+          readonly property real density: Math.min(1, parent.height / 680)
           anchors.centerIn: parent
           anchors.verticalCenterOffset: -Math.round(parent.height * 0.05)
-          spacing: Style.space(1.05)
+          spacing: Style.space(1.2) * density
 
           // ---- clock ---------------------------------------------------------
           Row {
@@ -245,34 +247,34 @@ Item {
             spacing: Style.space(0.7)
 
             Text {
+              id: lockTime
               text: I18n.dateTime(surfaceClock.date, "HH:mm")
               color: Color.foreground
               font.family: Style.fontFamily
-              font.pixelSize: Math.round(Style.fontSize * 5.2)
+              font.pixelSize: Math.round(Math.min(Style.fontSize * 8 * content.density, content.width / 3.3))
               font.bold: true
-              font.letterSpacing: -1
+              font.letterSpacing: -2
             }
 
             Text {
-              anchors.bottom: parent.bottom
-              anchors.bottomMargin: Math.round(Style.fontSize * 0.9)
+              anchors.baseline: lockTime.baseline
               text: Qt.formatDateTime(surfaceClock.date, "ss")
               color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.55)
               font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize * 1.5
+              font.pixelSize: Math.max(Style.fontSize, Style.fontSize * 1.8 * content.density)
             }
           }
 
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: I18n.dateTime(surfaceClock.date, "dddd, d MMMM").toUpperCase()
+            text: I18n.dateTime(surfaceClock.date, I18n.t("lock.dateFormat"))
             color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.65)
             font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize * 0.95
-            font.letterSpacing: 2
+            font.pixelSize: Style.fontSize + 2
+            font.letterSpacing: 1
           }
 
-          Item { width: 1; height: Style.space(2.6) }
+          Item { width: 1; height: Style.space(2.6) * content.density }
 
           // ---- who is unlocking ----------------------------------------------
           Row {
@@ -289,11 +291,10 @@ Item {
 
             Text {
               anchors.verticalCenter: parent.verticalCenter
-              visible: root.showUser
-              text: Quickshell.env("USER") || ""
+              text: root.showUser ? (Quickshell.env("USER") || "") : I18n.t("lock.authRequired")
               color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.75)
               font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize * 0.95
+              font.pixelSize: Style.fontSize + 2
               font.letterSpacing: 1
             }
           }
@@ -305,8 +306,8 @@ Item {
             id: field
 
             anchors.horizontalCenter: parent.horizontalCenter
-            width: Math.round(Style.space(26))
-            height: Math.round(Style.space(4.6))
+            width: content.width - Style.space(4)
+            height: Math.max(Style.space(5.5), Style.space(7.5) * content.density)
 
             Rectangle {
               anchors.fill: parent
@@ -394,7 +395,7 @@ Item {
               anchors.leftMargin: Style.space(0.9)
               anchors.verticalCenter: parent.verticalCenter
               visible: input.text === ""
-              text: (root.state === "authenticating" || pam.active) ? "authenticating…" : "Password"
+              text: (root.state === "authenticating" || pam.active) ? I18n.t("lock.checking") : I18n.t("lock.password")
               color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.45)
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize * 1.15
@@ -404,17 +405,18 @@ Item {
           // Fixed height so a failure message does not move the field.
           Item {
             anchors.horizontalCenter: parent.horizontalCenter
-            width: Math.round(Style.space(26))
-            height: Style.space(2.2)
+            width: content.width - Style.space(4)
+            height: Style.space(3.5)
 
             Text {
               anchors.centerIn: parent
               width: parent.width
               horizontalAlignment: Text.AlignHCenter
-              text: root.message
+              text: root.message === "Authentication failed" ? I18n.t("lock.rejected")
+                : root.message === "Too many attempts" ? I18n.t("lock.tooMany") : root.message
               color: root.state === "failed" ? Color.urgent : Color.muted
               font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize * 0.95
+              font.pixelSize: Style.fontSize + 2
               elide: Text.ElideRight
             }
           }
@@ -422,9 +424,9 @@ Item {
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: I18n.t("lock.hint")
-            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.40)
+            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.60)
             font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize * 0.8
+            font.pixelSize: Style.fontSize
             font.letterSpacing: 1
           }
         }

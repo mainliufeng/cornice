@@ -289,6 +289,7 @@ fi
 source "$prefix/test/bar-alignment-verify.sh"
 source "$prefix/test/window-switcher-verify.sh"
 source "$prefix/test/bar-editor-verify.sh"
+source "$prefix/test/panel-ui-verify.sh"
 
 section "compositor state drives the widgets"
 if command -v kitty >/dev/null 2>&1; then
@@ -358,7 +359,8 @@ if [[ -n $weather_port ]]; then
   expect_eq "weather parsed the local API" "ready" "$(jq -r '.status // ""' <<<"$weather")"
   expect_eq "weather temperature" "21.5" "$(jq -r '.temperature' <<<"$weather")"
   expect_eq "weather condition label" "Partly cloudy" "$(jq -r '.label' <<<"$weather")"
-  expect_eq "weather geocoded the configured city" "Testville, TV" "$(jq -r '.place' <<<"$weather")"
+  expect_eq "partly cloudy uses the corresponding Nerd Font glyph" "$(printf '\U000f0595')" "$(jq -r '.glyph' <<<"$weather")"
+  expect_eq "weather retains the configured city name" "Testville" "$(jq -r '.place' <<<"$weather")"
   expect_eq "weather located by city" "city" "$(jq -r '.locatedBy' <<<"$weather")"
   expect_eq "weather hours" "12" "$(jq -r '.hours' <<<"$weather")"
   expect_eq "weather days" "5" "$(jq -r '.days' <<<"$weather")"

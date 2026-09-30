@@ -55,7 +55,7 @@ mkdir -p "$XDG_CONFIG_HOME/cornice" "$XDG_CACHE_HOME" "$XDG_STATE_HOME"
 # Hermetic: the lock background should be the wallpaper shipped with cornice, not
 # whatever photo the machine running the tests happens to have in ~/Pictures.
 cat >"$XDG_CONFIG_HOME/cornice/config.json" <<JSON
-{ "background": { "dir": "$prefix/wallpapers" }, "lock": { "showUser": false } }
+{ "language": "zh-CN", "background": { "dir": "$prefix/wallpapers" }, "lock": { "showUser": false } }
 JSON
 
 # Run the shell from a copy inside the sandbox: Quickshell identifies a config by
@@ -113,6 +113,14 @@ if grep -qE "drm: (Starting backend|Registered gpu)" "$runtime/hypr/$sig/hyprlan
 fi
 pass "no DRM backend (real hardware untouched)"
 
+# Ignore host input in this private compositor, including during authentication.
+while IFS= read -r device; do
+  [[ -n $device ]] || continue
+  [[ $(hyprctl keyword "device[$device]:enabled" false) == ok ]] \
+    || { fail "could not isolate private input device: $device"; exit 1; }
+done < <(hyprctl devices -j | jq -r '(.mice[]?, .keyboards[]?, .touch[]?) | .name')
+pass "host input devices disabled in the private compositor"
+
 hyprctl output create headless >/dev/null 2>&1
 for _ in $(seq 1 50); do
   hyprctl -j monitors 2>/dev/null | jq -e '.[] | select(.name | startswith("HEADLESS"))' >/dev/null 2>&1 && break
@@ -159,6 +167,7 @@ expect_eq "lock surface is secure" "true" "$(jq -r '.secure' <<<"$status")"
 # "authenticating…" and could never accept input).
 expect_eq "state waits for input, not authenticating" "locked" "$(jq -r '.state' <<<"$status")"
 expect_eq "compositor reports the session locked" "true" "$(hypr_locked)"
+hyprctl dismissnotify -1 >/dev/null
 if timeout 10 grim "$runtime/locked.png" >/dev/null 2>&1; then pass "locked screen captured"; else fail "grim failed while locked"; fi
 
 timeout 25 cornice ipc lock attempt definitely-not-the-password >/dev/null 2>&1

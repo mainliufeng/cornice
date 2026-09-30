@@ -9,3 +9,4 @@ Slider 1.0 Slider.qml
 MenuPopup 1.0 MenuPopup.qml
 EditList 1.0 EditList.qml
 PickerList 1.0 PickerList.qml
+PanelButton 1.0 PanelButton.qml
