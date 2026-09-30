@@ -29,6 +29,20 @@ cornice_session_env() {
     done < <(systemctl --user show-environment 2>/dev/null || true)
   fi
 
+  # systemd services can inherit a session environment that has no
+  # WAYLAND_DISPLAY (Hyprland does not export it into the user manager unless
+  # something asks it to), even though the compositor is alive. Take it from the
+  # socket the compositor created, so a service start does not fail with
+  # "a shell started now would come up with no display".
+  if [[ -z ${WAYLAND_DISPLAY:-} ]]; then
+    local socket
+    for socket in "$XDG_RUNTIME_DIR"/wayland-*; do
+      [[ -S $socket ]] || continue
+      export WAYLAND_DISPLAY="${socket##*/}"
+      break
+    done
+  fi
+
   # Still unusable? Say so rather than letting every later check fail obscurely.
   if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && command -v hyprctl >/dev/null 2>&1; then
     if ! timeout 3 hyprctl version >/dev/null 2>&1; then
