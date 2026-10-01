@@ -36,6 +36,7 @@ result=0
 cleanup() {
   [[ -n $hover_pointer_pid ]] && kill "$hover_pointer_pid" 2>/dev/null
   [[ -n ${media_fixture_pid:-} ]] && kill "$media_fixture_pid" 2>/dev/null
+  [[ -n ${tooltip_audio_pid:-} ]] && kill "$tooltip_audio_pid" 2>/dev/null
   [[ -n $tray_fixture_pid ]] && kill "$tray_fixture_pid" 2>/dev/null
   [[ -n $weather_server_pid ]] && kill "$weather_server_pid" 2>/dev/null
   [[ -n $shell_pid ]] && kill "$shell_pid" 2>/dev/null
@@ -239,6 +240,8 @@ if [[ $install_prefix != "$prefix" ]]; then
   [[ -f $install_prefix/shell/shell.qml ]] || fail "no shell.qml under $install_prefix"
 fi
 
+source "$prefix/test/tooltip-audio-setup.sh"
+
 section "shell and IPC"
 # Run the shell from a *copy* inside the sandbox. Quickshell identifies a
 # configuration by its path, and `cornice restart`/`cornice-qs kill` work by that
@@ -300,6 +303,7 @@ source "$prefix/test/window-switcher-verify.sh"
 source "$prefix/test/bar-editor-verify.sh"
 source "$prefix/test/panel-ui-verify.sh"
 source "$prefix/test/component-ui-verify.sh"
+source "$prefix/test/bar-tooltip-verify.sh"
 
 section "compositor state drives the widgets"
 if command -v kitty >/dev/null 2>&1; then

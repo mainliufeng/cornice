@@ -11,3 +11,4 @@ EditList 1.0 EditList.qml
 PickerList 1.0 PickerList.qml
 PanelButton 1.0 PanelButton.qml
 PanelHeader 1.0 PanelHeader.qml
+BarTooltip 1.0 BarTooltip.qml

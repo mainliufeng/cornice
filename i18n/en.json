@@ -125,6 +125,7 @@
   "power.battery": "On battery",
   "power.charging": "Charging",
   "power.full": "Fully charged",
+  "power.level": "Battery",
   "power.lock": "Lock",
   "power.off": "Power off",
   "power.profile": "Performance mode",

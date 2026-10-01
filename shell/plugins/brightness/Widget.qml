@@ -2,9 +2,10 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Ui
 
 // Backlight control, shaped like the audio widget: one glyph that carries the
-// level, the percentage on hover, the wheel to change it, and a left click that
+// level, a passive tooltip on hover, the wheel to change it, and a left click that
 // just shows the brightness OSD (so clicking always does something visible).
 //
 // Reading goes through `light -G` (the same tool the idle plugin uses to dim),
@@ -20,7 +21,6 @@ Item {
 
   readonly property int step: Math.max(1, Math.round(Util.option(widgetConfig, "step", 5)))
   property int percent: -1
-  property bool hovered: false
   property bool busy: false
   // Wheel deltas arrive in small pieces on some devices; accumulate them so one
   // notch is one step instead of a jump.
@@ -36,7 +36,7 @@ Item {
   readonly property real glyphOpacity: percent < 0 ? 0.45 : (0.45 + 0.55 * (percent / 100))
 
   implicitHeight: Style.widgetHeight
-  implicitWidth: label.implicitWidth + Style.space(1)
+  implicitWidth: Style.widgetHeight
 
   function parse(text) {
     const value = Number(String(text).trim().split(/\s+/)[0])
@@ -93,7 +93,7 @@ Item {
   Text {
     id: label
     anchors.centerIn: parent
-    text: root.hovered && root.known ? root.percent + "%" : root.glyph
+    text: root.glyph
     color: Color.barForeground
     opacity: root.glyphOpacity
     font.family: Style.fontFamily
@@ -101,15 +101,23 @@ Item {
   }
 
   MouseArea {
+    id: hit
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    onHoveredChanged: root.hovered = hovered
     onClicked: {
       root.refresh()
       // Always give feedback, even before the value is known.
       Util.exec("cornice ipc osd brightness")
     }
+  }
+
+  BarTooltip {
+    host: root.host
+    anchorItem: root
+    hovered: hit.containsMouse
+    title: I18n.t("bar.widget.brightness") + (root.known ? " " + root.percent + "%" : "")
+    detail: root.known ? "" : I18n.t("osd.noBacklight")
   }
 
   WheelHandler {

@@ -294,6 +294,10 @@ cornice test --quick         # the fast ones only
 | `test/install-test.sh` | temporary prefixes and a stub service manager: dependency failures, service startup order, custom prefixes and unit backups |
 | `cornice verify` | the session you are actually looking at |
 
+The headless suite also needs `pipewire`, `wpctl` and `pw-metadata`. It starts
+a private PipeWire server with one virtual sink and no hardware devices to check
+bar tooltip timing, stable widget positions, mute and scrolling on both bar edges.
+
 A plugin that fails to load, a panel that opens empty, a takeover that comments
 the wrong line and a fresh install that is missing a file all fail these suites —
 each of those has happened here, which is why they exist.

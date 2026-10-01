@@ -258,6 +258,9 @@ cornice test --quick         # 只跑快的
 | `test/install-verify.sh` | 导出**被跟踪的**树并安装，再对安装后的树跑 headless 套件 —— "全新安装"门禁 |
 | `cornice verify` | 你正在看的这个会话 |
 
+headless 套件还需要 `pipewire`、`wpctl` 和 `pw-metadata`。它会启动一个仅含虚拟输出、
+不接硬件的私有 PipeWire 服务，检查顶部和底部状态栏的提示延迟、布局稳定、静音与滚轮操作。
+
 插件加载失败、面板打开是空的、takeover 注释错行、全新安装缺文件 —— 这些都会让
 套件失败。它们之所以存在，是因为每一种都真的发生过。
 

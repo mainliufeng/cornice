@@ -125,6 +125,7 @@
   "power.battery": "使用电池",
   "power.charging": "充电中",
   "power.full": "已充满",
+  "power.level": "电量",
   "power.lock": "锁屏",
   "power.off": "关机",
   "power.profile": "性能模式",

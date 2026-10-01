@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Services.UPower
 import qs.Commons
+import qs.Ui
 
 Item {
   id: root
@@ -40,31 +41,33 @@ Item {
   readonly property bool showRemaining: Util.option(widgetConfig, "showTimeRemaining", false)
 
   implicitHeight: Style.widgetHeight
-  implicitWidth: label.implicitWidth + Style.space(1)
+  implicitWidth: Style.widgetHeight
   visible: present
-
-  // The icon shows the level (it changes as the battery drains); the percentage
-  // and the remaining time appear only while hovering.
-  property bool hovered: false
 
   Text {
     id: label
     anchors.centerIn: parent
-    text: root.icon + (root.hovered
-      ? "  " + root.percent + "%" + (root.showRemaining && root.remaining !== ""
-          ? "  " + root.remaining : "")
-      : "")
+    text: root.icon
     color: root.critical && !root.charging ? Color.urgent : Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }
 
   MouseArea {
+    id: hit
     anchors.fill: parent
     cursorShape: Qt.PointingHandCursor
     hoverEnabled: true
-    onEntered: root.hovered = true
-    onExited: root.hovered = false
     onClicked: if (root.host) root.host.toggle("cn.power", {})
+  }
+
+  BarTooltip {
+    host: root.host
+    anchorItem: root
+    hovered: hit.containsMouse
+    title: I18n.t("power.level") + " " + root.percent + "%"
+    detail: I18n.t(root.charging ? "power.charging" : root.full ? "power.full" : "power.battery")
+      + (root.showRemaining && !root.charging && !root.full && root.remaining !== ""
+        ? " · " + I18n.t("power.remaining") + " " + root.remaining : "")
   }
 }

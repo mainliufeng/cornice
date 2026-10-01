@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Services.Pipewire
 import qs.Commons
+import qs.Ui
 
 Item {
   id: root
@@ -16,17 +17,12 @@ Item {
   readonly property real volume: (sink && sink.audio) ? sink.audio.volume : 0
   readonly property int percent: Math.round(Util.clamp(volume, 0, 1.5) * 100)
 
-  // The icon carries the level on its own (FontAwesome: mute / low / high), and
-  // the percentage only appears while the pointer is over the widget — the bar
-  // stays quiet, and the number is one hover away.
+  // The icon carries the level; hover details live outside the bar.
   readonly property string icon: {
     if (muted || percent === 0) return "\uf026"
     if (percent < 40) return "\uf027"
     return "\uf028"
   }
-
-  property bool hovered: false
-  readonly property string text: hovered ? (percent + "%") : ""
 
   // Quickshell only binds a PipeWire node's parameters (volume, mute) for
   // objects that are tracked — without this every node reports volume 0 and
@@ -36,25 +32,24 @@ Item {
   }
 
   implicitHeight: Style.widgetHeight
-  implicitWidth: label.implicitWidth + Style.space(1)
+  implicitWidth: Style.widgetHeight
   visible: !!sink
 
   Text {
     id: label
     anchors.centerIn: parent
-    text: root.icon + (root.text === "" ? "" : "  " + root.text)
+    text: root.icon
     color: root.muted ? Color.muted : Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }
 
   MouseArea {
+    id: hit
     anchors.fill: parent
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
     cursorShape: Qt.PointingHandCursor
     hoverEnabled: true
-    onEntered: root.hovered = true
-    onExited: root.hovered = false
 
     onClicked: mouse => {
       if (mouse.button === Qt.LeftButton)
@@ -72,6 +67,14 @@ Item {
       const direction = wheel.angleDelta.y > 0 ? "+" : "-"
       Util.exec("wpctl set-volume @DEFAULT_AUDIO_SINK@ " + root.step + "%" + direction)
     }
+  }
+
+  BarTooltip {
+    host: root.host
+    anchorItem: root
+    hovered: hit.containsMouse
+    title: I18n.t("bar.widget.audio") + " " + root.percent + "%"
+    detail: root.muted ? I18n.t("common.muted") : (root.sink ? root.sink.description || root.sink.name : "")
   }
 
   // Read-only support hook.
