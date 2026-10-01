@@ -2,6 +2,7 @@
 # cornice test — run every suite and print one summary.
 #
 # Suites:
+#   installer  sandbox: dependency failures, service order and prefix handling
 #   takeover   sandbox: does `cornice takeover` find and change the right lines?
 #   headless   private compositor stack: does the shell start, load plugins, paint?
 #   lock       private stack: does the lock screen accept/reject/emergency-unlock?
@@ -10,7 +11,7 @@
 #              (a release gate; not part of the default set because it is slow)
 #
 #   cornice test            everything that applies
-#   cornice test --quick    only the fast, sandboxed suites (takeover, live)
+#   cornice test --quick    only the fast suites (installer, takeover, live)
 #   cornice test takeover   one suite by name
 set -uo pipefail
 ulimit -c 0
@@ -26,13 +27,13 @@ quick=0
 for arg in "$@"; do
   case "$arg" in
     --quick) quick=1 ;;
-    -h | --help) sed -n '2,15p' "$self" | sed 's/^# \?//'; exit 0 ;;
-    takeover | headless | lock | live | install) suite_args+=("$arg") ;;
+    -h | --help) sed -n '2,16p' "$self" | sed 's/^# \?//'; exit 0 ;;
+    installer | takeover | headless | lock | live | install) suite_args+=("$arg") ;;
     *) echo "cornice test: unknown argument '$arg'" >&2; exit 2 ;;
   esac
 done
-if ((quick)) && ((${#suite_args[@]} == 0)); then suite_args=(takeover live); fi
-((${#suite_args[@]})) || suite_args=(takeover headless lock live)
+if ((quick)) && ((${#suite_args[@]} == 0)); then suite_args=(installer takeover live); fi
+((${#suite_args[@]})) || suite_args=(installer takeover headless lock live)
 
 run_suite() {
   local name="$1" script="$2"
@@ -69,6 +70,7 @@ trap release_idle EXIT
 
 for suite in "${suite_args[@]}"; do
   case "$suite" in
+    installer) run_suite "installer (sandbox)" "$test_dir/install-test.sh" ;;
     takeover) run_suite "takeover (sandbox)" "$test_dir/takeover-test.sh" ;;
     headless) run_suite "headless verify (private compositor)" "$test_dir/headless-verify.sh" ;;
     lock) run_suite "lock verify (private compositor)" "$test_dir/lock-verify.sh" ;;

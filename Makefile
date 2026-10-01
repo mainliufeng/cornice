@@ -6,7 +6,7 @@
 PREFIX ?= $(HOME)/.local
 
 .PHONY: help check install uninstall run launch stop restart status doctor verify \
-        test test-quick headless lock takeover install-verify bench pkg clean fmt
+        test test-quick installer headless lock takeover install-verify bench pkg clean fmt
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -46,8 +46,11 @@ verify: ## check the running shell in the real session
 test: ## every suite (takeover, headless, lock, live)
 	./bin/cornice-test
 
-test-quick: ## fast suites only (takeover + live)
+test-quick: ## fast suites only (installer + takeover + live)
 	./bin/cornice-test --quick
+
+installer: ## installer failures and service configuration in a sandbox
+	./test/install-test.sh
 
 headless: ## private compositor: startup, plugins, panels, painting
 	./test/headless-verify.sh

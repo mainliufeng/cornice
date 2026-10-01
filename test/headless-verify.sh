@@ -30,11 +30,13 @@ dbus_pid=""
 shell_pid=""
 tray_fixture_pid=""
 hover_pointer_pid=""
+weather_server_pid=""
 result=0
 
 cleanup() {
   [[ -n $hover_pointer_pid ]] && kill "$hover_pointer_pid" 2>/dev/null
   [[ -n $tray_fixture_pid ]] && kill "$tray_fixture_pid" 2>/dev/null
+  [[ -n $weather_server_pid ]] && kill "$weather_server_pid" 2>/dev/null
   [[ -n $shell_pid ]] && kill "$shell_pid" 2>/dev/null
   pkill -f "Hyprland -c $runtime/hyprland.conf" 2>/dev/null
   [[ -n $mutter_pid ]] && kill "$mutter_pid" 2>/dev/null
@@ -115,7 +117,9 @@ if [[ -n $weather_port ]]; then
 }
 EOF
 else
-  warn "could not start the fake weather API; weather will not be asserted"
+  fail "could not start the weather test API"
+  cat "$runtime/weather-server.log" 2>/dev/null
+  exit 1
 fi
 
 cat >"$runtime/hyprland.conf" <<'EOF'
@@ -131,6 +135,10 @@ EOF
 
 section "private session bus and compositor (runtime: $runtime)"
 read -r DBUS_ADDR DBUS_PID < <(dbus-daemon --session --fork --print-address=1 --print-pid=1 | tr '\n' ' ')
+if [[ ${DBUS_ADDR:-} != unix:* || ! ${DBUS_PID:-} =~ ^[0-9]+$ ]]; then
+  fail "private session bus did not start"
+  exit 1
+fi
 dbus_pid=$DBUS_PID
 export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
 pass "private session bus: ${DBUS_ADDR%%guid=*}"
@@ -506,7 +514,7 @@ if grep -q "Name\[zh_CN\]" /usr/share/applications/*.desktop 2>/dev/null; then
     # Whether Qt hands out Name[zh_CN] depends on the locale of the process that
     # started the shell (a real session gets it from systemd), which this suite
     # cannot force — so this is reported, not failed.
-    warn "the sandbox shell lists English names (control='term' found $control, 图像 found none); localized search is verified in a real session"
+    warn "the sandbox shell lists English names (control='term' found $control, 图像 found none); localized search was not verified in this run"
   fi
   cornice ipc launcher setQuery "" >/dev/null 2>&1
   cornice ipc shell hide cn.launcher >/dev/null 2>&1
@@ -773,7 +781,7 @@ PY
   else fail "render assertion failed"; fi
   ((keep)) || cp "$shot" /tmp/cornice-shot.png 2>/dev/null || true
 else
-  warn "no screenshot: $(cat "$runtime/grim.log" 2>/dev/null)"
+  fail "no screenshot: $(cat "$runtime/grim.log" 2>/dev/null)"
 fi
 
 section "log hygiene"
@@ -784,8 +792,6 @@ if [[ -z $problems ]]; then pass "no QML errors in the shell log"
 else
   fail "QML problems in the shell log:"; echo "$problems" | head -10
 fi
-
-[[ -n ${weather_server_pid:-} ]] && kill "$weather_server_pid" 2>/dev/null || true
 
 echo
 ((result == 0)) && echo "RESULT: all checks passed" || echo "RESULT: failures above"

@@ -8,8 +8,9 @@
 #   ./install.sh --service       install + enable the systemd user service
 #   ./install.sh --uninstall     remove what was installed
 #
-# Never edits a config file and never needs root unless you choose a prefix
-# outside your home. Rollback is `./install.sh --uninstall`.
+# Leaves compositor config alone; --service backs up an existing user unit.
+# Needs no root unless you choose a protected prefix. Remove installed helpers
+# with `./install.sh --uninstall`; restore the reported unit backup separately.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
@@ -35,6 +36,12 @@ while (($#)); do
     *) echo "install.sh: unknown option '$arg'" >&2; exit 2 ;;
   esac
 done
+
+prefix=$(realpath -m -- "$prefix")
+if ((service)) && [[ $prefix == *$'\n'* || $prefix == *$'\r'* || $prefix == *$'\t'* ]]; then
+  echo "install.sh: --service requires a prefix without newlines or tabs" >&2
+  exit 2
+fi
 
 bindir="$prefix/bin"
 libdir="$prefix/share/cornice"
@@ -70,27 +77,6 @@ if ((uninstall)); then
   echo "  ~/.local/state/cornice/     takeover backups, health reports"
   echo "Remove the 'exec-once = cornice-launch' line from your Hyprland config to finish."
   exit 0
-fi
-
-# ---------------------------------------------------------------------------
-step "Systemd user service"
-if ((service)); then
-  unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-  mkdir -p "$unit_dir"
-  install -m644 "$repo/config/cornice.service" "$unit_dir/cornice.service"
-  ok "installed $unit_dir/cornice.service"
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
-  if systemctl --user enable --now cornice.service >/dev/null 2>&1; then
-    ok "enabled and started cornice.service (Restart=always)"
-    echo "  status: systemctl --user status cornice"
-  else
-    warn "could not enable cornice.service — start it manually: systemctl --user enable --now cornice"
-  fi
-else
-  echo "  Running under systemd is recommended: it restarts the shell if it dies."
-  echo "  Add --service to this script, or:"
-  echo "      install -Dm644 $repo/config/cornice.service ~/.config/systemd/user/cornice.service"
-  echo "      systemctl --user daemon-reload && systemctl --user enable --now cornice.service"
 fi
 
 # ---------------------------------------------------------------------------
@@ -183,13 +169,57 @@ done
 if ((broken == 0)); then
   ok "every helper resolves ($(ls "$source_dir"/cornice* | wc -l) installed)"
 else
-  warn "$broken helper(s) missing — runtime features that call them will not work"
+  bad "$broken helper(s) missing — runtime features that call them will not work"
+  exit 1
 fi
 
 case ":$PATH:" in
   *":$bindir:"*) ok "$bindir is on PATH" ;;
   *) warn "$bindir is NOT on your PATH — add: export PATH=\"$bindir:\$PATH\"" ;;
 esac
+
+# Only enable the service after dependency checks and a complete installation.
+# The unit must launch from the selected prefix, including paths with spaces or
+# systemd specifier characters. Preserve any existing unit before replacing it.
+step "Systemd user service"
+if ((service)); then
+  unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$unit_dir"
+  unit="$unit_dir/cornice.service"
+  service_executable="$bindir/cornice-launch"
+  service_executable=${service_executable//\\/\\\\}
+  service_executable=${service_executable//\"/\\\"}
+  service_executable=${service_executable//%/%%}
+  unit_staging=$(mktemp "$unit_dir/.cornice.service.XXXXXX")
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $line == ExecStart=* ]]; then
+      # systemd restricts characters in the executable token. env execs the
+      # launcher as a quoted argument; ':' keeps dollar signs literal.
+      printf 'ExecStart=:/usr/bin/env -- "%s"\n' "$service_executable"
+    else
+      printf '%s\n' "$line"
+    fi
+  done <"$repo/config/cornice.service" >"$unit_staging"
+  chmod 644 "$unit_staging"
+  if [[ -e $unit || -L $unit ]]; then
+    backup=$(mktemp "$unit_dir/cornice.service.backup.XXXXXX")
+    cp -a -- "$unit" "$backup"
+    ok "previous unit backed up to $backup"
+  fi
+  mv -f -- "$unit_staging" "$unit"
+  ok "installed $unit"
+  if systemctl --user daemon-reload >/dev/null 2>&1 \
+    && systemctl --user enable --now cornice.service >/dev/null 2>&1; then
+    ok "enabled and started cornice.service (Restart=always)"
+    echo "  status: systemctl --user status cornice"
+  else
+    bad "could not enable cornice.service — check: systemctl --user status cornice"
+    exit 1
+  fi
+else
+  echo "  Running under systemd is recommended: it restarts the shell if it dies."
+  echo "  Add --service to this script."
+fi
 
 # ---------------------------------------------------------------------------
 step "Hyprland"

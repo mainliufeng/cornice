@@ -18,7 +18,17 @@ prefix="${CORNICE_PATH:-$(cd "$test_dir/.." && pwd)}"
 export CORNICE_PATH="$prefix"
 
 with_package=0
-[[ ${1:-} == "--package" ]] && with_package=1
+case "${1:-}" in
+  "") ;;
+  --package) with_package=1 ;;
+  *) echo "usage: $0 [--package]" >&2; exit 2 ;;
+esac
+if (($# > 1)); then echo "usage: $0 [--package]" >&2; exit 2; fi
+if ((with_package)) && ! command -v makepkg >/dev/null 2>&1; then
+  echo "install-verify: --package requires makepkg; package validation was not run" >&2
+  exit 1
+fi
+revision=$(git -C "$prefix" rev-parse HEAD) || exit 1
 
 tmp=$(mktemp -d /tmp/cornice-install-XXXXXX)
 cleanup() { rm -rf "$tmp"; }
@@ -31,7 +41,7 @@ failures=0
 # wallpaper was never in the repository, so a fresh clone had no background.
 echo "== 0/… export the tracked tree (what a clone contains)"
 mkdir -p "$tmp/source"
-git -C "$prefix" archive HEAD | tar -x -C "$tmp/source"
+git -C "$prefix" archive "$revision" | tar -x -C "$tmp/source" || exit 1
 if [[ ! -f $tmp/source/wallpapers/default.png ]]; then
   echo "  FAIL: wallpapers/default.png is not tracked (a fresh clone would have no default wallpaper)"
   failures=$((failures + 1))
@@ -52,6 +62,14 @@ run_against() {
     failures=$((failures + 1))
     return 1
   fi
+  for dir in bin shell i18n themes wallpapers config docs; do
+    if ! diff -qr "$tmp/source/$dir" "$root/$dir"; then
+      echo "  FAIL: installed $dir differs from the committed source"
+      failures=$((failures + 1))
+      return 1
+    fi
+  done
+  echo "  installed files match the committed source"
   CORNICE_INSTALLED_PREFIX="$root" "$test_dir/headless-verify.sh"
   local status=$?
   if ((status != 0)); then failures=$((failures + 1)); fi
@@ -81,23 +99,23 @@ run_against "install.sh --copy" "$tmp/prefix/share/cornice"
 if ((with_package)); then
   echo
   echo "== 2/… PKGBUILD"
-  if ! command -v makepkg >/dev/null 2>&1; then
-    echo "  makepkg not available; skipping the package test"
+  # Build the same committed snapshot as the copy install. A local clone
+  # retains the version metadata without including dirty or untracked files.
+  git clone --quiet --no-checkout -- "$prefix" "$tmp/package-source" || exit 1
+  git -C "$tmp/package-source" checkout --quiet --detach "$revision" || exit 1
+  mkdir -p "$tmp/packages"
+  (cd "$tmp/package-source" && PKGDEST="$tmp/packages" makepkg -f --nodeps >"$tmp/makepkg.log" 2>&1) \
+    || { echo "makepkg failed:"; tail -10 "$tmp/makepkg.log"; exit 1; }
+  # Ask makepkg for this PKGBUILD's output rather than guessing a filename.
+  package=$(cd "$tmp/package-source" && PKGDEST="$tmp/packages" makepkg --packagelist) || exit 1
+  if [[ -z $package || ! -f $package ]]; then
+    echo "  FAIL: makepkg produced no package"
+    failures=$((failures + 1))
   else
-    (cd "$prefix" && makepkg -f --nodeps >"$tmp/makepkg.log" 2>&1) \
-      || { echo "makepkg failed:"; tail -10 "$tmp/makepkg.log"; exit 1; }
-    # An older package can coexist with the one just built. Ask makepkg for
-    # this PKGBUILD's output instead of selecting an arbitrary matching file.
-    package=$(cd "$prefix" && makepkg --packagelist | head -1)
-    if [[ -z $package || ! -f $package ]]; then
-      echo "  FAIL: makepkg produced no package"
-      failures=$((failures + 1))
-    else
-      echo "  package: $(basename "$package")"
-      mkdir -p "$tmp/root"
-      bsdtar -xf "$package" -C "$tmp/root"
-      run_against "$(basename "$package")" "$tmp/root/usr/share/cornice"
-    fi
+    echo "  package: $(basename "$package")"
+    mkdir -p "$tmp/root"
+    bsdtar -xf "$package" -C "$tmp/root" || exit 1
+    run_against "$(basename "$package")" "$tmp/root/usr/share/cornice"
   fi
 fi
 

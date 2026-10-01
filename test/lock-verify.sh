@@ -85,6 +85,10 @@ EOF
 
 section "private stack (runtime: $runtime)"
 read -r DBUS_ADDR DBUS_PID < <(dbus-daemon --session --fork --print-address=1 --print-pid=1 | tr '\n' ' ')
+if [[ ${DBUS_ADDR:-} != unix:* || ! ${DBUS_PID:-} =~ ^[0-9]+$ ]]; then
+  fail "private session bus did not start"
+  exit 1
+fi
 dbus_pid=$DBUS_PID
 export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
 pass "private session bus"

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Check dependencies and finish installing helpers before enabling the user
+  service. Use the selected prefix, escape service command paths, back up an
+  existing unit and return failure if service activation fails.
+- Build release-test packages from the same committed snapshot as the copy
+  install, compare installed files against that snapshot, and reject missing
+  package tools or invalid test arguments.
+- Fail headless verification when its weather fixture, private D-Bus or
+  screenshot is unavailable; clean up the weather fixture on early exits.
+- Add installer regressions to the default and quick test suites and repair
+  the installation/configuration command layout in both READMEs.
+
 ## 0.2.1
 
 First GitHub Release. Earlier development and fixes were delivered on `main`

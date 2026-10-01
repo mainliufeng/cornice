@@ -53,7 +53,7 @@ cd ~/Code/self/cornice
 ./install.sh                 # 软链 CLI 到 ~/.local/bin，顺便体检依赖
 ```
 
-`./install.sh` 不需要 root，也不会动你的任何配置文件：
+`./install.sh` 默认安装到用户目录，不会改动合成器配置：
 
 ```bash
 ./install.sh --copy              # 装成自包含的一份到 ~/.local/share/cornice
@@ -74,6 +74,11 @@ PKGBUILD 与上传流程。
 systemctl --user status cornice
 ```
 
+`--service` 会先检查依赖并安装全部辅助命令，再启用服务。服务启动路径跟随
+`--prefix`；已有用户服务文件会先备份为同目录下的 `cornice.service.backup.*`。
+撤回时，将安装输出中提示的备份复制回 `cornice.service`，然后运行
+`systemctl --user daemon-reload`。
+
 或者自己在 `~/.config/hypr/hyprland.conf` 加一行：
 
 ```conf
@@ -82,15 +87,10 @@ exec-once = cornice-launch
 
 
 可选的键位片段在 [`config/snippet.hyprland.conf`](config/snippet.hyprland.conf)，
-自己挑着贴。Cornice 不会改你的合成器配置、`~/.config/hypr/*` 或任何系统包 ——
-唯一例外是 `# 也可以脚本化配置（面板调用的就是这些命令）
-cornice bar list | show <id> | hide <id> | move <id> up|down|left|center|right
-cornice weather place use <名字> [--city 城市 | --lat 纬度 --lon 经度] | clear
-cornice clock   zone  use <名字> <时区> | clear
-cornice language [list|<语言>]
-
-cornice takeover --apply`：它会先给你看计划、备份每个改过的文件、
-并且能一键撤销。
+自己挑着贴。Cornice 不会改你的合成器配置、`~/.config/hypr/*` 或任何系统包。
+显式使用 `--service` 时，会按上文安装并备份用户服务文件；
+`cornice takeover --apply` 会备份后修改桌面启动配置，并支持
+`cornice takeover --undo` 撤回。
 
 ## 从旧组件接管
 
@@ -118,6 +118,12 @@ cornice ping | version | plugins | widgets | targets | socket | path
 cornice config | theme [list|toggle|<name>] | reload | reload-plugins
 cornice ipc <target> <method> [args] # 原始 IPC，例如 cornice ipc idle status
 
+# 也可以脚本化配置（面板调用的就是这些命令）
+cornice bar list | show <id> | hide <id> | move <id> up|down|left|center|right
+cornice weather place use <名字> [--city 城市 | --lat 纬度 --lon 经度] | clear
+cornice clock zone use <名字> <时区> | clear
+cornice language [list|<语言>]
+
 # 绑键用的
 cornice launcher | clipboard | emojis | notifications | dnd [on|off]
 cornice panel <plugin-id> [json]     # 开关任意面板
@@ -129,7 +135,7 @@ cornice background [status|set <路径>|next|prev|clear|reload]
 cornice doctor                       # 依赖、合成器、冲突
 cornice verify                       # 检查你正在看的这个 shell
 cornice takeover [--apply|--undo]
-cornice test [--quick|takeover|headless|lock|install|live]
+cornice test [--quick|installer|takeover|headless|lock|install|live]
 cornice session-env                  # 输出合成器环境变量（TTY / 过期 shell 用）
 ```
 

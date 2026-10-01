@@ -64,7 +64,7 @@ cd ~/Code/self/cornice
 ./install.sh                 # symlinks the CLI into ~/.local/bin, checks deps
 ```
 
-`./install.sh` never needs root and never edits a config file:
+`./install.sh` defaults to a user-local install and leaves compositor config alone:
 
 ```bash
 ./install.sh --copy              # self-contained tree in ~/.local/share/cornice
@@ -85,6 +85,12 @@ Then start it — as a systemd user service, so it comes back if it ever dies:
 systemctl --user status cornice
 ```
 
+With `--service`, dependency checks and helper installation finish before the
+service is enabled. The unit uses the selected `--prefix`; an existing user unit
+is backed up next to it as `cornice.service.backup.*` before replacement. To
+restore it, copy the reported backup over `cornice.service` and run
+`systemctl --user daemon-reload`.
+
 or add one line to `~/.config/hypr/hyprland.conf`:
 
 ```conf
@@ -93,15 +99,10 @@ exec-once = cornice-launch
 
 
 Optional keybindings live in [`config/snippet.hyprland.conf`](config/snippet.hyprland.conf).
-Cornice deliberately does not edit your compositor config, your `~/.config/hypr/*`
-or any package — the only exception is `# configuration you can also script (the panels run these same commands)
-cornice bar list | show <id> | hide <id> | move <id> up|down|left|center|right
-cornice weather place use <name> [--city C | --lat L --lon N] | clear
-cornice clock   zone  use <name> <zone> | clear
-cornice language [list|<code>]
-
-cornice takeover --apply`, which asks,
-shows a plan, keeps backups and can undo itself.
+Cornice leaves your compositor config, `~/.config/hypr/*` and system packages
+alone. Explicit `--service` installs the backed-up user unit described above;
+`cornice takeover --apply` changes the desktop startup config with backups and
+supports `cornice takeover --undo`.
 
 ## Hand over from the old daemons
 
@@ -130,6 +131,12 @@ cornice ping | version | plugins | widgets | targets | socket | path
 cornice config | theme [list|toggle|<name>] | reload | reload-plugins
 cornice ipc <target> <method> [args] # raw IPC, e.g. cornice ipc idle status
 
+# configuration (the panels run these same commands)
+cornice bar list | show <id> | hide <id> | move <id> up|down|left|center|right
+cornice weather place use <name> [--city C | --lat L --lon N] | clear
+cornice clock zone use <name> <zone> | clear
+cornice language [list|<code>]
+
 # what you bind to keys
 cornice launcher | clipboard | emojis | notifications | dnd [on|off]
 cornice panel <plugin-id> [json]     # toggle any panel
@@ -141,7 +148,7 @@ cornice background [status|set <path>|next|prev|clear|reload]
 cornice doctor                       # dependencies, compositor, conflicts
 cornice verify                       # the shell you are looking at
 cornice takeover [--apply|--undo]
-cornice test [--quick|takeover|headless|lock|install|live]
+cornice test [--quick|installer|takeover|headless|lock|install|live]
 cornice session-env                  # compositor env exports for TTYs/stale shells
 ```
 
@@ -284,6 +291,7 @@ cornice test --quick         # the fast ones only
 | `test/lock-verify.sh` | private compositor: lock, refusal to restart while locked, emergency unlock, a real PAM stack with a wrong password, the logind lock signal, lid-close locking |
 | `test/takeover-test.sh` | sandbox: takeover plan/apply/idempotence/backup/undo, including a stub systemctl |
 | `test/install-verify.sh` | exports the *tracked* tree, installs it, runs the headless suite against it — the "fresh install" gate |
+| `test/install-test.sh` | temporary prefixes and a stub service manager: dependency failures, service startup order, custom prefixes and unit backups |
 | `cornice verify` | the session you are actually looking at |
 
 A plugin that fails to load, a panel that opens empty, a takeover that comments
