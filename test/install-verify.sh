@@ -86,8 +86,10 @@ if ((with_package)); then
   else
     (cd "$prefix" && makepkg -f --nodeps >"$tmp/makepkg.log" 2>&1) \
       || { echo "makepkg failed:"; tail -10 "$tmp/makepkg.log"; exit 1; }
-    package=$(find "$prefix" -maxdepth 1 -name 'cornice-*.pkg.tar.zst' | head -1)
-    if [[ -z $package ]]; then
+    # An older package can coexist with the one just built. Ask makepkg for
+    # this PKGBUILD's output instead of selecting an arbitrary matching file.
+    package=$(cd "$prefix" && makepkg --packagelist | head -1)
+    if [[ -z $package || ! -f $package ]]; then
       echo "  FAIL: makepkg produced no package"
       failures=$((failures + 1))
     else

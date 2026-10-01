@@ -21,6 +21,8 @@ without release tags; this release includes that history.
   place names instead of replacing them with API timezone names.
 - Harden startup and restart against duplicate shell instances; improve
   notification ownership, configuration reloads and lock-screen recovery.
+- Make the install release gate test the package just built even when older
+  package files are still present.
 
 ### Included features and UI updates
 
