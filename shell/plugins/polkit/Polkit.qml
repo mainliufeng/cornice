@@ -57,7 +57,7 @@ Item {
     id: dialog
 
     edge: "center"
-    panelWidth: 460
+    panelWidth: Math.min(520, window.screen ? window.screen.width - Style.space(8) : 520)
     panelHeight: content.implicitHeight + Style.space(4)
     takesKeyboard: true
     dismissOnClickAway: false
@@ -94,7 +94,7 @@ Item {
             text: I18n.t("lock.authRequired")
             color: Color.foreground
             font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize
+            font.pixelSize: Style.fontSize + 6
             font.bold: true
           }
 
@@ -104,7 +104,7 @@ Item {
             color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.75)
             wrapMode: Text.Wrap
             font.family: Style.fontFamily
-            font.pixelSize: Style.smallFontSize
+            font.pixelSize: Style.fontSize
           }
         }
       }
@@ -129,7 +129,7 @@ Item {
             required property int index
 
             width: content.width
-            height: Style.widgetHeight
+            height: Style.space(5.5)
             radius: Style.radius
             color: index === root.identityIndex ? Color.hover : "transparent"
 
@@ -140,7 +140,7 @@ Item {
               text: String(modelData)
               color: Color.foreground
               font.family: Style.fontFamily
-              font.pixelSize: Style.smallFontSize
+              font.pixelSize: Style.fontSize
             }
 
             MouseArea {
@@ -165,7 +165,7 @@ Item {
           text: root.flow ? root.flow.inputPrompt : "Password"
           color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.6)
           font.family: Style.fontFamily
-          font.pixelSize: Style.smallFontSize
+          font.pixelSize: Style.fontSize
         }
 
         TextField {
@@ -193,7 +193,7 @@ Item {
         color: (root.flow && root.flow.supplementaryIsError) ? Color.urgent : Color.muted
         wrapMode: Text.Wrap
         font.family: Style.fontFamily
-        font.pixelSize: Style.smallFontSize
+        font.pixelSize: Style.fontSize
       }
 
       Row {
@@ -203,7 +203,7 @@ Item {
 
         Rectangle {
           width: authorizeText.implicitWidth + Style.space(2)
-          height: Style.widgetHeight + Style.space(0.6)
+          height: Style.space(5.5)
           radius: Style.radius
           color: Color.workspaceActive
 
@@ -213,7 +213,7 @@ Item {
             text: I18n.t("lock.authenticate")
             color: Color.workspaceActiveText
             font.family: Style.fontFamily
-            font.pixelSize: Style.smallFontSize
+            font.pixelSize: Style.fontSize
           }
 
           MouseArea {
@@ -225,7 +225,7 @@ Item {
 
         Rectangle {
           width: cancelText.implicitWidth + Style.space(2)
-          height: Style.widgetHeight + Style.space(0.6)
+          height: Style.space(5.5)
           radius: Style.radius
           color: Color.hover
 
@@ -235,7 +235,7 @@ Item {
             text: I18n.t("common.cancel")
             color: Color.foreground
             font.family: Style.fontFamily
-            font.pixelSize: Style.smallFontSize
+            font.pixelSize: Style.fontSize
           }
 
           MouseArea {

@@ -70,7 +70,7 @@ Item {
     id: layout
 
     width: parent.width
-    spacing: Style.space(0.5)
+    spacing: Style.space(0.75)
 
     Row {
       width: parent.width
@@ -105,7 +105,7 @@ Item {
       maximumLineCount: 2
       elide: Text.ElideRight
       font.family: Style.fontFamily
-      font.pixelSize: Style.fontSize
+      font.pixelSize: Style.fontSize + 2
       font.bold: true
     }
 
@@ -122,8 +122,9 @@ Item {
       font.pixelSize: Style.fontSize
     }
 
-    Row {
-      spacing: Style.space(0.6)
+    Flow {
+      width: parent.width
+      spacing: Style.space(1)
       visible: root.actions.length > 0 && !root.replying
 
       Repeater {
@@ -132,15 +133,17 @@ Item {
         delegate: Rectangle {
           required property var modelData
 
-          width: actionLabel.implicitWidth + Style.space(2)
-          height: actionLabel.implicitHeight + Style.space(0.8)
+          width: Math.min(parent.width, actionLabel.implicitWidth + Style.space(2))
+          height: Style.space(5.5)
           radius: Style.radius
           color: actionColor.containsMouse ? Color.accent : Color.hover
 
           Text {
             id: actionLabel
             anchors.centerIn: parent
+            width: parent.width - Style.space(2)
             text: modelData.text
+            elide: Text.ElideRight
             color: Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.smallFontSize
@@ -164,7 +167,7 @@ Item {
     Rectangle {
       visible: root.canReply && !root.replying
       width: replyLabel.implicitWidth + Style.space(2)
-      height: replyLabel.implicitHeight + Style.space(0.8)
+      height: Style.space(5.5)
       radius: Style.radius
       color: replyHover.containsMouse ? Color.accent : Color.hover
 

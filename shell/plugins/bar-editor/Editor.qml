@@ -15,7 +15,7 @@ PanelFrame {
   readonly property var layout: host && host.config && host.config.bar ? host.config.bar.layout || ({}) : ({})
   readonly property var widgets: host && typeof host.barWidgets === "function" ? host.barWidgets() : []
   readonly property var hiddenWidgets: widgets.filter(widget => !sections.some(section => entries(section).some(entry => entry.id === widget.id)))
-  readonly property int rowHeight: Style.widgetHeight + Style.space(1.5)
+  readonly property int rowHeight: Style.space(5.5)
   property var menuRow: null
   property real menuX: 0
   property real menuY: 0
@@ -114,7 +114,7 @@ PanelFrame {
       text: editor.labelFor(card.widgetId)
       color: Color.foreground
       font.family: Style.fontFamily
-      font.pixelSize: Style.smallFontSize
+      font.pixelSize: Style.fontSize
       elide: Text.ElideRight
     }
     MouseArea {
@@ -150,7 +150,7 @@ PanelFrame {
         text: card.compact ? "\u{F067}" : "\u{F141}"
         color: menuHit.containsMouse || parent.activeFocus ? Color.accent : Color.muted
         font.family: Style.iconFamily
-        font.pixelSize: Style.smallFontSize
+        font.pixelSize: Style.fontSize
       }
       MouseArea {
         id: menuHit
@@ -180,7 +180,7 @@ PanelFrame {
       text: editor.statusText || I18n.t("bar.editor.autosave")
       color: editor.statusText ? Color.accent : Color.muted
       font.family: Style.fontFamily
-      font.pixelSize: Style.smallFontSize - 1
+      font.pixelSize: Style.fontSize
     }
     Text {
       id: hint
@@ -190,7 +190,7 @@ PanelFrame {
       text: I18n.t("bar.editor.hint")
       color: Color.muted
       font.family: Style.fontFamily
-      font.pixelSize: Style.smallFontSize
+      font.pixelSize: Style.fontSize
       wrapMode: Text.Wrap
     }
     Row {
@@ -198,7 +198,7 @@ PanelFrame {
       anchors.top: hint.bottom
       anchors.topMargin: Style.space(2.5)
       width: parent.width
-      height: Math.max(editor.rowHeight * 3, hiddenSection.y - y - Style.space(3))
+      height: Math.max(0, hiddenSection.y - y - Style.space(2))
       spacing: Style.space(1.5)
       Repeater {
         id: columnItems
@@ -227,7 +227,7 @@ PanelFrame {
             text: I18n.t("bar.editor.section." + lane.modelData)
             color: Color.foreground
             font.family: Style.fontFamily
-            font.pixelSize: Style.smallFontSize
+            font.pixelSize: Style.fontSize
             font.bold: true
           }
           Text {
@@ -237,7 +237,7 @@ PanelFrame {
             text: lane.laneEntries.length
             color: Color.muted
             font.family: Style.fontFamily
-            font.pixelSize: Style.smallFontSize
+            font.pixelSize: Style.fontSize
           }
           Rectangle {
             x: Style.space(1.5); y: Style.space(5)
@@ -275,7 +275,7 @@ PanelFrame {
               text: I18n.t("bar.editor.drop")
               color: Color.muted
               font.family: Style.fontFamily
-              font.pixelSize: Style.smallFontSize
+              font.pixelSize: Style.fontSize
             }
           }
           DropArea {
@@ -309,29 +309,39 @@ PanelFrame {
       id: hiddenSection
       anchors.bottom: parent.bottom
       width: parent.width
-      height: hiddenHeading.height + Style.space(1.5) + hiddenFlow.height
+      readonly property bool compactLayout: canvas.height < Style.space(55)
+      height: hiddenHeading.height + Style.space(1.5) + hiddenViewport.height
       Text {
         id: hiddenHeading
         text: I18n.t("bar.editor.hidden") + "  ·  " + editor.hiddenWidgets.length
         color: Color.muted
         font.family: Style.fontFamily
-        font.pixelSize: Style.smallFontSize
+        font.pixelSize: Style.fontSize
       }
-      Flow {
-        id: hiddenFlow
+      Flickable {
+        id: hiddenViewport
         anchors.top: hiddenHeading.bottom
         anchors.topMargin: Style.space(1.5)
         width: parent.width
-        spacing: Style.space(0.8)
-        Repeater {
-          id: hiddenItems
-          model: editor.hiddenWidgets
-          delegate: WidgetRow {
-            required property var modelData
-            widgetId: modelData.id
-            compact: true
-            width: Math.min(180, hiddenFlow.width)
-            color: Color.surface
+        height: hiddenSection.compactLayout ? editor.rowHeight : hiddenFlow.implicitHeight
+        contentWidth: hiddenFlow.width
+        contentHeight: hiddenFlow.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        Flow {
+          id: hiddenFlow
+          width: hiddenSection.compactLayout ? Math.max(hiddenViewport.width, editor.hiddenWidgets.length * (Math.min(180, hiddenViewport.width) + spacing) - spacing) : hiddenViewport.width
+          spacing: Style.space(0.8)
+          Repeater {
+            id: hiddenItems
+            model: editor.hiddenWidgets
+            delegate: WidgetRow {
+              required property var modelData
+              widgetId: modelData.id
+              compact: true
+              width: Math.min(180, hiddenViewport.width)
+              color: Color.surface
+            }
           }
         }
       }
@@ -371,7 +381,7 @@ PanelFrame {
               text: parent.modelData.glyph
               color: Color.muted
               font.family: Style.iconFamily
-              font.pixelSize: Style.smallFontSize
+              font.pixelSize: Style.fontSize
             }
             Text {
               x: Style.space(4.5)
@@ -379,7 +389,7 @@ PanelFrame {
               text: parent.modelData.label
               color: parent.enabled ? Color.foreground : Color.muted
               font.family: Style.fontFamily
-              font.pixelSize: Style.smallFontSize
+              font.pixelSize: Style.fontSize
             }
             MouseArea {
               id: actionHit
@@ -412,7 +422,7 @@ PanelFrame {
         text: editor.labelFor(editor.draggedId)
         color: Color.foreground
         font.family: Style.fontFamily
-        font.pixelSize: Style.smallFontSize
+        font.pixelSize: Style.fontSize
       }
     }
   }

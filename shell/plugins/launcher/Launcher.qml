@@ -12,8 +12,8 @@ PanelFrame {
   id: root
 
   edge: "top"
-  panelWidth: 520
-  panelHeight: 420
+  panelWidth: Math.min(620, window.screen ? window.screen.width - Style.space(8) : 620)
+  panelHeight: Math.min(600, window.screen ? window.screen.height - Style.barHeight - Style.space(4) : 600)
   takesKeyboard: true
 
   property string query: ""
@@ -135,7 +135,10 @@ PanelFrame {
 
   Column {
     anchors.fill: parent
-    spacing: Style.space(0.8)
+    anchors.margins: Style.space(1.5)
+    spacing: Style.space(1.5)
+
+    PanelHeader { width: parent.width; title: I18n.t("launcher.title"); glyph: "\uf009" }
 
     TextField {
       id: field
@@ -166,7 +169,7 @@ PanelFrame {
     Text {
       width: parent.width
       visible: root.results.length === 0
-      text: root.commandMode() ? "type a command" : "no matching application"
+      text: I18n.t(root.commandMode() ? "launcher.typeCommand" : "launcher.empty")
       color: Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
@@ -178,7 +181,7 @@ PanelFrame {
       width: parent.width
       height: parent.height - y
       clip: true
-      spacing: Style.space(0.3)
+      spacing: Style.space(0.75)
       model: root.results
       currentIndex: root.selected
 
@@ -187,7 +190,7 @@ PanelFrame {
         required property int index
 
         width: list.width
-        height: Style.widgetHeight + Style.space(1)
+        height: Style.space(8)
         radius: Style.radius
         color: index === root.selected ? Color.hover : "transparent"
 
@@ -199,7 +202,7 @@ PanelFrame {
 
           Image {
             anchors.verticalCenter: parent.verticalCenter
-            width: Style.fontSize + 6
+            width: Style.space(4)
             height: width
             visible: modelData.icon !== undefined && modelData.icon !== ""
             source: modelData.icon === undefined || modelData.icon === "" ? "" : Quickshell.iconPath(modelData.icon, "")
@@ -210,7 +213,7 @@ PanelFrame {
 
           Column {
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - Style.space(3)
+            width: parent.width - Style.space(5)
 
             Text {
               width: parent.width
@@ -218,7 +221,7 @@ PanelFrame {
               color: Color.foreground
               elide: Text.ElideRight
               font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize
+              font.pixelSize: Style.fontSize + 2
             }
 
             Text {

@@ -259,7 +259,7 @@ Item {
     focusable: false
     exclusiveZone: 0
     aboveWindows: true
-    implicitWidth: 360
+    implicitWidth: Math.min(420, (screen ? screen.width : 1280) - Style.space(4))
     implicitHeight: column.implicitHeight
 
     anchors.top: true

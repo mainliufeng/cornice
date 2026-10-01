@@ -35,6 +35,7 @@ result=0
 
 cleanup() {
   [[ -n $hover_pointer_pid ]] && kill "$hover_pointer_pid" 2>/dev/null
+  [[ -n ${media_fixture_pid:-} ]] && kill "$media_fixture_pid" 2>/dev/null
   [[ -n $tray_fixture_pid ]] && kill "$tray_fixture_pid" 2>/dev/null
   [[ -n $weather_server_pid ]] && kill "$weather_server_pid" 2>/dev/null
   [[ -n $shell_pid ]] && kill "$shell_pid" 2>/dev/null
@@ -298,6 +299,7 @@ source "$prefix/test/bar-alignment-verify.sh"
 source "$prefix/test/window-switcher-verify.sh"
 source "$prefix/test/bar-editor-verify.sh"
 source "$prefix/test/panel-ui-verify.sh"
+source "$prefix/test/component-ui-verify.sh"
 
 section "compositor state drives the widgets"
 if command -v kitty >/dev/null 2>&1; then

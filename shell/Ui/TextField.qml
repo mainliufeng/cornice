@@ -17,7 +17,7 @@ FocusScope {
   signal canceled()
   signal moved(int delta)
 
-  implicitHeight: Style.widgetHeight + Style.space(1)
+  implicitHeight: Style.space(5.5)
   implicitWidth: 240
 
   function forceFocus() {

@@ -7,11 +7,14 @@ Rectangle {
   property string label: ""
   property string glyph: ""
   property bool filled: false
+  property bool selected: false
+  property bool destructive: false
   signal clicked()
   implicitWidth: content.implicitWidth + Style.space(3)
   implicitHeight: Style.space(5.5)
   radius: Style.radius
-  color: hit.containsMouse ? Color.hover : filled ? Color.surface : "transparent"
+  color: root.destructive ? Color.urgent : root.selected ? Color.workspaceActive : hit.containsMouse ? Color.hover : filled ? Color.surface : "transparent"
+  opacity: enabled ? 1 : 0.45
   border.width: activeFocus ? 1 : 0
   border.color: Color.accent
   activeFocusOnTab: true
@@ -24,7 +27,7 @@ Rectangle {
     Text {
       visible: root.glyph !== ""
       text: root.glyph
-      color: Color.foreground
+      color: root.selected ? Color.workspaceActiveText : Color.foreground
       font.family: Style.iconFamily
       font.pixelSize: Style.fontSize
       anchors.verticalCenter: parent.verticalCenter
@@ -32,7 +35,7 @@ Rectangle {
     Text {
       visible: root.label !== ""
       text: root.label
-      color: Color.foreground
+      color: root.selected ? Color.workspaceActiveText : Color.foreground
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
       anchors.verticalCenter: parent.verticalCenter

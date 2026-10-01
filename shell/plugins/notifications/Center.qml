@@ -8,8 +8,8 @@ PanelFrame {
   id: root
 
   edge: "top"
-  panelWidth: 420
-  panelHeight: 470
+  panelWidth: Math.min(560, window.screen ? window.screen.width - Style.space(8) : 560)
+  panelHeight: Math.min(680, window.screen ? window.screen.height - Style.barHeight - Style.space(4) : 680)
   takesKeyboard: true
 
   // `services` is replaced wholesale when a service registers, so this binding
@@ -24,73 +24,14 @@ PanelFrame {
 
   Column {
     anchors.fill: parent
-    spacing: Style.space(1)
+    anchors.margins: Style.space(1.5)
+    spacing: Style.space(2)
 
+    PanelHeader { width: parent.width; title: I18n.t("notifications.title"); glyph: "\uf0f3" }
     Row {
-      width: parent.width
-      height: Style.widgetHeight
-      spacing: Style.space(0.8)
-
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        width: parent.width - controls.width - Style.space(1)
-        text: I18n.t("notifications.title") + (root.unread > 0 ? "  (" + root.unread + " new)" : "")
-        color: Color.foreground
-        elide: Text.ElideRight
-        font.family: Style.fontFamily
-        font.pixelSize: Style.fontSize
-        font.bold: true
-      }
-
-      Row {
-        id: controls
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: Style.space(0.6)
-
-        Rectangle {
-          width: dndLabel.implicitWidth + Style.space(1.6)
-          height: Style.widgetHeight
-          radius: Style.radius
-          color: root.dnd ? Color.workspaceActive : Color.hover
-
-          Text {
-            id: dndLabel
-            anchors.centerIn: parent
-            text: root.dnd ? "DND on" : "DND"
-            color: root.dnd ? Color.workspaceActiveText : Color.foreground
-            font.family: Style.fontFamily
-            font.pixelSize: Style.smallFontSize
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: if (root.service) root.service.setDnd(!root.dnd)
-          }
-        }
-
-        Rectangle {
-          width: clearLabel.implicitWidth + Style.space(1.6)
-          height: Style.widgetHeight
-          radius: Style.radius
-          color: Color.hover
-
-          Text {
-            id: clearLabel
-            anchors.centerIn: parent
-            text: I18n.t("common.clear")
-            color: Color.foreground
-            font.family: Style.fontFamily
-            font.pixelSize: Style.smallFontSize
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: if (root.service) root.service.clearHistory()
-          }
-        }
-      }
+      spacing: Style.space(1)
+      PanelButton { id: dndButton; label: I18n.t(root.dnd ? "notifications.dndOn" : "notifications.dnd"); glyph: "\uf1f6"; filled: true; selected: root.dnd; onClicked: if (root.service) root.service.setDnd(!root.dnd) }
+      PanelButton { id: clearButton; label: I18n.t("common.clear"); filled: true; enabled: root.entries.length > 0; onClicked: if (root.service) root.service.clearHistory() }
     }
 
     Rectangle {
@@ -114,24 +55,24 @@ PanelFrame {
       width: parent.width
       height: parent.height - y
       clip: true
-      spacing: Style.space(0.6)
+      spacing: Style.space(1.5)
       model: root.entries
 
       delegate: Rectangle {
         required property var modelData
 
         width: list.width
-        height: card.implicitHeight + Style.space(1.6)
+        height: card.implicitHeight + Style.space(3)
         radius: Style.radius
-        color: Color.hover
+        color: Color.surface
 
         NotificationCard {
           id: card
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          anchors.leftMargin: Style.space(0.8)
-          anchors.rightMargin: Style.space(0.8)
+          anchors.leftMargin: Style.space(1.5)
+          anchors.rightMargin: Style.space(1.5)
           entry: modelData
           // The live object is what carries actions and inline-reply; the history
           // entry only holds the text we render.
@@ -147,6 +88,15 @@ PanelFrame {
           }
         }
       }
+    }
+  }
+  ShellIpc {
+    target: "notificationPanel"
+    function state(): string {
+      const dnd = dndButton.mapToItem(root.window.contentItem, dndButton.width / 2, dndButton.height / 2)
+      const clear = clearButton.mapToItem(root.window.contentItem, clearButton.width / 2, clearButton.height / 2)
+      return JSON.stringify({ open: root.isOpen, dnd: root.dnd, count: root.entries.length,
+        actions: [{ name: "dnd", x: dnd.x, y: dnd.y }, { name: "clear", x: clear.x, y: clear.y }] })
     }
   }
 }

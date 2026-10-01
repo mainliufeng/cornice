@@ -28,17 +28,16 @@ Item {
   readonly property int deviceType: activeDevice ? activeDevice.type : DeviceType.None
   readonly property bool wired: deviceType === DeviceType.Wired
 
-  // Glyphs verified against the bar font: the MDI wifi-strength set renders,
-  // while F1EB is the full-strength arc. (FAA8/FAA9 render as empty boxes.)
+  // Nerd Font MDI strength levels 1–4; legacy FAA8/FAA9 are not Wi-Fi glyphs.
   readonly property string icon: {
     if (!activeDevice) return "\u{F05E1}"
     if (wired) return "\u{F0200}"
     const signal = strongestSignal()
     if (!online) return "\u{F05E1}"
-    if (signal >= 75) return "\u{F0925}"
-    if (signal >= 50) return "\u{F0924}"
-    if (signal >= 25) return "\u{F0923}"
-    return "\u{F0922}"
+    if (signal >= 75) return "\u{F0928}"
+    if (signal >= 50) return "\u{F0925}"
+    if (signal >= 25) return "\u{F0922}"
+    return "\u{F091F}"
   }
 
   function strongestSignal() {

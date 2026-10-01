@@ -10,8 +10,8 @@ PanelFrame {
   id: root
 
   edge: "top"
-  panelWidth: 400
-  panelHeight: 560
+  panelWidth: Math.min(520, window.screen ? window.screen.width - Style.space(8) : 520)
+  panelHeight: Math.min(640, window.screen ? window.screen.height - Style.barHeight - Style.space(4) : 640)
   takesKeyboard: false
 
   property string selectedSsid: ""
@@ -20,231 +20,223 @@ PanelFrame {
 
   readonly property var devices: Networking.devices ? Networking.devices.values : []
   readonly property var device: {
-    const list = devices || []
-    for (const candidate of list) if (candidate.connected) return candidate
-    return list.length > 0 ? list[0] : null
+    const list = devices || [];
+    for (const candidate of list)
+      if (candidate.connected)
+        return candidate;
+    return list.length > 0 ? list[0] : null;
   }
 
-  readonly property bool wifi: device !== null && String(device.type).toLowerCase().indexOf("wired") === -1 &&
-    String(device.type).toLowerCase().indexOf("wifi") !== -1
+  readonly property bool wifi: device !== null && device.type === DeviceType.Wifi
   readonly property var networks: {
-    if (!device || !device.networks) return []
-    const list = (device.networks.values || []).slice()
-    list.sort((a, b) => b.signalStrength - a.signalStrength)
-    return list
+    if (!device || !device.networks)
+      return [];
+    const list = (device.networks.values || []).slice();
+    list.sort((a, b) => b.signalStrength - a.signalStrength);
+    return list;
   }
 
   function signalIcon(strength) {
-    if (strength >= 75) return "\uf1eb"
-    if (strength >= 50) return "\ufaa8"
-    return "\ufaa9"
+    if (strength >= 75)
+      return "\u{F0928}";
+    if (strength >= 50)
+      return "\u{F0925}";
+    if (strength >= 25)
+      return "\u{F0922}";
+    return "\u{F091F}";
   }
 
   function pickNetwork(network) {
-    message = ""
-    if (network.known || network.security === "None" || network.security === "" || network.security === undefined) {
-      selectedSsid = ""
-      connect(network, "")
-      return
+    message = "";
+    if (network.known || network.security === WifiSecurityType.Open || network.security === WifiSecurityType.Owe || network.security === undefined) {
+      selectedSsid = "";
+      connect(network, "");
+      return;
     }
-    selectedSsid = network.name
+    selectedSsid = network.name;
   }
 
   function connect(network, psk) {
-    connecting = true
-    message = "connecting to " + network.name + "…"
+    connecting = true;
+    message = I18n.t("network.connecting") + " " + network.name + "…";
     try {
-      network.connectWithPsk(psk === undefined ? "" : psk)
+      if (network.known && !psk)
+        network.connect();
+      else
+        network.connectWithPsk(psk === undefined ? "" : psk);
     } catch (e) {
-      message = "connect failed: " + e
+      message = I18n.t("network.failed") + ": " + e;
     }
-    connecting = false
-    selectedSsid = ""
+    connecting = false;
+    selectedSsid = "";
   }
 
-  Column {
+  Flickable {
+    id: viewport
     anchors.fill: parent
-    spacing: Style.space(0.8)
-
-    Text {
-      width: parent.width
-      text: I18n.t("common.network")
-      color: Color.foreground
-      font.family: Style.fontFamily
-      font.pixelSize: Style.fontSize
-      font.bold: true
-    }
-
-    Text {
-      width: parent.width
-      text: {
-        if (!root.device) return "no network device"
-        const parts = [root.device.name || ""]
-        if (root.device.address) parts.push("ip " + root.device.address)
-        parts.push(String(Networking.connectivity).toLowerCase())
-        return parts.join("  ·  ")
+    anchors.margins: Style.space(1.5)
+    contentHeight: panelBody.implicitHeight
+    clip: true
+    boundsBehavior: Flickable.StopAtBounds
+    Column {
+      id: panelBody
+      width: viewport.width
+      spacing: Style.space(2)
+      PanelHeader {
+        width: parent.width
+        title: I18n.t("common.network")
+        subtitle: root.device ? root.device.name : I18n.t("network.noDevice")
+        glyph: "\uf1eb"
       }
-      color: Color.muted
-      elide: Text.ElideRight
-      font.family: Style.fontFamily
-      font.pixelSize: Style.smallFontSize
-    }
-
-    Row {
-      spacing: Style.space(0.6)
-      visible: root.wifi
-
       Rectangle {
-        width: wifiLabel.implicitWidth + Style.space(1.6)
-        height: Style.widgetHeight
+        width: parent.width
+        height: Style.space(10)
         radius: Style.radius
-        color: Networking.wifiEnabled ? Color.workspaceActive : Color.hover
-
-        Text {
-          id: wifiLabel
-          anchors.centerIn: parent
-          text: Networking.wifiEnabled ? "Wi-Fi on" : "Wi-Fi off"
-          color: Networking.wifiEnabled ? Color.workspaceActiveText : Color.foreground
-          font.family: Style.fontFamily
-          font.pixelSize: Style.smallFontSize
-        }
-
-        MouseArea {
+        color: Color.surface
+        Column {
           anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
+          anchors.margins: Style.space(2)
+          spacing: Style.space(0.75)
+          Text {
+            text: I18n.t(root.device && root.device.connected ? "common.connected" : "network.notConnected")
+            color: root.device && root.device.connected ? Color.accent : Color.foreground
+            font.family: Style.fontFamily
+            font.pixelSize: Style.fontSize + 2
+            font.bold: true
+          }
+          Text {
+            width: parent.width
+            text: root.device && root.device.address ? I18n.t("network.deviceAddress") + " " + root.device.address : I18n.t("network.noAddress")
+            color: Color.muted
+            elide: Text.ElideRight
+            font.family: Style.fontFamily
+            font.pixelSize: Style.fontSize
+          }
+        }
+      }
+      Row {
+        spacing: Style.space(1)
+        visible: root.wifi
+        PanelButton {
+          label: I18n.t(Networking.wifiEnabled ? "network.wifiOn" : "network.wifiOff")
+          filled: true
+          selected: Networking.wifiEnabled
           onClicked: Networking.wifiEnabled = !Networking.wifiEnabled
         }
-      }
-
-      Rectangle {
-        width: rescanLabel.implicitWidth + Style.space(1.6)
-        height: Style.widgetHeight
-        radius: Style.radius
-        color: Color.hover
-
-        Text {
-          id: rescanLabel
-          anchors.centerIn: parent
-          text: root.connecting ? "…" : "Rescan"
-          color: Color.foreground
-          font.family: Style.fontFamily
-          font.pixelSize: Style.smallFontSize
-        }
-
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
+        PanelButton {
+          label: I18n.t("network.rescan")
+          glyph: "\uf021"
+          filled: true
+          enabled: !root.connecting
           onClicked: Util.exec("nmcli device wifi rescan")
         }
       }
-    }
-
-    Text {
-      width: parent.width
-      visible: root.message !== ""
-      text: root.message
-      color: Color.accent
-      font.family: Style.fontFamily
-      font.pixelSize: Style.smallFontSize
-    }
-
-    Rectangle {
-      width: parent.width
-      height: 1
-      color: Color.surfaceBorder
-    }
-
-    ListView {
-      id: list
-
-      width: parent.width
-      height: parent.height - y
-      clip: true
-      spacing: Style.space(0.4)
-      model: root.networks
-
-      delegate: Column {
-        required property var modelData
-        required property int index
-
-        width: list.width
-        spacing: Style.space(0.4)
-
-        Rectangle {
-          width: parent.width
-          height: Style.widgetHeight + Style.space(0.6)
-          radius: Style.radius
-          color: modelData.connected ? Color.hover : "transparent"
-
-          Row {
-            anchors.fill: parent
-            anchors.leftMargin: Style.space(0.8)
-            anchors.rightMargin: Style.space(0.8)
-            spacing: Style.space(0.8)
-
+      Text {
+        width: parent.width
+        visible: root.message !== ""
+        text: root.message
+        color: Color.accent
+        wrapMode: Text.Wrap
+        font.family: Style.fontFamily
+        font.pixelSize: Style.fontSize
+      }
+      Text {
+        text: I18n.t("network.available")
+        color: Color.muted
+        font.family: Style.fontFamily
+        font.pixelSize: Style.fontSize
+      }
+      Text {
+        width: parent.width
+        visible: root.networks.length === 0
+        text: I18n.t(root.wifi ? "network.empty" : "network.noWifi")
+        color: Color.muted
+        wrapMode: Text.Wrap
+        font.family: Style.fontFamily
+        font.pixelSize: Style.fontSize
+      }
+      ListView {
+        id: list
+        width: parent.width
+        height: Math.max(Style.space(12), viewport.height - y)
+        clip: true
+        spacing: Style.space(1)
+        model: root.networks
+        delegate: Column {
+          required property var modelData
+          required property int index
+          width: list.width
+          spacing: Style.space(0.75)
+          Rectangle {
+            width: parent.width
+            height: Style.space(8)
+            radius: Style.radius
+            color: hover.containsMouse ? Color.hover : Color.surface
             Text {
+              id: signal
+              x: Style.space(1.5)
               anchors.verticalCenter: parent.verticalCenter
               text: root.signalIcon(modelData.signalStrength)
-              color: modelData.connected ? Color.accent : Color.foreground
+              color: modelData.connected ? Color.accent : Color.muted
+              font.family: Style.iconFamily
+              font.pixelSize: Style.fontSize + 4
+            }
+            Column {
+              x: signal.x + signal.width + Style.space(1.5)
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.width - x - Style.space(5)
+              spacing: Style.space(0.5)
+              Text {
+                width: parent.width
+                text: modelData.name || I18n.t("network.hidden")
+                color: Color.foreground
+                elide: Text.ElideRight
+                font.family: Style.fontFamily
+                font.pixelSize: Style.fontSize + 2
+              }
+              Text {
+                width: parent.width
+                text: modelData.connected ? I18n.t("common.connected") : modelData.known ? I18n.t("network.saved") : I18n.t("network.new")
+                color: Color.muted
+                font.family: Style.fontFamily
+                font.pixelSize: Style.smallFontSize
+              }
+            }
+            Text {
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(1.5)
+              anchors.verticalCenter: parent.verticalCenter
+              text: modelData.connected ? "\uf00c" : modelData.security !== undefined && modelData.security !== WifiSecurityType.Open ? "\uf023" : ""
+              color: Color.accent
               font.family: Style.iconFamily
               font.pixelSize: Style.fontSize
             }
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              width: parent.width - Style.space(6)
-              text: (modelData.name || "hidden") +
-                (modelData.security && modelData.security !== "None" ? "  \uf023" : "") +
-                (modelData.known ? "  ·  saved" : "")
-              color: Color.foreground
-              elide: Text.ElideRight
-              font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize
-            }
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.pickNetwork(modelData)
-          }
-        }
-
-        Row {
-          width: parent.width
-          spacing: Style.space(0.6)
-          visible: root.selectedSsid === modelData.name
-          // The field appears below the row, which can be outside the viewport:
-          // scroll it in, otherwise expanding looks like nothing happened.
-          onVisibleChanged: if (visible) list.positionViewAtIndex(index, ListView.Contain)
-
-          TextField {
-            id: pskField
-            width: parent.width - connectButton.width - Style.space(0.6)
-            placeholder: I18n.t("lock.passwordFor") + modelData.name
-            onAccepted: root.connect(modelData, pskField.text)
-            onCanceled: root.selectedSsid = ""
-          }
-
-          Rectangle {
-            id: connectButton
-            width: connectText.implicitWidth + Style.space(1.6)
-            height: Style.widgetHeight
-            radius: Style.radius
-            color: Color.workspaceActive
-
-            Text {
-              id: connectText
-              anchors.centerIn: parent
-              text: I18n.t("common.connect")
-              color: Color.workspaceActiveText
-              font.family: Style.fontFamily
-              font.pixelSize: Style.smallFontSize
-            }
-
             MouseArea {
+              id: hover
               anchors.fill: parent
+              hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
+              onClicked: root.pickNetwork(modelData)
+            }
+          }
+          Row {
+            width: parent.width
+            spacing: Style.space(1)
+            visible: root.selectedSsid === modelData.name
+            onVisibleChanged: if (visible)
+              list.positionViewAtIndex(index, ListView.Contain)
+            TextField {
+              id: pskField
+              width: parent.width - connectButton.width - parent.spacing
+              echoMode: TextInput.Password
+              placeholder: I18n.t("lock.passwordFor") + modelData.name
+              onAccepted: root.connect(modelData, pskField.text)
+              onCanceled: root.selectedSsid = ""
+            }
+            PanelButton {
+              id: connectButton
+              label: I18n.t("common.connect")
+              selected: true
               onClicked: root.connect(modelData, pskField.text)
             }
           }

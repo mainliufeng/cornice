@@ -13,8 +13,8 @@ PanelFrame {
   id: root
 
   edge: "center"
-  panelWidth: 780
-  panelHeight: 560
+  panelWidth: Math.min(860, window.screen ? window.screen.width - Style.space(8) : 860)
+  panelHeight: Math.min(620, window.screen ? window.screen.height - Style.barHeight - Style.space(4) : 620)
   takesKeyboard: true
 
   property var entries: []
@@ -139,7 +139,10 @@ PanelFrame {
 
   Column {
     anchors.fill: parent
-    spacing: Style.space(0.8)
+    anchors.margins: Style.space(1.5)
+    spacing: Style.space(1.5)
+
+    PanelHeader { width: parent.width; title: I18n.t("clipboard.title"); glyph: "\uf0ea" }
 
     Row {
       width: parent.width
@@ -147,7 +150,7 @@ PanelFrame {
 
       TextField {
         id: field
-        width: parent.width - count.width
+        width: parent.width - count.width - parent.spacing
         placeholder: I18n.t("clipboard.placeholder")
         onTextChanged: root.query = text
         onAccepted: root.paste(root.current)
@@ -203,7 +206,7 @@ PanelFrame {
           anchors.centerIn: parent
           width: parent.width - Style.space(2)
           visible: root.current === null || !root.current.image
-          text: root.current === null ? "nothing selected" : root.current.preview
+          text: root.current === null ? I18n.t("clipboard.empty") : root.current.preview
           color: Color.foreground
           wrapMode: Text.Wrap
           maximumLineCount: 12
@@ -219,7 +222,7 @@ PanelFrame {
         width: parent.width - parent.children[0].width - Style.space(1)
         height: parent.height
         clip: true
-        spacing: Style.space(0.25)
+        spacing: Style.space(0.75)
         model: root.filtered
         currentIndex: root.selected
 
@@ -228,7 +231,7 @@ PanelFrame {
           required property int index
 
           width: list.width
-          height: Style.widgetHeight + Style.space(0.5)
+          height: Style.space(6.5)
           radius: Style.radius
           color: index === root.selected ? Color.hover : "transparent"
 

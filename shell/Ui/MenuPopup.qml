@@ -21,7 +21,7 @@ Item {
   property string ownerTitle: ""
   property real anchorX: 0
   property var anchorWindow: null
-  property int preferredWidth: 260
+  property int preferredWidth: 320
 
   readonly property bool opened: handle !== null
 
@@ -145,7 +145,7 @@ Item {
     // covered" looked like.
     readonly property real availableHeight: (screen ? screen.height : 1080) - margins.top - Style.space(1)
     implicitHeight: Math.min(availableHeight,
-      Math.max(Style.widgetHeight, column.implicitHeight + Style.space(1.6)))
+      Math.max(Style.space(5.5), column.implicitHeight + Style.space(1.6)))
 
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "cornice-menu"
@@ -172,7 +172,7 @@ Item {
         Item {
           visible: root.submenuOpeners.length > 0
           width: column.width
-          height: visible ? Style.widgetHeight : 0
+          height: visible ? Style.space(5.5) : 0
 
           Rectangle {
             anchors.fill: parent
@@ -225,7 +225,7 @@ Item {
             required property int index
 
             width: column.width
-            height: modelData.isSeparator ? Math.round(Style.gap * 0.6) : Style.widgetHeight
+            height: modelData.isSeparator ? Math.round(Style.gap * 0.6) : Style.space(5.5)
 
             Rectangle {
               anchors.verticalCenter: parent.verticalCenter

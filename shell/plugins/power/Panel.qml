@@ -10,8 +10,8 @@ PanelFrame {
   id: root
 
   edge: "top"
-  panelWidth: 380
-  panelHeight: 380
+  panelWidth: Math.min(480, window.screen ? window.screen.width - Style.space(8) : 480)
+  panelHeight: Math.min(560, window.screen ? window.screen.height - Style.barHeight - Style.space(4) : 560)
   takesKeyboard: false
 
   readonly property var device: UPower.displayDevice
@@ -21,16 +21,17 @@ PanelFrame {
   property var profiles: []
 
   function refreshProfiles() {
-    profileList.running = true
+    profileList.running = true;
   }
 
   onOpened: refreshProfiles()
 
   function timeLabel(seconds) {
-    if (!seconds || seconds <= 0) return ""
-    const minutes = Math.floor(seconds / 60)
-    const hours = Math.floor(minutes / 60)
-    return hours > 0 ? hours + "h " + Util.pad2(minutes % 60) + "m" : minutes + "m"
+    if (!seconds || seconds <= 0)
+      return "";
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    return hours > 0 ? hours + "h " + Util.pad2(minutes % 60) + "m" : minutes + "m";
   }
 
   readonly property Process profileList: Process {
@@ -38,8 +39,8 @@ PanelFrame {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        root.profiles = String(text).trim().split("\n").filter(line => line !== "")
-        profileGet.running = true
+        root.profiles = String(text).trim().split("\n").filter(line => line !== "");
+        profileGet.running = true;
       }
     }
   }
@@ -52,148 +53,153 @@ PanelFrame {
     }
   }
 
-  Column {
+  Flickable {
+    id: viewport
     anchors.fill: parent
-    spacing: Style.space(1)
-
-    Text {
-      width: parent.width
-      text: I18n.t("common.power")
-      color: Color.foreground
-      font.family: Style.fontFamily
-      font.pixelSize: Style.fontSize
-      font.bold: true
-    }
-
-    Text {
-      width: parent.width
-      visible: root.percent < 0
-      text: I18n.t("panel.noBattery")
-      color: Color.muted
-      font.family: Style.fontFamily
-      font.pixelSize: Style.smallFontSize
-    }
-
+    anchors.margins: Style.space(1.5)
+    contentHeight: panelBody.implicitHeight
+    clip: true
+    boundsBehavior: Flickable.StopAtBounds
     Column {
-      width: parent.width
-      spacing: Style.space(0.3)
-      visible: root.percent >= 0
-
-      Text {
+      id: panelBody
+      width: viewport.width
+      spacing: Style.space(2)
+      PanelHeader {
         width: parent.width
-        text: root.percent + "%  ·  " + (root.device ? String(root.device.state).toLowerCase() : "")
-        color: Color.foreground
-        font.family: Style.fontFamily
-        font.pixelSize: Style.fontSize
+        title: I18n.t("common.power")
+        subtitle: I18n.t("power.subtitle")
+        glyph: "\uf240"
       }
-
-      Text {
-        width: parent.width
-        text: {
-          if (!root.device) return ""
-          const remaining = root.device.state === UPowerDeviceState.Charging
-            ? root.timeLabel(root.device.timeToFull)
-            : root.timeLabel(root.device.timeToEmpty)
-          const parts = []
-          if (remaining !== "") parts.push((root.device.state === UPowerDeviceState.Charging ? "until full " : "remaining ") + remaining)
-          if (root.device.changeRate) parts.push(Math.round(root.device.changeRate * 10) / 10 + " W")
-          return parts.join("  ·  ")
-        }
-        color: Color.muted
-        font.family: Style.fontFamily
-        font.pixelSize: Style.smallFontSize
-      }
-
       Rectangle {
         width: parent.width
-        height: Style.space(0.8)
+        height: root.percent >= 0 ? Style.space(17) : Style.space(9)
         radius: Style.radius
-        color: Color.hover
-
-        Rectangle {
-          anchors.left: parent.left
-          anchors.top: parent.top
-          anchors.bottom: parent.bottom
-          width: parent.width * Util.clamp(root.percent / 100, 0, 1)
-          radius: Style.radius
-          color: root.percent <= 15 ? Color.urgent : Color.accent
-        }
-      }
-    }
-
-    Row {
-      spacing: Style.space(0.5)
-      visible: root.profiles.length > 0
-
-      Repeater {
-        model: root.profiles
-
-        delegate: Rectangle {
-          required property var modelData
-
-          width: profileText.implicitWidth + Style.space(1.6)
-          height: Style.widgetHeight
-          radius: Style.radius
-          color: modelData === root.profile ? Color.workspaceActive : Color.hover
-
+        color: Color.surface
+        Column {
+          anchors.fill: parent
+          anchors.margins: Style.space(2)
+          spacing: Style.space(0.75)
+          Row {
+            width: parent.width
+            spacing: Style.space(1.5)
+            Text {
+              text: root.percent >= 0 ? root.percent + "%" : "—"
+              color: Color.foreground
+              font.family: Style.fontFamily
+              font.pixelSize: Style.fontSize * 2.5
+            }
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.percent < 0 ? I18n.t("panel.noBattery") : I18n.t(root.device.state === UPowerDeviceState.Charging ? "power.charging" : root.device.state === UPowerDeviceState.FullyCharged ? "power.full" : "power.battery")
+              color: Color.muted
+              font.family: Style.fontFamily
+              font.pixelSize: Style.fontSize
+            }
+          }
           Text {
-            id: profileText
-            anchors.centerIn: parent
-            text: modelData
-            color: modelData === root.profile ? Color.workspaceActiveText : Color.foreground
+            width: parent.width
+            visible: root.percent >= 0
+            text: {
+              if (!root.device)
+                return "";
+              const charging = root.device.state === UPowerDeviceState.Charging;
+              const remaining = root.timeLabel(charging ? root.device.timeToFull : root.device.timeToEmpty);
+              const parts = [];
+              if (remaining !== "")
+                parts.push(I18n.t(charging ? "power.untilFull" : "power.remaining") + " " + remaining);
+              if (root.device.changeRate)
+                parts.push(Math.round(root.device.changeRate * 10) / 10 + " W");
+              return parts.join(" · ");
+            }
+            color: Color.muted
+            elide: Text.ElideRight
             font.family: Style.fontFamily
             font.pixelSize: Style.smallFontSize
           }
-
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-              Util.exec("powerprofilesctl set " + modelData)
-              root.profile = modelData
+          Rectangle {
+            visible: root.percent >= 0
+            width: parent.width
+            height: Style.space(1)
+            radius: height / 2
+            color: Color.hover
+            Rectangle {
+              width: parent.width * Util.clamp(root.percent / 100, 0, 1)
+              height: parent.height
+              radius: height / 2
+              color: root.percent <= 15 ? Color.urgent : Color.accent
             }
           }
         }
       }
-    }
-
-    Rectangle {
-      width: parent.width
-      height: 1
-      color: Color.surfaceBorder
-    }
-
-    Row {
-      spacing: Style.space(0.5)
-
-      Repeater {
-        model: [
-          { label: "Lock", command: "loginctl lock-session" },
-          { label: "Suspend", command: "systemctl suspend" },
-          { label: "Reboot", command: "systemctl reboot" },
-          { label: "Power off", command: "systemctl poweroff" }
-        ]
-
-        delegate: Rectangle {
-          required property var modelData
-
-          width: actionText.implicitWidth + Style.space(1.6)
-          height: Style.widgetHeight
-          radius: Style.radius
-          color: modelData.label === "Power off" ? Color.urgent : Color.hover
-
-          Text {
-            id: actionText
-            anchors.centerIn: parent
-            text: modelData.label
-            color: Color.foreground
-            font.family: Style.fontFamily
-            font.pixelSize: Style.smallFontSize
+      Column {
+        width: parent.width
+        spacing: Style.space(1)
+        visible: root.profiles.length > 0
+        Text {
+          text: I18n.t("power.profile")
+          color: Color.muted
+          font.family: Style.fontFamily
+          font.pixelSize: Style.fontSize
+        }
+        Flow {
+          width: parent.width
+          spacing: Style.space(1)
+          Repeater {
+            model: root.profiles
+            delegate: PanelButton {
+              required property var modelData
+              label: I18n.t("power.profile." + modelData)
+              filled: true
+              selected: modelData === root.profile
+              onClicked: {
+                Util.exec("powerprofilesctl set " + modelData);
+                root.profile = modelData;
+              }
+            }
           }
-
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
+        }
+      }
+      Text {
+        text: I18n.t("power.session")
+        color: Color.muted
+        font.family: Style.fontFamily
+        font.pixelSize: Style.fontSize
+      }
+      Grid {
+        width: parent.width
+        columns: 2
+        spacing: Style.space(1)
+        Repeater {
+          model: [
+            {
+              key: "power.lock",
+              glyph: "\uf023",
+              command: "loginctl lock-session"
+            },
+            {
+              key: "power.suspend",
+              glyph: "\uf186",
+              command: "systemctl suspend"
+            },
+            {
+              key: "power.reboot",
+              glyph: "\uf021",
+              command: "systemctl reboot"
+            },
+            {
+              key: "power.off",
+              glyph: "\uf011",
+              command: "systemctl poweroff"
+            }
+          ]
+          delegate: PanelButton {
+            required property var modelData
+            width: (parent.width - parent.spacing) / 2
+            implicitHeight: Style.space(6.5)
+            label: I18n.t(modelData.key)
+            glyph: modelData.glyph
+            filled: true
+            destructive: modelData.key === "power.off"
             onClicked: Util.exec(modelData.command)
           }
         }

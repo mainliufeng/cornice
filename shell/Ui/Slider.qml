@@ -11,7 +11,7 @@ Item {
 
   signal moved(real value)
 
-  implicitHeight: Style.widgetHeight
+  implicitHeight: Style.space(5.5)
   implicitWidth: 160
 
   function valueAt(x) {
@@ -42,7 +42,7 @@ Item {
   Rectangle {
     anchors.verticalCenter: parent.verticalCenter
     x: Util.clamp(track.width * Util.clamp(root.value, 0, 1) - width / 2, 0, track.width - width)
-    width: Math.max(8, Style.space(1))
+    width: Style.space(2)
     height: width
     radius: width / 2
     color: Color.foreground

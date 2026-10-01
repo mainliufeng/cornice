@@ -14,8 +14,8 @@ PanelFrame {
   id: root
 
   edge: "bottom"
-  panelWidth: 340
-  panelHeight: 64
+  panelWidth: 400
+  panelHeight: 100
   takesKeyboard: false
   dismissOnClickAway: false
 
@@ -90,7 +90,7 @@ PanelFrame {
     const volume = (node && node.audio) ? node.audio.volume : 0
     const isMuted = (node && node.audio) ? node.audio.muted : false
     const percent = Math.round(Util.clamp(volume, 0, 1.5) * 100)
-    showValues("microphone", Util.clamp(volume, 0, 1), isMuted ? "muted" : percent + "%",
+    showValues("microphone", Util.clamp(volume, 0, 1), isMuted ? I18n.t("common.muted") : percent + "%",
       isMuted ? "\uf036d" : "\uf036c", isMuted)
   }
 
@@ -104,7 +104,7 @@ PanelFrame {
       onStreamFinished: {
         const parts = String(text).trim().split(" ")
         if (parts.length !== 2) {
-          root.showValues("brightness", root.value, "no backlight", "\uf185", false)
+          root.showValues("brightness", root.value, I18n.t("osd.noBacklight"), "\uf185", false)
           return
         }
         const current = Number(parts[0])
@@ -125,31 +125,32 @@ PanelFrame {
 
     Row {
       width: parent.width
-      height: Style.widgetHeight
+      height: Style.space(6)
       spacing: Style.space(0.8)
 
       Text {
         anchors.verticalCenter: parent.verticalCenter
+        id: osdIcon
         text: root.icon
         color: root.muted ? Color.muted : Color.foreground
         font.family: Style.iconFamily
-        font.pixelSize: Style.fontSize + 4
+        font.pixelSize: Style.fontSize + 12
       }
 
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        width: parent.width - (Style.fontSize + 4) - Style.space(0.8) - level.width
+        width: parent.width - osdIcon.width - Style.space(1.6) - level.width
         text: root.label
         color: Color.foreground
         horizontalAlignment: Text.AlignRight
         font.family: Style.fontFamily
-        font.pixelSize: Style.fontSize
+        font.pixelSize: Style.fontSize + 8
       }
 
       Text {
         id: level
         anchors.verticalCenter: parent.verticalCenter
-        text: root.kind
+        text: I18n.t("osd." + root.kind)
         color: Color.muted
         font.family: Style.fontFamily
         font.pixelSize: Style.smallFontSize
