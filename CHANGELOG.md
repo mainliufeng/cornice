@@ -4,6 +4,9 @@
 
 ## 0.2.2
 
+- Compare world clocks against system times bracketing the IPC query to avoid
+  false release-test failures at minute boundaries.
+
 - Keep bar icons and widths fixed on hover; show values in delayed, passive
   status tooltips without taking application focus.
 - Unify typography, spacing and controls across device and utility panels.

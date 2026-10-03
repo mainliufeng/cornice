@@ -531,11 +531,13 @@ fi
 section "world clocks"
 # The IPC time must equal what the system tzdata says for that zone.
 if [[ -n $(cornice ipc clock status 2>/dev/null) ]]; then
-  expected=$(TZ=Asia/Tokyo date +%H:%M)
   cornice ipc clock time Asia/Tokyo "HH:mm" >/dev/null 2>&1   # first call resolves the zone
   sleep 1
+  expected=$(TZ=Asia/Tokyo date +%H:%M)
   got=$(cornice ipc clock time Asia/Tokyo "HH:mm" 2>/dev/null || echo "")
-  if [[ $got == "$expected" ]]; then
+  expected_after=$(TZ=Asia/Tokyo date +%H:%M)
+  # A minute rollover during IPC is valid; bracket the query with tzdata.
+  if [[ $got == "$expected" || $got == "$expected_after" ]]; then
     pass "Asia/Tokyo resolves through tzdata ($got)"
   else
     fail "Asia/Tokyo resolved to '$got', system says '$expected'"
@@ -543,8 +545,10 @@ if [[ -n $(cornice ipc clock status 2>/dev/null) ]]; then
   # An unconfigured zone is resolved on demand, so a second query answers.
   cornice ipc clock time Europe/Paris "HH:mm" >/dev/null 2>&1
   sleep 1
+  paris_before=$(TZ=Europe/Paris date +%H:%M)
   paris=$(cornice ipc clock time Europe/Paris "HH:mm" 2>/dev/null || echo "")
-  if [[ -n $paris && $paris == "$(TZ=Europe/Paris date +%H:%M)" ]]; then
+  paris_after=$(TZ=Europe/Paris date +%H:%M)
+  if [[ -n $paris && ( $paris == "$paris_before" || $paris == "$paris_after" ) ]]; then
     pass "an unconfigured zone resolves on demand (Europe/Paris $paris)"
   else
     fail "Europe/Paris did not resolve (got '$paris')"
