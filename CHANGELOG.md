@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.2
+
+- Keep bar icons and widths fixed on hover; show values in delayed, passive
+  status tooltips without taking application focus.
+- Unify typography, spacing and controls across device and utility panels.
+
 - Check dependencies and finish installing helpers before enabling the user
   service. Use the selected prefix, escape service command paths, back up an
   existing unit and return failure if service activation fails.
