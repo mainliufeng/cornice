@@ -61,6 +61,20 @@ account required pam_permit.so
 session required pam_permit.so
 EOF
 
+# A hyprctl wrapper that makes `dispatch dpms off` slow, so the race test can
+# deliver input while the off command is still in flight. Only the race suite
+# puts it on PATH; every other call passes straight through.
+mkdir -p "$runtime/bin"
+cat >"$runtime/bin/hyprctl" <<EOF
+#!/usr/bin/env bash
+if [[ \${1:-} == dispatch && \${2:-} == dpms && \${3:-} == off ]]; then
+  : >"$runtime/dpms-off-inflight"
+  sleep 2
+fi
+exec /usr/bin/hyprctl "\$@"
+EOF
+chmod +x "$runtime/bin/hyprctl"
+
 write_config() { # lockSeconds lockScreenOff screenOffAc screenOffBattery
   cat >"$XDG_CONFIG_HOME/cornice/config.json" <<JSON
 { "language": "en", "background": { "dir": "$prefix/wallpapers" },
@@ -185,7 +199,7 @@ write_config 0 3 0 0
 if start_shell; then pass "shell up"; else fail "shell did not start"; exit 1; fi
 wait_for_pam && pass "PAM service readable" || fail "PAM probe never reported available"
 
-if [[ $suite != auto ]]; then
+if [[ $suite == all || $suite == manual ]]; then
 section "phase 1: manual lock after a long idle does not blank instantly, then blanks on schedule"
 poll_field idle_field '.lockScreenOffSeconds' 3 5 "config lockScreenOff=3 is loaded"
 # Build up a long idle period (> lockScreenOff) before locking. A naive
@@ -250,6 +264,35 @@ if [[ $suite == all ]]; then
   cleanup
   trap - EXIT
   CORNICE_IDLE_SUITE=auto "$0" || result=1
+  CORNICE_IDLE_SUITE=race "$0" || result=1
+fi
+
+if [[ $suite == race ]]; then
+section "phase 7: input while a DPMS-off command is in flight cancels it"
+write_config 0 2 0 0
+# Restart the shell directly (not through the watchdog) so it inherits the
+# delayed hyprctl wrapper on PATH.
+"$prefix/bin/cornice-qs" kill -p "$runtime/shell" --any-display >/dev/null 2>&1 || true
+for _ in $(seq 1 50); do "$prefix/bin/cornice-qs" ipc -p "$runtime/shell" call shell ping >/dev/null 2>&1 || break; sleep 0.1; done
+export PATH="$runtime/bin:$PATH"
+if start_shell; then pass "shell up with the delayed DPMS wrapper"; else fail "shell did not start"; exit 1; fi
+wait_for_pam && pass "PAM service readable" || fail "PAM probe never reported available"
+poll_field idle_field '.lockScreenOffSeconds' 2 5 "lockScreenOff=2 is loaded"
+sleep 3
+expect_eq "lock" "ok" "$(timeout 6 cornice ipc lock lock 2>/dev/null)"
+poll_field lock_field '.secure' true 6 "lock is secure"
+poll_field idle_field '.screenOffRequested' true 6 "DPMS off is in flight"
+expect_eq "panel is still on while off is in flight" "false" "$(idle_field '.screenOff')"
+# Real input arrives before the off command finishes.
+pointer
+poll_field idle_field '.screenOffRequested' false 4 "in-flight input withdraws the off request"
+poll_field idle_field '.screenOff' false 4 "panel is on after the in-flight off exits"
+sleep 1
+expect_eq "panel stays on after the race" "false" "$(idle_field '.screenOff')"
+# With no further input the normal countdown still turns it off.
+poll_field idle_field '.screenOff' true 8 "panel turns off again once input stops"
+expect_eq "emergency unlock" "ok" "$(timeout 6 cornice ipc lock emergencyUnlock 2>/dev/null)"
+poll_field idle_field '.screenOff' false 4 "panel restored after unlock"
 fi
 
 if [[ $suite == auto ]]; then
@@ -265,10 +308,12 @@ expect_eq "emergency unlock" "ok" "$(timeout 6 cornice ipc lock emergencyUnlock 
 poll_field idle_field '.screenOff' false 4 "panel restored after the automatic lock"
 fi
 
+if [[ -f "$runtime/shell.log" ]]; then
 section "shell log"
 problems=$(sed 's/\x1b\[[0-9;]*m//g' "$runtime/shell.log" 2>/dev/null \
   | grep -iE "is not a type|ReferenceError|TypeError|RangeError|Cannot assign|plugin failed" || true)
 if [[ -z $problems ]]; then pass "no QML errors in the shell log"; else fail "QML problems:"; echo "$problems" | head -5; fi
+fi
 
 echo
 ((result == 0)) && echo "RESULT: all idle lock-screen checks passed" || echo "RESULT: failures above"

@@ -309,8 +309,11 @@ Item {
       if (!lockScreenOffTimer.running) lockScreenOffTimer.restart()
     } else {
       lockScreenOffTimer.stop()
-      // Input on the lock screen wakes the panel and restarts the countdown.
-      if (screenOff) displayOn()
+      // Input on the lock screen cancels any pending display-off and wakes the
+      // panel. Call it unconditionally: while an off command is in flight
+      // `screenOff` is still false but `screenOffRequested` is true, and the
+      // request must be withdrawn or the command lands after the input.
+      displayOn()
     }
   }
 
