@@ -232,6 +232,7 @@ so write only what differs. Arrays are replaced, objects are merged;
 | `idle.lockOnSleep` | `true` | lock when logind is about to suspend |
 | `idle.lockOnLockSignal` | `true` | lock on `loginctl lock-session` |
 | `idle.lockOnLidClose` | `true` | lock when the lid closes (skipped when docked) |
+| `idle.lockScreenOff` | `10` | seconds after the session locks before the panel turns off; input on the lock screen restarts the countdown, `0` disables it, and a manual idle inhibit does not keep a locked screen lit |
 | `lock.showUser` | `true` | show the account name on the lock screen |
 | `lock.background` | `"wallpaper"` | `wallpaper`, `screenshot` or `none` |
 | `lock.blur` / `lock.scrim` | `1.0` / `1.0` | lock background blur and darkening |

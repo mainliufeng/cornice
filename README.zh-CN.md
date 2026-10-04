@@ -199,6 +199,7 @@ cornice clock zones            # 列出系统里所有可用时区
 | `idle.lockOnSleep` | `true` | 睡眠前锁屏 |
 | `idle.lockOnLockSignal` | `true` | 收到 `loginctl lock-session` 时锁屏 |
 | `idle.lockOnLidClose` | `true` | 合盖锁屏（接了外接屏时跳过） |
+| `idle.lockScreenOff` | `10` | 锁屏后多少秒灭屏；锁屏界面有输入会重新计时，`0` 关闭；手动 idle inhibit 不会让已锁屏一直亮 |
 | `lock.showUser` | `true` | 锁屏是否显示账号名 |
 | `lock.background` | `"wallpaper"` | `wallpaper` / `screenshot` / `none` |
 | `lock.blur` / `lock.scrim` | `1.0` / `1.0` | 锁屏背景的模糊与压暗强度 |

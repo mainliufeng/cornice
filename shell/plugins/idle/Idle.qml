@@ -13,8 +13,15 @@ import qs.Commons
 //     "dimBattery": 0,       // ...on battery
 //     "screenOffAc": 120,
 //     "screenOffBattery": 300,
-//     "lock": 300
+//     "lock": 300,
+//     "lockScreenOff": 10   // screen off 10s after the session locks, on its own
 //   }
+//
+// lockScreenOff is independent of the AC/battery idle policy: once the session
+// lock is secure, no input for that long turns the panel off, and input on the
+// lock screen restarts the countdown. It deliberately does not use the normal
+// IdleMonitor deadline — the compositor's idle time may already be far past it
+// when the lock engages, which would blank the panel the instant it locks.
 //
 // Unlike hypridle, the monitors respect idle inhibitors, so a video or a
 // presentation inhibits dimming without extra configuration. Dimming uses the
@@ -38,6 +45,9 @@ Item {
   property string signalBuffer: ""
   property bool dimmed: false
   property bool screenOff: false
+  // Desired DPMS state; reconciled with `screenOff` when an off/on command that
+  // was already in flight exits, so a fast unlock cannot leave the panel dark.
+  property bool screenOffRequested: false
   property string lastAction: ""
 
   readonly property string dimMarker: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/cornice-idle-dim"
@@ -114,6 +124,17 @@ Item {
     }
   }
 
+  // After the session lock is secure, the lock screen gets its own display-off
+  // deadline. Manual idle inhibits must not keep an already-locked screen on, so
+  // this timer is independent of `inhibited` and of the AC/battery policy.
+  readonly property int lockScreenOffSeconds: Util.option(settings, "lockScreenOff", 10)
+  // One second without input means the lock screen is idle; the rest of the
+  // deadline runs on a plain Timer. A plain Timer (not another IdleMonitor) is
+  // what stops a lock that followed a long idle period from blanking instantly.
+  readonly property int lockScreenOffIdleSeconds: 1
+  readonly property bool lockScreenOffArmed: lockScreenOffSeconds > 0 && lockService != null && lockService.secure === true
+  readonly property int lockScreenOffTimerSeconds: Math.max(1, lockScreenOffSeconds - lockScreenOffIdleSeconds)
+
   // ---- one monitor per step -------------------------------------------------
   IdleMonitor {
     id: dimMonitor
@@ -144,6 +165,31 @@ Item {
         onIsIdleChanged: if (isIdle) root.lockNow()
       }
     }
+  }
+
+  // Lock-screen activity only. It never blanks the panel by itself; it just tells
+  // the countdown whether the lock screen is currently idle.
+  IdleMonitor {
+    id: lockActivityMonitor
+    enabled: root.lockScreenOffArmed
+    timeout: root.lockScreenOffIdleSeconds
+    // A manual `idle inhibit` must not leave a locked session lit forever.
+    respectInhibitors: false
+    onIsIdleChanged: root.refreshLockScreenOff()
+  }
+
+  Timer {
+    id: lockScreenOffTimer
+    interval: root.lockScreenOffTimerSeconds * 1000
+    repeat: false
+    onTriggered: {
+      if (root.lockScreenOffArmed && lockActivityMonitor.isIdle) root.displayOff()
+    }
+  }
+
+  onLockScreenOffArmedChanged: {
+    if (lockScreenOffArmed) root.refreshLockScreenOff()
+    else { lockScreenOffTimer.stop(); root.displayOn() }
   }
 
   // ---- actions --------------------------------------------------------------
@@ -184,7 +230,10 @@ Item {
     stdout: StdioCollector { waitForEnd: true }
     onExited: {
       root.screenOff = root.dpmsProcess.turnOff
-      root.lastAction = turnOff ? "display-off" : "display-on"
+      root.lastAction = root.dpmsProcess.turnOff ? "display-off" : "display-on"
+      // An unlock can land while the off/on command is still in flight; finish
+      // with whatever state is wanted now instead of stranding the panel.
+      if (root.screenOffRequested !== root.screenOff) root.requestScreenOff(root.screenOffRequested)
     }
   }
 
@@ -236,16 +285,33 @@ Item {
     undimProcess.running = true
   }
 
-  function displayOff() {
-    if (screenOff) return
-    dpmsProcess.turnOff = true
+  function requestScreenOff(off) {
+    screenOffRequested = off
+    if (dpmsProcess.running) return
+    if (screenOff === off) return
+    dpmsProcess.turnOff = off
     dpmsProcess.running = true
   }
 
+  function displayOff() {
+    requestScreenOff(true)
+  }
+
   function displayOn() {
-    if (!screenOff) return
-    dpmsProcess.turnOff = false
-    dpmsProcess.running = true
+    requestScreenOff(false)
+  }
+
+  // Re-arm (or drop) the lock-screen display-off countdown. Called when the lock
+  // arms, and on every activity transition while it is armed.
+  function refreshLockScreenOff() {
+    if (!lockScreenOffArmed) { lockScreenOffTimer.stop(); return }
+    if (lockActivityMonitor.isIdle) {
+      if (!lockScreenOffTimer.running) lockScreenOffTimer.restart()
+    } else {
+      lockScreenOffTimer.stop()
+      // Input on the lock screen wakes the panel and restarts the countdown.
+      if (screenOff) displayOn()
+    }
   }
 
   // ---- logind ---------------------------------------------------------------
@@ -356,6 +422,11 @@ Item {
         warning: root.warning,
         warningSeconds: root.warningSeconds,
         screenOff: root.screenOff,
+        screenOffRequested: root.screenOffRequested,
+        lockScreenOffSeconds: root.lockScreenOffSeconds,
+        lockScreenOffArmed: root.lockScreenOffArmed,
+        lockScreenOffIdle: lockActivityMonitor.isIdle,
+        lockScreenOffTimer: lockScreenOffTimer.running,
         lastAction: root.lastAction,
         dimSeconds: root.dimSeconds,
         screenOffSeconds: root.screenOffSeconds,
