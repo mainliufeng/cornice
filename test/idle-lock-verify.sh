@@ -265,6 +265,7 @@ if [[ $suite == all ]]; then
   trap - EXIT
   CORNICE_IDLE_SUITE=auto "$0" || result=1
   CORNICE_IDLE_SUITE=race "$0" || result=1
+  CORNICE_IDLE_SUITE=both "$0" || result=1
 fi
 
 if [[ $suite == race ]]; then
@@ -293,6 +294,29 @@ expect_eq "panel stays on after the race" "false" "$(idle_field '.screenOff')"
 poll_field idle_field '.screenOff' true 8 "panel turns off again once input stops"
 expect_eq "emergency unlock" "ok" "$(timeout 6 cornice ipc lock emergencyUnlock 2>/dev/null)"
 poll_field idle_field '.screenOff' false 4 "panel restored after unlock"
+fi
+
+if [[ $suite == both ]]; then
+section "phase 8: the lock countdown wins over the normal screen-off policy"
+write_config 0 10 2 2
+"$prefix/bin/cornice-qs" kill -p "$runtime/shell" --any-display >/dev/null 2>&1 || true
+for _ in $(seq 1 50); do "$prefix/bin/cornice-qs" ipc -p "$runtime/shell" call shell ping >/dev/null 2>&1 || break; sleep 0.1; done
+if start_shell; then pass "shell up with both timers enabled"; else fail "shell did not start"; exit 1; fi
+wait_for_pam && pass "PAM service readable" || fail "PAM probe never reported available"
+poll_field idle_field '.screenOffSeconds' 2 5 "normal screenOffAc=2 is loaded"
+poll_field idle_field '.lockScreenOffSeconds' 10 5 "lockScreenOff=10 is loaded"
+# Recent input, then lock: the normal 2s monitor must not pre-empt the 10s lock countdown.
+pointer
+expect_eq "lock" "ok" "$(timeout 6 cornice ipc lock lock 2>/dev/null)"
+poll_field lock_field '.secure' true 6 "lock is secure"
+sleep 3
+expect_eq "the normal 2s monitor does not pre-empt the lock countdown" "false" "$(idle_field '.screenOff')"
+poll_field idle_field '.screenOff' true 12 "the lock countdown blanks the panel at 10s"
+expect_eq "emergency unlock" "ok" "$(timeout 6 cornice ipc lock emergencyUnlock 2>/dev/null)"
+poll_field idle_field '.screenOff' false 4 "panel restored after unlock"
+# The normal policy resumes once unlocked.
+pointer
+poll_field idle_field '.screenOff' true 6 "the normal policy still blanks the panel after unlock"
 fi
 
 if [[ $suite == auto ]]; then

@@ -149,7 +149,15 @@ Item {
     enabled: root.screenOffSeconds > 0 && !root.inhibited
     timeout: root.screenOffSeconds
     respectInhibitors: root.respectInhibitors
-    onIsIdleChanged: isIdle ? root.displayOff() : root.displayOn()
+    // While the session is locked the lock-screen countdown owns display-off:
+    // the normal policy would otherwise blank the panel at screenOffSeconds and
+    // pre-empt idle.lockScreenOff. The normal policy resumes on the next idle
+    // cycle after unlocking.
+    onIsIdleChanged: {
+      if (!isIdle) { root.displayOn(); return }
+      if (root.lockScreenOffArmed) return
+      root.displayOff()
+    }
   }
 
   // Create the notification only with a positive timeout. Recreate it after
