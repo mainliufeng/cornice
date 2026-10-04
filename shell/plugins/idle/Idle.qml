@@ -70,6 +70,50 @@ Item {
   // the lid shut, so locking would be wrong.
   readonly property bool docked: Quickshell.screens.length > 1
 
+  readonly property int warningSeconds: Math.min(Math.max(0, Util.option(settings, "lockWarning", 5)), Math.max(0, lockSeconds - 1))
+  readonly property bool warning: warningMonitor.isIdle && !inhibited && !(lockService && lockService.locked)
+
+  // Visual warning only: input still reaches applications and resets idle.
+  // The secure lock retains its original deadline; manual/sleep locks bypass it.
+  IdleMonitor {
+    id: warningMonitor
+    enabled: root.lockSeconds > 0 && root.warningSeconds > 0 && !root.inhibited
+    timeout: Math.max(1, root.lockSeconds - root.warningSeconds)
+    respectInhibitors: root.respectInhibitors
+  }
+  Variants {
+    model: Quickshell.screens
+    PanelWindow {
+      required property var modelData
+      screen: modelData
+      anchors { top: true; bottom: true; left: true; right: true }
+      color: "transparent"
+      exclusiveZone: 0
+      focusable: false
+      mask: Region {}
+      WlrLayershell.layer: WlrLayer.Overlay
+      WlrLayershell.namespace: "cornice-lock-warning"
+      WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+      // Keep the input-transparent surface mapped: mapping it at idle time
+      // can itself resume the compositor idle clock and postpone locking.
+      visible: true
+      Rectangle {
+        id: shade
+        anchors.fill: parent
+        color: "black"
+        opacity: root.warning ? 0.9 : 0
+        Behavior on opacity { NumberAnimation { duration: root.warning ? 900 : 180 } }
+        Text {
+          anchors.centerIn: parent
+          text: I18n.t("idle.lockWarning")
+          color: "#e5e7eb"
+          font.family: Style.fontFamily
+          font.pixelSize: Style.fontSize + 2
+        }
+      }
+    }
+  }
+
   // ---- one monitor per step -------------------------------------------------
   IdleMonitor {
     id: dimMonitor
@@ -87,12 +131,19 @@ Item {
     onIsIdleChanged: isIdle ? root.displayOff() : root.displayOn()
   }
 
-  IdleMonitor {
+  // Create the notification only with a positive timeout. Recreate it after
+  // disabling/inhibiting idle instead of reviving a zero-timeout notification.
+  Loader {
     id: lockMonitor
-    enabled: root.lockSeconds > 0 && !root.inhibited
-    timeout: root.lockSeconds
-    respectInhibitors: root.respectInhibitors
-    onIsIdleChanged: if (isIdle) root.lockNow()
+    active: root.lockSeconds > 0 && !root.inhibited
+    sourceComponent: Component {
+      IdleMonitor {
+        enabled: true
+        timeout: root.lockSeconds
+        respectInhibitors: root.respectInhibitors
+        onIsIdleChanged: if (isIdle) root.lockNow()
+      }
+    }
   }
 
   // ---- actions --------------------------------------------------------------
@@ -302,6 +353,8 @@ Item {
         onAc: root.onAc,
         inhibited: root.inhibited,
         dimmed: root.dimmed,
+        warning: root.warning,
+        warningSeconds: root.warningSeconds,
         screenOff: root.screenOff,
         lastAction: root.lastAction,
         dimSeconds: root.dimSeconds,
@@ -315,8 +368,8 @@ Item {
         lockOnLidClose: root.lockOnLidClose,
         docked: root.docked,
         respectInhibitors: root.respectInhibitors,
-        monitorsEnabled: { "dim": dimMonitor.enabled, "screenOff": screenOffMonitor.enabled, "lock": lockMonitor.enabled },
-        monitorsIdle: { "dim": dimMonitor.isIdle, "screenOff": screenOffMonitor.isIdle, "lock": lockMonitor.isIdle }
+        monitorsEnabled: { "dim": dimMonitor.enabled, "screenOff": screenOffMonitor.enabled, "lock": lockMonitor.active },
+        monitorsIdle: { "dim": dimMonitor.isIdle, "screenOff": screenOffMonitor.isIdle, "lock": !!lockMonitor.item && lockMonitor.item.isIdle }
       })
     }
 

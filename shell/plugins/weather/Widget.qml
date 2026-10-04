@@ -27,7 +27,7 @@ Item {
   // in the configured language).
   readonly property string placeName: {
     if (!service || !service.locations || service.locations.length === 0) return ""
-    return String(service.locations[0].name || "")
+    return service.displayName(service.locations[0].name)
   }
   readonly property string label: ready ? service.label : (service && service.status === "error" ? "unavailable" : "loading")
 

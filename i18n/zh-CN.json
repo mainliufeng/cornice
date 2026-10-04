@@ -183,5 +183,6 @@
   "weather.today": "今天",
   "weather.unavailable": "暂时无法获取天气",
   "weather.updated": "更新于",
-  "weather.wind": "风速"
+  "weather.wind": "风速",
+  "idle.lockWarning": "即将锁屏 · 移动鼠标或按键继续使用"
 }

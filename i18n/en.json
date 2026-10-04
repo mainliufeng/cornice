@@ -183,5 +183,6 @@
   "weather.today": "Today",
   "weather.unavailable": "Weather unavailable",
   "weather.updated": "Updated",
-  "weather.wind": "Wind"
+  "weather.wind": "Wind",
+  "idle.lockWarning": "Locking soon · move the mouse or press a key to continue"
 }

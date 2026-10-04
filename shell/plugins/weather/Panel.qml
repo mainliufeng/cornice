@@ -17,7 +17,7 @@ PanelFrame {
   readonly property string glyph: service ? service.glyph : "\u{F0590}"
   readonly property bool editing: !!service && service.editorOpen
   readonly property var places: service ? service.locations || [] : []
-  readonly property string placeTitle: service ? (service.activeName || service.place || I18n.t("weather.title")) : I18n.t("weather.title")
+  readonly property string placeTitle: service ? service.displayName(service.activeName || service.place || I18n.t("weather.title")) : I18n.t("weather.title")
   function runCommand(command) { Util.exec("cornice weather " + command) }
   function refresh() { if (service) service.refresh(true) }
   onOpened: {
@@ -110,7 +110,7 @@ PanelFrame {
               anchors.centerIn: parent
               width: parent.width - Style.space(3)
               elide: Text.ElideRight
-              text: modelData.name
+              text: root.service.displayName(modelData.name)
               color: modelData.active ? Color.workspaceActiveText : Color.foreground
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
@@ -134,7 +134,7 @@ PanelFrame {
           Text {
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width - clearPlace.width - Style.space(1)
-            text: root.places.length > 0 ? root.places[0].name : I18n.t("weather.noPlace")
+            text: root.places.length > 0 ? root.service.displayName(root.places[0].name) : I18n.t("weather.noPlace")
             color: Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: root.bodySize

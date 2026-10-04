@@ -253,7 +253,7 @@ Item {
       busy = true
       error = ""
       geocode.command = ["curl", "-fsS", "--max-time", "10", "--compressed",
-        root.geocodeBase + "?count=1&language=" + encodeURIComponent(I18n.language)
+        root.geocodeBase + "?count=1&language=" + encodeURIComponent(I18n.language.split("-")[0])
       + "&format=json&name="
         + encodeURIComponent(timezoneCity)]
       geocodingTimezone = true
@@ -292,6 +292,65 @@ Item {
   property bool searching: false
   property string searchError: ""
 
+  // Re-localize persisted names without rewriting the user's configuration.
+  property var localizedNames: ({})
+  readonly property var namedPlaces: {
+    const weather = locations.map(entry => ({ name: String(entry.name || entry.city || ""), latitude: entry.latitude, longitude: entry.longitude }))
+    const clock = host && host.config ? host.config.clock || ({}) : ({})
+    const clocks = clock.zone && clock.zone.zone ? [clock.zone] : (clock.worldClocks || []).slice(0, 1)
+    return weather.concat(clocks.map(entry => ({ name: String(entry.name || ""), timezone: entry.zone })))
+  }
+  function displayName(name) {
+    const key = String(name || "")
+    return localizedNames[key] || key
+  }
+  onNamedPlacesChanged: nameDebounce.restart()
+  onLocaleChanged: { searchResults = []; nameDebounce.restart() }
+  Timer {
+    id: nameDebounce
+    interval: 150
+    onTriggered: {
+      root.nameLookup.running = false
+      root.localizedNames = ({})
+      const requests = root.namedPlaces.filter(entry => entry.name.length >= 2)
+      const script = ["printf '['"]
+      for (let i = 0; i < requests.length; i++) {
+        const url = root.geocodeBase + "?count=8&language=" + encodeURIComponent(I18n.language.split("-")[0])
+          + "&format=json&name=" + encodeURIComponent(requests[i].name)
+        script.push("printf '%s' " + Util.shellQuote((i ? "," : "") + "[" + JSON.stringify(requests[i]) + ","))
+        script.push("curl -fsS --max-time 10 --compressed " + Util.shellQuote(url) + " || printf '{}'")
+        script.push("printf ']'")
+      }
+      script.push("printf ']'")
+      root.nameLookup.command = ["sh", "-c", script.join("; ")]
+      root.nameLookup.running = true
+    }
+  }
+  readonly property Process nameLookup: Process {
+    command: ["true"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (nameDebounce.running) return
+        try {
+          const names = ({})
+          for (const pair of JSON.parse(text)) {
+            const request = pair[0]
+            const matches = (pair[1].results || []).filter(entry => {
+              if (request.timezone && entry.timezone !== request.timezone) return false
+              if (request.latitude !== undefined && request.latitude !== null)
+                return Math.abs(Number(entry.latitude) - Number(request.latitude)) < 0.5
+                  && Math.abs(Number(entry.longitude) - Number(request.longitude)) < 0.5
+              return true
+            })
+            if (matches.length > 0) names[request.name] = String(matches[0].name)
+          }
+          root.localizedNames = names
+        } catch (_) { /* Keep saved names when offline or unresolvable. */ }
+      }
+    }
+  }
+
   function search(query) {
     const text = String(query === undefined ? "" : query).trim()
     if (text.length < 2) {
@@ -302,7 +361,7 @@ Item {
     searching = true
     searchError = ""
     searchProc.command = ["curl", "-fsS", "--max-time", "10", "--compressed",
-      root.geocodeBase + "?count=8&language=" + encodeURIComponent(I18n.language)
+      root.geocodeBase + "?count=8&language=" + encodeURIComponent(I18n.language.split("-")[0])
       + "&format=json&name=" + encodeURIComponent(text)]
     searchProc.running = false
     searchProc.running = true
@@ -325,7 +384,7 @@ Item {
             timezone: String(entry.timezone || ""),
             latitude: Number(entry.latitude),
             longitude: Number(entry.longitude),
-            label: [entry.name, entry.admin1, entry.country_code || entry.country]
+            label: [entry.name, entry.admin1, entry.country || entry.country_code]
               .filter(part => part).join(", "),
             detail: [entry.latitude, entry.longitude]
               .map(value => Number(value).toFixed(2)).join(", ")
@@ -344,7 +403,7 @@ Item {
   // run the *previous* city's query (switching places was one behind).
   function geocodeCommand(query) {
     return ["curl", "-fsS", "--max-time", "10", "--compressed",
-      root.geocodeBase + "?count=1&language=" + encodeURIComponent(I18n.language)
+      root.geocodeBase + "?count=1&language=" + encodeURIComponent(I18n.language.split("-")[0])
       + "&format=json&name=" + encodeURIComponent(query)]
   }
 

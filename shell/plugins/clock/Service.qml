@@ -14,6 +14,9 @@ Item {
   property var host: null
   property var plugin: null
 
+  readonly property var placeService: host ? host.services["cn.weather"] : null
+  function displayName(name) { return placeService ? placeService.displayName(name) : String(name) }
+
   readonly property var settings: (host && host.config && host.config.clock) ? host.config.clock : ({})
 
   // "worldClocks": [ { "name": "东京", "zone": "Asia/Tokyo" },
@@ -22,12 +25,12 @@ Item {
     // One world clock only. `clock.zone` is the model; an older `worldClocks`
     // list is reduced to its first entry so nothing is lost on upgrade.
     const single = Util.option(settings, "zone", null)
-    if (single && single.zone) return [{ index: 0, name: String(single.name || single.zone), zone: String(single.zone) }]
+    if (single && single.zone) return [{ index: 0, name: root.displayName(single.name || single.zone), zone: String(single.zone) }]
     const configured = Util.option(settings, "worldClocks", [])
     if (!configured || configured.length === undefined) return []
     return configured.slice(0, 1).map((entry, index) => ({
       index: index,
-      name: String(entry.name || entry.label || entry.zone || ("zone " + (index + 1))),
+      name: root.displayName(entry.name || entry.label || entry.zone || ("zone " + (index + 1))),
       zone: String(entry.zone || entry.timezone || "")
     })).filter(entry => entry.zone !== "")
   }

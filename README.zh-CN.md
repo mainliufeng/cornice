@@ -194,6 +194,7 @@ cornice clock zones            # 列出系统里所有可用时区
 | `idle.dimAc` / `dimBattery` | `60` / `0` | 多少秒后 dim 背光 |
 | `idle.screenOffAc` / `screenOffBattery` | `120` / `300` | 多少秒后灭屏 |
 | `idle.lock` | `300` | 多少秒后锁屏 |
+| `idle.lockWarning` | `5` | 自动锁屏前渐暗提示的秒数，鼠标或键盘操作可取消；`0` 关闭提示，手动锁屏／合盖／休眠不延迟 |
 | `idle.respectInhibitors` | `false` | 是否也尊重应用的 idle inhibitor |
 | `idle.lockOnSleep` | `true` | 睡眠前锁屏 |
 | `idle.lockOnLockSignal` | `true` | 收到 `loginctl lock-session` 时锁屏 |

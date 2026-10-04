@@ -101,6 +101,43 @@ for _ in $(seq 1 30); do
   sleep .1
 done
 cornice ipc shell hide cn.weather >/dev/null
+section "localized saved places and cancellable idle warning"
+cornice weather place use Chengdu --lat 1 --lon 2 >/dev/null
+for _ in $(seq 1 40); do
+  cornice ipc shell summon cn.weather '{}' >/dev/null
+  [[ $(panel_state weather | jq -r '.place') == 成都 ]] && break
+  sleep .1
+done
+expect_eq "a saved English place displays in Chinese without config edits" 成都 "$(panel_state weather | jq -r '.place')"
+expect_eq "localizing a name preserves the saved configuration" Chengdu "$(cornice ipc shell config | jq -r '.weather.place.name')"
+cornice ipc shell hide cn.weather >/dev/null
+cp "$XDG_CONFIG_HOME/cornice/config.json" "$runtime/warning-config-before.json"
+jq '.idle = {dimAc:0,dimBattery:0,screenOffAc:0,screenOffBattery:0,lock:8,lockWarning:3}' "$runtime/warning-config-before.json" > "$XDG_CONFIG_HOME/cornice/config.json"
+sleep .5
+panel_pointer 20 20 hover
+for _ in $(seq 1 65); do
+  [[ $(cornice ipc idle status | jq -r '.warning') == true ]] && break
+  sleep .1
+done
+expect_eq "automatic lock has a visible warning before the deadline" true "$(cornice ipc idle status | jq -r '.warning')"
+expect_eq "the warning is not yet a secure session lock" false "$(cornice ipc lock status | jq -r '.locked')"
+sleep 1
+grim "$runtime/ui-idle-warning.png"
+panel_pointer 100 100 hover
+expect_eq "real pointer activity cancels the warning" false "$(cornice ipc idle status | jq -r '.warning')"
+expect_eq "cancelling the warning keeps the session unlocked" false "$(cornice ipc lock status | jq -r '.locked')"
+expect_eq "idle deadline test has a usable PAM service" true "$(cornice ipc lock status | jq -r '.pamAvailable')"
+for _ in $(seq 1 160); do
+  [[ $(cornice ipc lock status | jq -r '.locked') == true ]] && break
+  sleep .1
+done
+cornice ipc idle status > "$runtime/idle-deadline-status.json"
+cornice ipc lock status > "$runtime/lock-deadline-status.json"
+expect_eq "ignoring the warning reaches a secure lock" true "$(cornice ipc lock status | jq -r '.secure')"
+cornice lock emergency-unlock >/dev/null
+sleep .3
+cp "$runtime/warning-config-before.json" "$XDG_CONFIG_HOME/cornice/config.json"
+sleep .5
 kill "$hover_pointer_pid" 2>/dev/null
 wait "$hover_pointer_pid" 2>/dev/null || true
 hover_pointer_pid=""

@@ -227,6 +227,7 @@ so write only what differs. Arrays are replaced, objects are merged;
 | `idle.dimAc` / `dimBattery` | `60` / `0` | seconds before the backlight dims |
 | `idle.screenOffAc` / `screenOffBattery` | `120` / `300` | seconds before display-off |
 | `idle.lock` | `300` | seconds before locking |
+| `idle.lockWarning` | `5` | fade warning before automatic locking; input cancels it, `0` disables it; manual, lid and sleep locks remain immediate |
 | `idle.respectInhibitors` | `false` | honour apps' idle inhibitors too |
 | `idle.lockOnSleep` | `true` | lock when logind is about to suspend |
 | `idle.lockOnLockSignal` | `true` | lock on `loginctl lock-session` |

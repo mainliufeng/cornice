@@ -81,8 +81,12 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path.startswith("/geocode"):
             body = geocode_payload()
             name = parse_qs(parsed.query).get("name", [""])[0]
-            if name:
-                body["results"][0]["name"] = name
+            language = parse_qs(parsed.query).get("language", ["en"])[0]
+            if "-" in language:
+                body = {"results": []}  # Provider accepts ISO language, not locale.
+            elif name:
+                localized = {"Chengdu": "成都", "Tokyo": "东京", "Shanghai": "上海"}
+                body["results"][0]["name"] = localized.get(name, name) if language == "zh" else name
         elif parsed.path.startswith("/locate"):
             body = {"latitude": 1.0, "longitude": 2.0, "city": "Testville", "country_code": "TV"}
         else:

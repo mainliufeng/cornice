@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fade the desktop before the automatic idle lock; input cancels the warning
+  without changing the lock deadline. Manual, lid and suspend locks stay immediate.
+- Use ISO language codes for geocoding so Chinese searches return Chinese city,
+  region and country names; localize saved weather/world-clock place names.
+
 ## 0.2.2
 
 - Compare world clocks against system times bracketing the IPC query to avoid
