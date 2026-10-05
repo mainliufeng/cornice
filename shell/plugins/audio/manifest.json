@@ -4,7 +4,7 @@
   "name": "Audio",
   "version": "0.2.0",
   "author": "cornice",
-  "description": "Default sink volume and mute, left click toggles mute, right click scrolls volume",
+  "description": "Default sink volume and mute, left click opens the slider panel, right click toggles mute",
   "kinds": [
     "bar-widget",
     "panel"

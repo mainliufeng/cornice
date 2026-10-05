@@ -80,6 +80,8 @@ PanelFrame {
   }
 
   function showVolume() {
+    const panel = host && host.instanceMap ? host.instanceMap["cn.audio"] : null
+    if (panel && panel.item && panel.item.isOpen) return
     const percent = Math.round(Util.clamp(sinkVolume, 0, 1.5) * 100)
     showValues("volume", Util.clamp(sinkVolume, 0, 1), percent + "%",
       iconForVolume(percent, sinkMuted), sinkMuted)

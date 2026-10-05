@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.4
+
+- Left-click audio to open its interactive slider panel; right-click toggles
+  mute. Audio and brightness panels both follow the bar position.
+- Suppress the bottom volume OSD while adjusting the audio panel.
+
 ## 0.2.3
 
 - Give locked screens their own display-off countdown, wake on input/unlock,

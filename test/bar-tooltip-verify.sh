@@ -83,9 +83,10 @@ before=$(tooltip_bar_shape)
 muted_before=$(cornice ipc audioinfo dump | jq '.sinks[0].muted')
 tooltip_pointer "$hover_x" "$hover_y" click
 sleep .5
-expect_eq "audio left click still toggles the real sink mute" "$(jq -nr --argjson muted "$muted_before" '$muted|not')" \
-  "$(cornice ipc audioinfo dump | jq '.sinks[0].muted')"
-expect_eq "audio mute feedback shows OSD instead of a second tooltip" 0 "$(tooltip_layers | jq length)"
+expect_eq "audio left click opens its interactive panel" true "$(cornice ipc audioPanel state | jq -r '.open')"
+expect_eq "opening audio does not mute the sink" "$muted_before" "$(cornice ipc audioinfo dump | jq '.sinks[0].muted')"
+expect_eq "opening audio dismisses the status tooltip" 0 "$(tooltip_layers | jq length)"
+cornice ipc shell hide cn.audio >/dev/null
 volume_before=$(cornice ipc audioinfo dump | jq '.defaultSink.volume')
 tooltip_pointer "$hover_x" "$hover_y" 'scroll:120'
 sleep .5

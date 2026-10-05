@@ -8,7 +8,8 @@ import qs.Ui
 PanelFrame {
   id: root
 
-  edge: "top"
+  edge: host && host.config.bar && host.config.bar.position === "bottom" ? "bottom" : "top"
+  onOpened: if (host) host.hide("cn.osd")
   panelWidth: Math.min(520, window.screen ? window.screen.width - Style.space(8) : 520)
   panelHeight: Math.min(660, window.screen ? window.screen.height - Style.barHeight - Style.space(4) : 660)
   takesKeyboard: false
@@ -55,6 +56,7 @@ PanelFrame {
         glyph: "\uf028"
       }
       Repeater {
+        id: channels
         model: [
           {
             node: root.sink,
@@ -70,6 +72,7 @@ PanelFrame {
           }
         ]
         delegate: Rectangle {
+          readonly property var controlSlider: levelSlider
           required property var modelData
           width: parent.width
           height: Style.space(19.5)
@@ -113,6 +116,7 @@ PanelFrame {
               width: parent.width
               spacing: Style.space(1.5)
               Slider {
+                id: levelSlider
                 width: parent.width - volumeLabel.width - parent.spacing
                 enabled: !!modelData.node && !!modelData.node.audio
                 value: modelData.node && modelData.node.audio ? Util.clamp(modelData.node.audio.volume, 0, 1) : 0
@@ -179,6 +183,20 @@ PanelFrame {
           }
         }
       }
+    }
+  }
+  ShellIpc {
+    target: "audioPanel"
+    function state(): string {
+      const sliders = []
+      for (let i = 0; i < channels.count; i++) {
+        const card = channels.itemAt(i)
+        if (!card || !card.visible) continue
+        const slider = card.controlSlider
+        const p = slider.mapToItem(root, 0, 0)
+        sliders.push({x:p.x, y:p.y, width:slider.width, height:slider.height, value:slider.value})
+      }
+      return JSON.stringify({open:root.isOpen, edge:root.edge, sliders:sliders})
     }
   }
 }

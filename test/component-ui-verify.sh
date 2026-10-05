@@ -55,6 +55,21 @@ cornice ipc shell hide cn.media >/dev/null
 kill "$media_fixture_pid" 2>/dev/null
 wait "$media_fixture_pid" 2>/dev/null || true
 media_fixture_pid=""
+section "audio slider and shared panel placement"
+cornice ipc shell summon cn.audio '{}' >/dev/null
+sleep .5
+state=$(cornice ipc audioPanel state)
+expect_eq "audio follows the top bar" top "$(jq -r '.edge' <<<"$state")"
+read -r px py <<<"$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-panel")][0] | [.x,.y] | join(" ")')"
+read -r x y <<<"$(jq -r '.sliders[0] | [(.x+.width*0.63),(.y+.height/2)] | map(round) | join(" ")' <<<"$state")"
+printf '%s %s click\n' "$((px+x))" "$((py+y))" >&"$pointer_in"
+read -r -t 3 pointer_reply <&"$pointer_out"
+sleep .5
+expect_eq "dragging the audio slider changes the real virtual sink" true "$(cornice ipc audioinfo dump | jq '(.defaultSink.volume - 0.63) | fabs < 0.02')"
+expect_eq "audio panel adjustments do not create a second bottom OSD" false "$(cornice ipc shell windows | jq '[.[] | select(.id == "cn.osd")][0].open')"
+region=$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-panel")][0] | "\(.x),\(.y) \(.w)x\(.h)"')
+grim -g "$region" "$runtime/ui-audio.png"
+cornice ipc shell hide cn.audio >/dev/null
 section "brightness panel placement and interactive control"
 cornice bar show cn.brightness --section right >/dev/null
 sleep .5
@@ -85,6 +100,10 @@ cornice ipc shell summon cn.brightness '{}' >/dev/null
 sleep .3
 expect_eq "brightness follows a bottom bar as well" bottom "$(cornice ipc brightnessPanel state | jq -r '.edge')"
 cornice ipc shell hide cn.brightness >/dev/null
+cornice ipc shell summon cn.audio '{}' >/dev/null
+sleep .3
+expect_eq "audio and brightness share bottom-bar placement" bottom "$(cornice ipc audioPanel state | jq -r '.edge')"
+cornice ipc shell hide cn.audio >/dev/null
 cp "$runtime/brightness-config-before.json" "$XDG_CONFIG_HOME/cornice/config.json"
 cornice ipc shell reloadConfig >/dev/null
 sleep .5
