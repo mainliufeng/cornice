@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.3
+
+- Give locked screens their own display-off countdown, wake on input/unlock,
+  and cancel in-flight display-off requests. Do not turn off the unlocked
+  screen early when an automatic lock deadline is configured.
+
 - Open an interactive brightness panel from the bar, with a shared slider/value
   and backlight write error feedback; follow top/bottom bar placement instead
   of opening the bottom OSD on click.
