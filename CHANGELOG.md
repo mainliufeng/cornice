@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Open an interactive brightness panel from the bar, with a shared slider/value
+  and backlight write error feedback; follow top/bottom bar placement instead
+  of opening the bottom OSD on click.
+
 - Fade the desktop before the automatic idle lock; input cancels the warning
   without changing the lock deadline. Manual, lid and suspend locks stay immediate.
 - Use ISO language codes for geocoding so Chinese searches return Chinese city,

@@ -24,6 +24,20 @@ pkill -f "mutter --headless --wayland --wayland-display=cornice" 2>/dev/null
 sleep 0.3
 
 runtime=$(mktemp -d /tmp/cn-XXXXXX)   # short: unix socket paths are length-limited
+# Isolated brightness backend: interaction tests must never change host hardware.
+mkdir -p "$runtime/test-bin"
+export CORNICE_TEST_BACKLIGHT="$runtime/backlight-level"
+printf '50\n' > "$CORNICE_TEST_BACKLIGHT"
+cat > "$runtime/test-bin/light" <<'LIGHT'
+#!/bin/sh
+case "$1" in
+  -G) cat "$CORNICE_TEST_BACKLIGHT" ;;
+  -S) printf '%s\n' "$2" > "$CORNICE_TEST_BACKLIGHT" ;;
+  *) exit 2 ;;
+esac
+LIGHT
+chmod +x "$runtime/test-bin/light"
+export PATH="$runtime/test-bin:$PATH"
 keep=${CORNICE_KEEP_ARTIFACTS:-0}
 mutter_pid=""
 dbus_pid=""

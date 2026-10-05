@@ -6,7 +6,7 @@ import qs.Ui
 
 // Backlight control, shaped like the audio widget: one glyph that carries the
 // level, a passive tooltip on hover, the wheel to change it, and a left click that
-// just shows the brightness OSD (so clicking always does something visible).
+// opens the interactive brightness panel.
 //
 // Reading goes through `light -G` (the same tool the idle plugin uses to dim),
 // falling back to sysfs. Never render a placeholder glyph when the value is not
@@ -20,11 +20,8 @@ Item {
   property var widgetConfig: ({})
 
   readonly property int step: Math.max(1, Math.round(Util.option(widgetConfig, "step", 5)))
-  property int percent: -1
-  property bool busy: false
-  // Wheel deltas arrive in small pieces on some devices; accumulate them so one
-  // notch is one step instead of a jump.
-  property real pending: 0
+  readonly property var service: host ? host.services["cn.brightness"] : null
+  readonly property int percent: service ? service.percent : -1
 
   readonly property bool known: percent >= 0
   // One family only (FontAwesome sun), dimmed glyph at the low end.
@@ -37,58 +34,6 @@ Item {
 
   implicitHeight: Style.widgetHeight
   implicitWidth: Style.widgetHeight
-
-  function parse(text) {
-    const value = Number(String(text).trim().split(/\s+/)[0])
-    if (!isNaN(value) && value >= 0) return Math.round(value)
-    const parts = String(text).trim().split(/\s+/)
-    if (parts.length === 2) {
-      const maximum = Number(parts[1])
-      if (maximum > 0) return Math.round((Number(parts[0]) / maximum) * 100)
-    }
-    return -1
-  }
-
-  function refresh() {
-    if (busy) return
-    busy = true
-    reader.command = ["bash", "-c",
-      "if command -v light >/dev/null 2>&1; then light -G; else " +
-      "for d in /sys/class/backlight/*; do [ -r \"$d/brightness\" ] || continue; " +
-      "printf '%s %s' \"$(cat $d/brightness)\" \"$(cat $d/max_brightness)\"; break; done; fi"]
-    reader.running = false
-    reader.running = true
-  }
-
-  function setPercent(value) {
-    const clamped = Math.max(1, Math.min(100, Math.round(value)))
-    percent = clamped
-    writer.command = ["light", "-S", String(clamped)]
-    writer.running = false
-    writer.running = true
-    Util.exec("cornice ipc osd brightness")
-  }
-
-  Process {
-    id: reader
-    command: ["true"]
-
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        const value = root.parse(text)
-        if (value !== root.percent) console.log("cornice brightness: " + (value >= 0 ? value + "%" : "unavailable"))
-        root.percent = value
-        root.busy = false
-      }
-    }
-  }
-
-  Process {
-    id: writer
-    command: ["true"]
-    onRunningChanged: if (!running) root.refresh()
-  }
 
   Text {
     id: label
@@ -106,9 +51,7 @@ Item {
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
     onClicked: {
-      root.refresh()
-      // Always give feedback, even before the value is known.
-      Util.exec("cornice ipc osd brightness")
+      if (root.host) root.host.toggle("cn.brightness", {})
     }
   }
 
@@ -123,20 +66,13 @@ Item {
   WheelHandler {
     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
     onWheel: event => {
+      if (!root.service) return
       if (!root.known) {
-        root.refresh()
+        root.service.refresh()
         return
       }
-      root.setPercent(root.percent + (event.angleDelta.y > 0 ? root.step : -root.step))
+      root.service.setPercent(root.percent + (event.angleDelta.y > 0 ? root.step : -root.step))
     }
   }
 
-  Component.onCompleted: refresh()
-
-  Timer {
-    interval: 5000
-    running: true
-    repeat: true
-    onTriggered: root.refresh()
-  }
 }

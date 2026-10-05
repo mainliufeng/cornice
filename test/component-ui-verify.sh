@@ -55,6 +55,39 @@ cornice ipc shell hide cn.media >/dev/null
 kill "$media_fixture_pid" 2>/dev/null
 wait "$media_fixture_pid" 2>/dev/null || true
 media_fixture_pid=""
+section "brightness panel placement and interactive control"
+cornice bar show cn.brightness --section right >/dev/null
+sleep .5
+state=$(cornice ipc bar geometry)
+read -r bx by <<<"$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-bar")][0] | [.x,.y] | join(" ")')"
+read -r x y <<<"$(jq -r --argjson bx "$bx" --argjson by "$by" '.[] | select(.id == "cn.brightness") | [(.x+.width/2+$bx),(.y+.height/2+$by)] | map(round) | join(" ")' <<<"$state")"
+printf '%s %s click\n' "$x" "$y" >&"$pointer_in"
+read -r -t 3 pointer_reply <&"$pointer_out"
+sleep .5
+state=$(cornice ipc brightnessPanel state)
+expect_eq "clicking the brightness icon opens an interactive panel" true "$(jq -r '.open' <<<"$state")"
+expect_eq "brightness follows the top bar instead of the bottom OSD" top "$(jq -r '.edge' <<<"$state")"
+read -r px py <<<"$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-panel")][0] | [.x,.y] | join(" ")')"
+read -r x y <<<"$(jq -r '.slider | [(.x+.width*0.72),(.y+.height/2)] | map(round) | join(" ")' <<<"$state")"
+printf '%s %s click\n' "$((px+x))" "$((py+y))" >&"$pointer_in"
+read -r -t 3 pointer_reply <&"$pointer_out"
+sleep .5
+expect_eq "the actual slider writes the selected backlight level" 72 "$(cat "$CORNICE_TEST_BACKLIGHT")"
+expect_eq "panel and widget share the updated brightness value" 72 "$(cornice ipc brightness status | jq -r '.percent')"
+region=$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-panel")][0] | "\(.x),\(.y) \(.w)x\(.h)"')
+grim -g "$region" "$runtime/ui-brightness.png"
+cornice ipc shell hide cn.brightness >/dev/null
+cp "$XDG_CONFIG_HOME/cornice/config.json" "$runtime/brightness-config-before.json"
+jq '.bar.position = "bottom"' "$runtime/brightness-config-before.json" > "$XDG_CONFIG_HOME/cornice/config.json"
+cornice ipc shell reloadConfig >/dev/null
+sleep .5
+cornice ipc shell summon cn.brightness '{}' >/dev/null
+sleep .3
+expect_eq "brightness follows a bottom bar as well" bottom "$(cornice ipc brightnessPanel state | jq -r '.edge')"
+cornice ipc shell hide cn.brightness >/dev/null
+cp "$runtime/brightness-config-before.json" "$XDG_CONFIG_HOME/cornice/config.json"
+cornice ipc shell reloadConfig >/dev/null
+sleep .5
 kill "$hover_pointer_pid" 2>/dev/null
 wait "$hover_pointer_pid" 2>/dev/null || true
 hover_pointer_pid=""

@@ -4,12 +4,16 @@
   "name": "Brightness",
   "version": "0.1.0",
   "author": "cornice",
-  "description": "Screen backlight: icon in the bar, scroll to change, hover for the percentage",
+  "description": "Screen backlight: interactive panel, wheel adjustment and passive status tooltip",
   "kinds": [
-    "bar-widget"
+    "bar-widget",
+    "panel",
+    "service"
   ],
   "entryPoints": {
-    "barWidget": "Widget.qml"
+    "barWidget": "Widget.qml",
+    "panel": "Panel.qml",
+    "service": "Service.qml"
   },
   "barWidget": {
     "displayName": "Brightness",

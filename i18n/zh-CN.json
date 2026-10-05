@@ -184,5 +184,6 @@
   "weather.unavailable": "暂时无法获取天气",
   "weather.updated": "更新于",
   "weather.wind": "风速",
-  "idle.lockWarning": "即将锁屏 · 移动鼠标或按键继续使用"
+  "idle.lockWarning": "即将锁屏 · 移动鼠标或按键继续使用",
+  "brightness.failed": "亮度调整失败，请检查背光权限并安装 light 或 brightnessctl。"
 }

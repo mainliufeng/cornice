@@ -184,5 +184,6 @@
   "weather.unavailable": "Weather unavailable",
   "weather.updated": "Updated",
   "weather.wind": "Wind",
-  "idle.lockWarning": "Locking soon · move the mouse or press a key to continue"
+  "idle.lockWarning": "Locking soon · move the mouse or press a key to continue",
+  "brightness.failed": "Could not adjust brightness. Check backlight permissions and install light or brightnessctl."
 }
