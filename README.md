@@ -28,6 +28,10 @@ hypridle + hyprlock + polkit-gnome + a launcher, each with its own config file.
 
 More, without screenshots:
 
+- **Menu** — a bar button that opens everything by click: applications, the
+  clipboard, the emoji picker, notifications, the bar layout editor, the theme
+  and wallpaper, do-not-disturb, the lock screen and power. It exists so that no
+  surface depends on remembering a keybinding.
 - **Panels** — clock/calendar, network (Wi-Fi list and connect), bluetooth
   (scan, pair, connect), power (battery, profiles, session actions).
 - **Clipboard** — cliphist-backed history: type to filter, Enter copies, images

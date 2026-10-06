@@ -363,7 +363,7 @@ else
 fi
 
 section "panels"
-for id in cn.clock cn.audio cn.network cn.bluetooth cn.power cn.notifications; do
+for id in cn.clock cn.audio cn.network cn.bluetooth cn.power cn.notifications cn.menu; do
   open_result=$(cornice ipc shell summon "$id" '{}' 2>&1)
   state=$(cornice ipc shell debug | jq -r --arg id "$id" '.openStates[] | select(startswith($id + "=")) | split("=")[1]')
   if [[ $open_result == "ok" && $state == "open" ]]; then
@@ -482,7 +482,7 @@ section "panels open"
 # The editors live in panels, and a QML mistake there does not show up anywhere
 # else: the plugin list still looks fine and the panel simply never opens. So
 # open each one and check it really reports itself open.
-for panel in cn.weather cn.clock cn.audio cn.media cn.notifications cn.bar-editor cn.launcher; do
+for panel in cn.weather cn.clock cn.audio cn.media cn.notifications cn.bar-editor cn.launcher cn.menu; do
   cornice ipc shell summon "$panel" '{}' >/dev/null 2>&1
   sleep 0.6
   state=$(cornice ipc shell windows 2>/dev/null | jq -r --arg id "$panel" '[.[] | select(.id == $id) | .open] | first' 2>/dev/null)
@@ -498,6 +498,38 @@ for panel in cn.weather cn.clock cn.audio cn.media cn.notifications cn.bar-edito
   fi
   cornice ipc shell hide "$panel" >/dev/null 2>&1
 done
+
+section "menu (button-triggered)"
+# The menu is the click-only path to surfaces that would otherwise need a
+# keybinding, so its row table is part of the contract. Assert structure (not
+# labels, which follow the locale), then that it opens and closes.
+cornice ipc shell summon cn.menu '{}' >/dev/null 2>&1
+sleep 0.6
+menu_state=$(cornice ipc menu state 2>/dev/null)
+[[ -n $menu_state ]] || menu_state='{}'
+menu_open=$(jq -r '.open' <<<"$menu_state" 2>/dev/null)
+menu_rows=$(jq -r '.rows' <<<"$menu_state" 2>/dev/null)
+if [[ $menu_open == "true" && ${menu_rows:-0} -ge 8 ]]; then
+  pass "the menu opens with $menu_rows rows"
+else
+  fail "the menu did not open (open='${menu_open:-none}', rows='${menu_rows:-0}')"
+fi
+for expected in cn.launcher cn.clipboard cn.emojis cn.notifications cn.bar-editor cn.power; do
+  if jq -e --arg id "$expected" '.toggles | index($id)' <<<"$menu_state" >/dev/null 2>&1; then
+    pass "menu row toggles $expected"
+  else
+    fail "menu has no row toggling $expected"
+  fi
+done
+if jq -e '.calls | index("cn.lock.lock")' <<<"$menu_state" >/dev/null 2>&1; then
+  pass "menu row calls the lock service"
+else
+  fail "menu has no lock row"
+fi
+cornice ipc shell hide cn.menu >/dev/null 2>&1
+sleep 0.3
+menu_closed=$(cornice ipc menu state 2>/dev/null | jq -r '.open' 2>/dev/null)
+expect_eq "menu closes" "false" "${menu_closed:-true}"
 
 # ...and the editors inside them.
 cornice ipc shell summon cn.weather '{}' >/dev/null 2>&1

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.menu",
+  "name": "Menu",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Button-triggered menu: reach the clipboard, emoji, bar layout, theme, wallpaper, DND, lock and power without a keybinding",
+  "kinds": [
+    "bar-widget",
+    "panel"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "Widget.qml",
+    "panel": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Menu",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "left",
+    "defaults": {
+      "icon": "\uf0c9"
+    },
+    "schema": [
+      {
+        "key": "icon",
+        "type": "string",
+        "label": "Glyph to show"
+      }
+    ]
+  }
+}

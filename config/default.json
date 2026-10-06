@@ -8,6 +8,9 @@
     "layout": {
       "left": [
         {
+          "id": "cn.menu"
+        },
+        {
           "id": "cn.launcher"
         },
         {

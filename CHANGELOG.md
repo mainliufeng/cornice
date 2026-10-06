@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Bar menu button: one click reaches the launcher, clipboard, emoji picker,
+  notifications, bar layout editor, theme, wallpaper, do-not-disturb, lock
+  screen and power, so nothing requires a keybinding. The optional snippet now
+  lists only the binds that add something a click cannot.
+
 ## 0.2.4
 
 - Left-click audio to open its interactive slider panel; right-click toggles
