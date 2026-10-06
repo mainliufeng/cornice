@@ -2,6 +2,11 @@
 
 ## 0.2.5
 
+- Clicking a notification now acts on it instead of only dismissing it: the
+  client's `default` action is invoked when it has one, and otherwise the window
+  of the app that sent it is focused (switching workspace when needed). Apps that
+  send no actions at all — Paseo, Grok Bot, satty — still work through the D-Bus
+  sender hints, and the same click works on entries in the notification centre.
 - Bar menu button: one click reaches the launcher, clipboard, emoji picker,
   notifications, bar layout editor, theme, wallpaper, do-not-disturb, lock
   screen and power, so nothing requires a keybinding. The optional snippet now
