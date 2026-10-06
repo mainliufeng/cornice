@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 
-// Menu button for the left end of the bar.
+// Menu button for the right end of the bar.
 //
 // The point of this button is that every cornice surface stays reachable with
 // the mouse alone: no keybinding is required to open the clipboard, the emoji

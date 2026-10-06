@@ -8,9 +8,6 @@
     "layout": {
       "left": [
         {
-          "id": "cn.menu"
-        },
-        {
           "id": "cn.launcher"
         },
         {
@@ -51,6 +48,9 @@
         },
         {
           "id": "cn.power"
+        },
+        {
+          "id": "cn.menu"
         }
       ]
     }

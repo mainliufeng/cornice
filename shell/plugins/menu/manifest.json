@@ -18,7 +18,7 @@
     "displayName": "Menu",
     "category": "Compositor",
     "allowMultiple": false,
-    "defaultSection": "left",
+    "defaultSection": "right",
     "defaults": {
       "icon": "\uf0c9"
     },
