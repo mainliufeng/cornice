@@ -36,6 +36,32 @@ PanelFrame {
     return list;
   }
 
+  // Quickshell only lists access points while the device's scanner is on, and it
+  // is off by default — which is why the list used to show only the connected
+  // network. Keep it on for as long as the panel is open.
+  property bool scannerAcquired: false
+
+  function updateScanner(enabled) {
+    if (!root.wifi || !root.device) return
+    try {
+      if (enabled) {
+        if (root.device.scannerEnabled !== true) {
+          root.device.scannerEnabled = true
+          root.scannerAcquired = true
+        }
+      } else if (root.scannerAcquired) {
+        root.device.scannerEnabled = false
+        root.scannerAcquired = false
+      }
+    } catch (e) {
+      console.warn("cornice: wifi scanner toggle failed: " + e)
+    }
+  }
+
+  onOpened: updateScanner(true)
+  onDismissed: updateScanner(false)
+  onDeviceChanged: if (root.isOpen) updateScanner(true)
+
   function signalIcon(strength) {
     if (strength >= 75)
       return "\u{F0928}";
@@ -128,7 +154,10 @@ PanelFrame {
           glyph: "\uf021"
           filled: true
           enabled: !root.connecting
-          onClicked: Util.exec("nmcli device wifi rescan")
+          onClicked: {
+            root.updateScanner(true)
+            Util.exec("nmcli device wifi rescan")
+          }
         }
       }
       Text {
@@ -145,6 +174,15 @@ PanelFrame {
         color: Color.muted
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
+      }
+      Text {
+        width: parent.width
+        visible: root.wifi && Networking.wifiEnabled && root.networks.length <= 1
+        text: I18n.t("network.scanning")
+        color: Color.muted
+        wrapMode: Text.Wrap
+        font.family: Style.fontFamily
+        font.pixelSize: Style.smallFontSize
       }
       Text {
         width: parent.width
@@ -223,8 +261,10 @@ PanelFrame {
             width: parent.width
             spacing: Style.space(1)
             visible: root.selectedSsid === modelData.name
-            onVisibleChanged: if (visible)
+            onVisibleChanged: if (visible) {
               list.positionViewAtIndex(index, ListView.Contain)
+              pskField.forceFocus()
+            }
             TextField {
               id: pskField
               width: parent.width - connectButton.width - parent.spacing

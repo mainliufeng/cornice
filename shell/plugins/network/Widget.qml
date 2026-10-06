@@ -95,6 +95,7 @@ Item {
           state: String(device.state),
           connected: device.connected,
           address: String(device.address),
+          scannerEnabled: device.scannerEnabled === true,
           networkCount: device.networks ? (device.networks.values ? device.networks.values.length : -1) : -2
         })),
         activeDevice: root.activeDevice ? String(root.activeDevice.name) : null,

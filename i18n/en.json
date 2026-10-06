@@ -122,6 +122,7 @@
   "network.notConnected": "Not connected",
   "network.rescan": "Rescan",
   "network.saved": "Saved",
+  "network.scanning": "Scanning for networks…",
   "network.wifiOff": "Wi-Fi off",
   "network.wifiOn": "Wi-Fi on",
   "notifications.dnd": "DND",

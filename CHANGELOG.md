@@ -2,6 +2,10 @@
 
 ## 0.2.5
 
+- The network panel now turns the Wi-Fi scanner on while it is open. Quickshell
+  keeps it off by default, so the panel only ever listed the connected network
+  and there was nothing else to switch to. The password field also focuses
+  itself when it appears, and the panel says it is scanning meanwhile.
 - Twelve new built-in themes (Catppuccin Mocha/Latte, Gruvbox Dark/Light, Nord,
   Tokyo Night, Rosé Pine and Rosé Pine Dawn, Everforest Dark, Dracula, Kanagawa,
   One Dark), and the bar menu's theme row now opens a picker list instead of
