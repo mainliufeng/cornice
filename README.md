@@ -44,7 +44,10 @@ More, without screenshots:
 - **Polkit agent** — the authentication dialog lives in the shell.
 - **Wallpaper** — static background layer with per-workspace overrides that
   steps aside for mpvpaper/hyprpaper/swaybg/swww/wbg.
-- **Themes** — `mono` (dark) and `dawn` (light), switchable at runtime.
+- **Themes** — fourteen built-in palettes (`mono`, `dawn`, Catppuccin Mocha/Latte,
+  Gruvbox Dark/Light, Nord, Tokyo Night, Rosé Pine and Rosé Pine Dawn,
+  Everforest Dark, Dracula, Kanagawa, One Dark). Pick one from the bar menu or
+  switch at runtime with `cornice theme <name>`.
 - **IPC** — the shell serves its own socket, so plugins keep their own targets
   and every panel is scriptable.
 
@@ -214,7 +217,7 @@ so write only what differs. Arrays are replaced, objects are merged;
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `theme` | `"mono"` | `mono` (dark) or `dawn` (light) |
+| `theme` | `"mono"` | any directory under `themes/`, e.g. `nord`, `gruvbox-dark`, `catppuccin-latte` |
 | `background.enabled` | `true` | paint the wallpaper layer |
 | `background.dir` | `~/Pictures/wallpapers` | directory scanned for images |
 | `background.mode` | `"fill"` | `fill` / `fit` / `stretch` / `center` / `tile` |

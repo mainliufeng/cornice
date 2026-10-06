@@ -2,6 +2,10 @@
 
 ## 0.2.5
 
+- Twelve new built-in themes (Catppuccin Mocha/Latte, Gruvbox Dark/Light, Nord,
+  Tokyo Night, Rosé Pine and Rosé Pine Dawn, Everforest Dark, Dracula, Kanagawa,
+  One Dark), and the bar menu's theme row now opens a picker list instead of
+  cycling through them.
 - The launcher's single-instance lock no longer leaks into the processes the
   shell starts. Inheriting it meant any app (or watchdog child) that outlived a
   restart kept the lock, the next start refused with "another launcher is already

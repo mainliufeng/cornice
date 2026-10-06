@@ -1,0 +1,12 @@
+{
+  "colors": {
+    "foreground": "#4c4f69",
+    "background": "#eff1f5",
+    "accent": "#1e66f5",
+    "urgent": "#d20f39",
+    "muted": "#8c8fa1",
+    "barBackground": "#e6e9ef",
+    "surface": "#ccd0da",
+    "surfaceBorder": "#bcc0cc"
+  }
+}

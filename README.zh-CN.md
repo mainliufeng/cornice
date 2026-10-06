@@ -35,7 +35,7 @@ waybar + mako + hypridle + hyprlock + polkit-gnome + 一个启动器 这一串�
 - **Idle** — dim / 灭屏 / 锁屏，AC 与电池分别配置；睡眠前、`loginctl lock-session`、**合盖**都会锁屏
 - **polkit 代理** — 认证对话框就在 shell 里
 - **壁纸** — 静态背景层，支持按工作区覆盖；检测到 mpvpaper/hyprpaper/swaybg/swww/wbg 时自动让位
-- **主题** — `mono`（深色）与 `dawn`（浅色），可运行时切换
+- **主题** — 14 套内置配色（`mono`、`dawn`、Catppuccin Mocha/Latte、Gruvbox Dark/Light、Nord、Tokyo Night、Rosé Pine 与 Rosé Pine Dawn、Everforest Dark、Dracula、Kanagawa、One Dark）；在栏菜单里选，或用 `cornice theme <名称>` 运行时切换
 - **IPC** — shell 自带 socket，插件各自持有 target，所有面板都能脚本化
 
 ## 依赖
@@ -178,7 +178,7 @@ cornice clock zones            # 列出系统里所有可用时区
 
 | 键 | 默认 | 含义 |
 | --- | --- | --- |
-| `theme` | `"mono"` | `mono`（深色）或 `dawn`（浅色） |
+| `theme` | `"mono"` | `themes/` 下的任意名称，如 `nord`、`gruvbox-dark`、`catppuccin-latte` |
 | `background.enabled` | `true` | 是否绘制壁纸层 |
 | `background.dir` | `~/Pictures/wallpapers` | 扫描图片的目录 |
 | `background.mode` | `"fill"` | `fill` / `fit` / `stretch` / `center` / `tile` |

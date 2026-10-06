@@ -277,6 +277,33 @@ if ((ready)); then
   expect_eq "theme" "mono" "$(cornice theme)"
   expect_eq "socket path" "$runtime/cornice-${USER}.sock" "$(cornice socket)"
 
+  # Themes: every shipped theme must parse and carry the tokens the shell needs,
+  # every one must be listed, and switching must actually reach the shell.
+  theme_dir="$install_prefix/themes"
+  theme_total=0
+  bad_themes=0
+  for theme_file in "$theme_dir"/*/theme.json; do
+    [[ -f $theme_file ]] || continue
+    theme_total=$((theme_total + 1))
+    if ! jq -e '.colors.foreground and .colors.background and .colors.accent and .colors.urgent and .colors.muted' "$theme_file" >/dev/null 2>&1; then
+      bad_themes=$((bad_themes + 1))
+      fail "theme is missing required colours: ${theme_file#$theme_dir/}"
+    fi
+  done
+  ((bad_themes == 0)) && pass "$theme_total themes parse with every required colour"
+  expect_eq "the theme list matches the files on disk" "$theme_total" "$(cornice theme list | wc -l)"
+  for theme in catppuccin-mocha catppuccin-latte gruvbox-dark gruvbox-light nord tokyo-night rose-pine rose-pine-dawn everforest-dark dracula kanagawa one-dark; do
+    if grep -qx "$theme" <<<"$(cornice theme list)"; then
+      pass "theme list includes $theme"
+    else
+      fail "theme list is missing $theme"
+    fi
+  done
+  expect_eq "switching to a theme reports it" "nord" "$(cornice theme nord)"
+  expect_eq "the shell actually switched" "nord" "$(cornice theme)"
+  cornice theme mono >/dev/null
+  expect_eq "switching back restores the sandbox default" "mono" "$(cornice theme)"
+
   plugin_count=$(cornice plugins | jq 'length')
   on_disk=$(find "$install_prefix/shell/plugins" -name manifest.json | wc -l)
   if ((plugin_count == on_disk)); then pass "every plugin loaded: $plugin_count/$on_disk"
@@ -521,6 +548,14 @@ for expected in cn.launcher cn.clipboard cn.emojis cn.notifications cn.bar-edito
     fail "menu has no row toggling $expected"
   fi
 done
+# The theme picker reads the theme directory asynchronously on open.
+menu_themes=0
+for _ in $(seq 1 25); do
+  menu_themes=$(cornice ipc menu state 2>/dev/null | jq -r '.themes | length' 2>/dev/null)
+  [[ ${menu_themes:-0} -ge 10 ]] && break
+  sleep 0.2
+done
+expect_eq "the menu offers a theme picker with every theme" "$theme_total" "${menu_themes:-0}"
 if jq -e '.calls | index("cn.lock.lock")' <<<"$menu_state" >/dev/null 2>&1; then
   pass "menu row calls the lock service"
 else
