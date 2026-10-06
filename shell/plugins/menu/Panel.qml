@@ -29,6 +29,9 @@ PanelFrame {
   property var themes: []
   // Index into `rows` of the keyboard highlight; -1 until the first move.
   property int selection: -1
+  // Live theme preview: what to restore if the choice is cancelled with Esc.
+  property string themeBefore: ""
+  property bool themeConfirmed: false
 
   readonly property var rootRows: [
     { glyph: "\uf009", label: I18n.t("menu.applications"), toggle: "cn.launcher" },
@@ -72,34 +75,71 @@ PanelFrame {
 
   function activate(row) {
     // Page rows navigate the panel; they must not close it.
-    if (row.page) {
-      root.page = row.page
+    if (row.page === "themes") {
+      root.page = "themes"
       return
     }
-    root.close()
-    if (row.toggle) {
+    if (row.page === "root") {
+      root.page = "root"
+      return
+    }
+    if (row.theme) {
+      // Confirming keeps the preview: persist it so the choice survives a
+      // restart, and mark it before closing so onDismissed does not revert.
+      themeConfirmed = true
+      Util.exec("cornice theme " + Util.shellQuote(row.theme))
+    } else if (row.toggle) {
       if (host) host.toggle(row.toggle, {})
     } else if (row.call) {
       if (host) host.callPlugin(row.call[0], row.call[1])
     } else if (row.action === "dnd") {
       if (notifications) notifications.setDnd(!root.dnd)
-    } else if (row.theme) {
-      Util.exec("cornice theme " + Util.shellQuote(row.theme))
     } else if (row.command) {
       Util.exec(row.command)
     }
+    root.close()
+  }
+
+  // Moving the highlight through the theme list previews each theme live, so
+  // the list is browsable; cancelling restores the one you came in with.
+  function previewSelectedTheme() {
+    if (page !== "themes") return
+    const row = rows[selection]
+    if (row && row.theme && row.theme !== Theme.name) Theme.name = row.theme
+  }
+
+  function cancelPreview() {
+    if (!themeConfirmed && themeBefore !== "" && Theme.name !== themeBefore)
+      Theme.name = themeBefore
+    themeBefore = ""
   }
 
   // Refresh the installed themes each time the menu opens (a theme can be
   // dropped in while the shell is running).
   onOpened: {
     root.page = "root"
+    themeBefore = ""
+    themeConfirmed = false
     resetSelection()
     themeList.running = true
   }
 
-  onPageChanged: resetSelection()
-  onSelectionChanged: ensureVisible(selection)
+  onDismissed: cancelPreview()
+  onPageChanged: {
+    // Entering the picker remembers the theme to fall back to; leaving it
+    // cancels any preview that was not confirmed.
+    if (page === "themes") {
+      themeBefore = Theme.name
+      themeConfirmed = false
+    } else {
+      cancelPreview()
+    }
+    resetSelection()
+  }
+  onSelectionChanged: {
+    ensureVisible(selection)
+    previewSelectedTheme()
+  }
 
   function resetSelection() {
     selection = -1
@@ -281,6 +321,12 @@ PanelFrame {
         theme: Theme.name,
         themes: root.themes
       })
+    }
+
+    // Test hook: open a picker page without simulating a click.
+    function openPage(name: string): string {
+      root.page = String(name)
+      return root.page
     }
   }
 }

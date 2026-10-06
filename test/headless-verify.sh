@@ -591,6 +591,31 @@ if command -v wtype >/dev/null 2>&1; then
   expect_eq "Enter activates the highlighted row (launcher opens)" "1" \
     "$(cornice ipc shell windows 2>/dev/null | jq '[.[] | select(.id == "cn.launcher" and .open == true)] | length')"
   cornice ipc shell hide cn.launcher >/dev/null 2>&1
+
+  # Theme preview: moving through the list changes the theme live, so the list
+  # can be browsed; Esc cancels back to the theme the picker opened with.
+  theme_before=$(cornice theme)
+  cornice ipc shell summon cn.menu '{}' >/dev/null 2>&1
+  sleep 0.5
+  for _ in $(seq 1 25); do
+    [[ $(cornice ipc menu state 2>/dev/null | jq -r '.themes | length') -ge 10 ]] && break
+    sleep 0.2
+  done
+  cornice ipc menu openPage themes >/dev/null 2>&1
+  sleep 0.3
+  wtype -k Down >/dev/null 2>&1
+  sleep 0.3
+  theme_preview=$(cornice theme)
+  if [[ -n $theme_preview && $theme_preview != "$theme_before" ]]; then
+    pass "moving through the theme list previews the theme ($theme_before → $theme_preview)"
+  else
+    fail "the theme did not preview (before='$theme_before', now='${theme_preview:-none}')"
+  fi
+  expect_eq "the menu stays open while previewing" "true" "$(cornice ipc menu state 2>/dev/null | jq -r '.open')"
+  wtype -k Escape >/dev/null 2>&1
+  sleep 0.4
+  expect_eq "Esc cancels the preview and restores the theme" "$theme_before" "$(cornice theme)"
+  expect_eq "Esc closes the menu" "false" "$(cornice ipc menu state 2>/dev/null | jq -r '.open')"
 else
   warn "wtype missing; menu keyboard navigation not exercised"
 fi
