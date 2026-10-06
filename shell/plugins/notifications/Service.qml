@@ -118,6 +118,13 @@ Item {
     onTriggered: nameProbe.running = true
   }
 
+  function senderPidOf(notification) {
+    const hints = notification ? notification.hints : null
+    if (hints && hints["sender-pid"] !== undefined && hints["sender-pid"] !== null)
+      return String(hints["sender-pid"])
+    return ""
+  }
+
   // The live object for a notification id, or null when it is already gone.
   function liveNotification(id) {
     const tracked = server.trackedNotifications
@@ -155,7 +162,11 @@ Item {
       summary: notification.summary || "",
       body: notification.body || "",
       urgency: notification.urgency,
-      at: Date.now()
+      at: Date.now(),
+      // Kept so the history list can still jump to the app after the live
+      // notification object is gone.
+      desktopEntry: notification.desktopEntry || "",
+      senderPid: senderPidOf(notification)
     }
 
     history = [entry].concat(history).slice(0, historyLimit)

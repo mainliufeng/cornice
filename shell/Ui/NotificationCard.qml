@@ -26,8 +26,37 @@ Item {
   readonly property string body: entry.body !== undefined ? entry.body : (notification ? notification.body : "")
   readonly property string appName: entry.appName !== undefined ? entry.appName : (notification ? notification.appName : "")
   readonly property string appIcon: entry.appIcon !== undefined ? entry.appIcon : (notification ? notification.appIcon : "")
-  readonly property var actions: notification ? notification.actions : []
   readonly property bool canReply: allowReply && notification !== null && notification.hasInlineReply === true
+
+  // Clients that send actions expect a click to invoke the "default" one (that
+  // is how the freedesktop spec opens the app). Clients that send none — Paseo,
+  // Grok Bot, satty here — leave only the D-Bus sender hint, so the click falls
+  // back to focusing the window of the app that sent it.
+  function actionList() {
+    const raw = notification ? notification.actions : null
+    if (!raw) return []
+    if (Array.isArray(raw)) return raw
+    // A Quickshell list can arrive as either an ObjectModel (`.values`, an
+    // array) or a sequence (length + indices). On a sequence `.values` is
+    // Array.prototype.values — a function — so it must never be returned.
+    if (Array.isArray(raw.values)) return raw.values
+    const out = []
+    const count = raw.length === undefined ? 0 : Number(raw.length)
+    for (let i = 0; i < count; i++) out.push(raw[i])
+    return out
+  }
+
+  readonly property var defaultAction: {
+    for (const action of actionList()) {
+      if (action && action.identifier === "default") return action
+    }
+    return null
+  }
+
+  // "default" is the click-anywhere action and "inline-reply" has its own field
+  // further down; neither belongs in the generic action chips.
+  readonly property var visibleActions: actionList().filter(
+    action => !action || (action.identifier !== "default" && action.identifier !== "inline-reply"))
   readonly property string replyPlaceholder: {
     if (!notification) return "Reply…"
     const given = String(notification.inlineReplyPlaceholder || "")
@@ -48,6 +77,41 @@ Item {
     root.dismissed()
   }
 
+  function senderPid() {
+    if (entry.senderPid !== undefined && entry.senderPid !== "") return String(entry.senderPid)
+    const hints = notification ? notification.hints : null
+    if (hints && hints["sender-pid"] !== undefined && hints["sender-pid"] !== null)
+      return String(hints["sender-pid"])
+    return ""
+  }
+
+  function desktopEntryId() {
+    if (entry.desktopEntry !== undefined && entry.desktopEntry !== "") return String(entry.desktopEntry)
+    return notification && notification.desktopEntry ? String(notification.desktopEntry) : ""
+  }
+
+  function focusApp() {
+    Util.exec("cornice-focus-app"
+      + " --pid " + Util.shellQuote(senderPid())
+      + " --desktop " + Util.shellQuote(desktopEntryId())
+      + " --name " + Util.shellQuote(root.appName))
+  }
+
+  // A left click is an instruction to act on the notification, not just to
+  // throw it away.
+  function activate() {
+    if (defaultAction) {
+      try {
+        defaultAction.invoke()
+      } catch (error) {
+        console.warn("cornice: default notification action failed: " + error)
+      }
+    } else {
+      focusApp()
+    }
+    if (notification) notification.dismiss()
+  }
+
   // Declared *before* the content: a MouseArea declared later would sit on top
   // and swallow the clicks meant for action chips and the reply field.
   MouseArea {
@@ -60,7 +124,7 @@ Item {
         root.dismissed()
         return
       }
-      if (root.notification) root.notification.dismiss()
+      root.activate()
       root.activated()
       root.dismissed()
     }
@@ -125,10 +189,10 @@ Item {
     Flow {
       width: parent.width
       spacing: Style.space(1)
-      visible: root.actions.length > 0 && !root.replying
+      visible: root.visibleActions.length > 0 && !root.replying
 
       Repeater {
-        model: root.actions
+        model: root.visibleActions
 
         delegate: Rectangle {
           required property var modelData

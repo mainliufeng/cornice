@@ -36,6 +36,15 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--repeat", type=float, default=0.0,
                         help="re-send every N seconds (keeps a live notification around)")
+    parser.add_argument("--bare", action="store_true",
+                        help="send no actions at all (how Paseo and friends behave)")
+    parser.add_argument("--default-action", action="store_true",
+                        help="add a freedesktop 'default' action")
+    parser.add_argument("--app-name", default="cornice reply test")
+    parser.add_argument("--desktop-entry", default="")
+    parser.add_argument("--sender-pid", type=int, default=None)
+    parser.add_argument("--expire", type=int, default=0,
+                        help="expire timeout in ms (0 = cornice's default)")
     parser.add_argument("--log", default="/tmp/fake-notify-reply.log")
     args = parser.parse_args()
 
@@ -70,20 +79,30 @@ def main() -> int:
     )
 
     def notify() -> bool:
+        actions = []
+        if not args.bare:
+            if args.default_action:
+                actions += ["default", "Open"]
+            actions += ["inline-reply", "Reply"]
+        hints = {"x-kde-reply-placeholder-text": GLib.Variant("s", args.placeholder)}
+        if args.desktop_entry:
+            hints["desktop-entry"] = GLib.Variant("s", args.desktop_entry)
+        if args.sender_pid is not None:
+            hints["sender-pid"] = GLib.Variant("i", args.sender_pid)
         try:
             reply = connection.call_sync(
                 NOTIFICATIONS, PATH_, IFACE, "Notify",
                 GLib.Variant(
                     "(susssasa{sv}i)",
                     (
-                        "cornice reply test",          # app name
+                        args.app_name,                 # app name
                         state.get("id", 0),            # replace the previous one
                         "dialog-question",             # icon
                         args.summary,
                         args.body,
-                        ["inline-reply", "Reply"],     # the action cornice looks for
-                        {"x-kde-reply-placeholder-text": GLib.Variant("s", args.placeholder)},
-                        0,                             # never expire: stay in history
+                        actions,
+                        hints,
+                        args.expire,                   # 0 = cornice's own default
                     ),
                 ),
                 GLib.VariantType("(u)"),

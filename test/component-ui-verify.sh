@@ -107,6 +107,129 @@ cornice ipc shell hide cn.audio >/dev/null
 cp "$runtime/brightness-config-before.json" "$XDG_CONFIG_HOME/cornice/config.json"
 cornice ipc shell reloadConfig >/dev/null
 sleep .5
+
+section "notification click reaches the sender"
+# Clicking a notification must act on it, not just delete it: invoke the
+# client's default action when it has one, otherwise focus the window of the
+# app that sent it. These fixtures are the only writers of the log lines the
+# assertions look for, so the click is the only thing that can produce them.
+cornice ipc notifications setDnd false >/dev/null 2>&1
+
+wait_for_notification_id() {  # wait_for_notification_id <log>
+  local id=""
+  for _ in $(seq 1 20); do
+    id=$(grep -o 'sent id=[0-9]*' "$1" 2>/dev/null | tail -1 | cut -d= -f2)
+    [[ -n $id ]] && { echo "$id"; return 0; }
+    sleep 0.3
+  done
+  return 1
+}
+
+click_popup() {  # click_popup — click the middle of the newest popup
+  local pop_x="" pop_y pop_w pop_h
+  for _ in $(seq 1 25); do
+    read -r pop_x pop_y pop_w pop_h <<<"$(hyprctl layers -j \
+      | jq -r '[.. | objects | select(.namespace? == "cornice-notification-popups")][0] | [.x,.y,.w,.h] | join(" ")')"
+    [[ -n $pop_x && $pop_x != null ]] && break
+    sleep 0.2
+  done
+  [[ -n $pop_x && $pop_x != null ]] || return 1
+  # The card lives inside the surface's padding, so the exact top edge is not
+  # reliably clickable; the middle always is.
+  printf '%s %s click\n' "$((pop_x + pop_w / 2))" "$((pop_y + pop_h / 2))" >&"$pointer_in"
+  read -r -t 3 pointer_reply <&"$pointer_out"
+  sleep 0.6
+}
+
+cornice ipc notifications dismissAll >/dev/null 2>&1
+rm -f "$runtime/click-default.log"
+setsid python3 "$prefix/test/fake-notify-reply.py" --timeout 20 --default-action \
+  --app-name cornice-click-default --expire 20000 --summary "Click me" \
+  --body "the body click should invoke the default action" \
+  --log "$runtime/click-default.log" >"$runtime/click-default.out" 2>&1 &
+click_default_pid=$!
+if wait_for_notification_id "$runtime/click-default.log" >/dev/null; then
+  if click_popup; then
+    if grep -q 'key=default' "$runtime/click-default.log"; then
+      pass "a popup click invokes the client's default action"
+    else
+      fail "the default action was not invoked ($(tr '\n' ' ' <"$runtime/click-default.log"))"
+    fi
+    expect_eq "the clicked popup is gone" "0" "$(cornice ipc notifications status | jq -r '.popups')"
+  else
+    fail "no notification popup layer was found to click"
+  fi
+else
+  fail "the default-action client never sent a notification"
+fi
+kill "$click_default_pid" 2>/dev/null || true
+cornice ipc notifications dismissAll >/dev/null 2>&1
+
+# Two throwaway windows of our own: the window-switcher fixtures sleep 180s and
+# may already be gone by this point in the suite.
+hyprctl dispatch exec 'kitty --override confirm_os_window_close=0 --title Cornice-notify-A sleep 90' >/dev/null
+hyprctl dispatch exec 'kitty --override confirm_os_window_close=0 --title Cornice-notify-B sleep 90' >/dev/null
+for _ in $(seq 1 40); do
+  [[ $(hyprctl clients -j | jq '[.[] | select((.class|ascii_downcase) == "kitty" and (.title|startswith("Cornice-notify-")))] | length') -ge 2 ]] && break
+  sleep 0.2
+done
+readarray -t notify_windows < <(hyprctl clients -j | jq -r '[.[] | select((.class|ascii_downcase) == "kitty" and (.title|startswith("Cornice-notify-")))] | .[].address')
+if ((${#notify_windows[@]} >= 2)); then
+  focus_target="${notify_windows[0]}"
+  focus_other="${notify_windows[1]}"
+  focus_pid=$(hyprctl clients -j | jq -r --arg a "$focus_target" '.[] | select(.address == $a) | .pid')
+
+  # 1. the helper on its own
+  hyprctl dispatch focuswindow "address:$focus_other" >/dev/null
+  sleep 0.3
+  "$prefix/bin/cornice-focus-app" --pid "$focus_pid" >/dev/null 2>&1
+  sleep 0.3
+  expect_eq "cornice-focus-app focuses the window that matches the sender pid" "$focus_target" \
+    "$(hyprctl activewindow -j | jq -r '.address')"
+  hyprctl dispatch focuswindow "address:$focus_target" >/dev/null
+  sleep 0.3
+  if "$prefix/bin/cornice-focus-app" --desktop kitty.desktop >/dev/null 2>&1; then
+    focused=$(hyprctl activewindow -j | jq -r '.address')
+    if [[ " ${notify_windows[*]} " == *" $focused "* ]]; then
+      pass "cornice-focus-app matches by desktop entry too"
+    else
+      fail "desktop matching focused '$focused', not a kitty window"
+    fi
+  else
+    fail "cornice-focus-app could not match by desktop entry"
+  fi
+
+  # 2. the whole path: a client with no actions, clicked in its popup
+  hyprctl dispatch focuswindow "address:$focus_other" >/dev/null
+  sleep 0.3
+  rm -f "$runtime/click-focus.log"
+  setsid python3 "$prefix/test/fake-notify-reply.py" --timeout 20 --bare \
+    --app-name cornice-click-focus --desktop-entry kitty.desktop --sender-pid "$focus_pid" \
+    --expire 20000 --summary "Focus me" --body "the body click should focus kitty" \
+    --log "$runtime/click-focus.log" >"$runtime/click-focus.out" 2>&1 &
+  click_focus_pid=$!
+  if focus_notif_id=$(wait_for_notification_id "$runtime/click-focus.log"); then
+    expect_eq "the sender pid hint survives into the history entry" "$focus_pid" \
+      "$(cornice ipc notifications history | jq -r --arg id "$focus_notif_id" '.[] | select(.id == ($id|tonumber)) | .senderPid')"
+    if click_popup; then
+      expect_eq "a popup click focuses the window of the sending app" "$focus_target" \
+        "$(hyprctl activewindow -j | jq -r '.address')"
+    else
+      fail "no notification popup layer was found to click"
+    fi
+    expect_eq "the focused popup is gone" "0" "$(cornice ipc notifications status | jq -r '.popups')"
+  else
+    fail "the no-action client never sent a notification"
+  fi
+  kill "$click_focus_pid" 2>/dev/null || true
+else
+  fail "could not open two kitty windows for the focus check"
+fi
+for address in "${notify_windows[@]:-}"; do
+  [[ -n $address ]] && hyprctl dispatch closewindow "address:$address" >/dev/null 2>&1
+done
+cornice ipc notifications dismissAll >/dev/null 2>&1
+
 kill "$hover_pointer_pid" 2>/dev/null
 wait "$hover_pointer_pid" 2>/dev/null || true
 hover_pointer_pid=""
