@@ -15,7 +15,7 @@ ShellRoot {
 
   readonly property string prefix: Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
   readonly property string home: Quickshell.env("HOME")
-  readonly property string version: "0.2.4"
+  readonly property string version: "0.2.5"
 
   readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"
   readonly property string userName: Quickshell.env("USER") || "user"

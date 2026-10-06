@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.5
 
 - Bar menu button: one click reaches the launcher, clipboard, emoji picker,
   notifications, bar layout editor, theme, wallpaper, do-not-disturb, lock
