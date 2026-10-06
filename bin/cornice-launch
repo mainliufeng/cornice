@@ -38,10 +38,16 @@ fi
 
 lock_file="${XDG_RUNTIME_DIR:-/tmp}/cornice-launch.lock"
 if command -v flock >/dev/null 2>&1; then
-  exec 9>"$lock_file"
-  if ! flock -n 9; then
-    echo "cornice: another launcher is already starting the shell" >&2
-    exit 0
+  # Re-exec under flock(1) instead of locking an fd opened here. A plain
+  # `exec 9>"$lock_file"` is inherited by everything this script starts, so any
+  # app the shell launches (or a watchdog child that outlives a crash) keeps the
+  # lock after the launcher dies; the next start then refuses with "another
+  # launcher is already starting", systemd burns through its start limit, and the
+  # session sits there with no bar. flock's --close hands the lock to a parent
+  # that outlives the script without leaking the fd into its children.
+  if [[ ${CORNICE_LAUNCH_LOCKED:-} != 1 ]]; then
+    export CORNICE_LAUNCH_LOCKED=1
+    exec flock --nonblock --close "$lock_file" "$self" "$@"
   fi
 fi
 
