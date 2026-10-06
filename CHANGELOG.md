@@ -2,6 +2,10 @@
 
 ## 0.2.5
 
+- The launcher's single-instance lock no longer leaks into the processes the
+  shell starts. Inheriting it meant any app (or watchdog child) that outlived a
+  restart kept the lock, the next start refused with "another launcher is already
+  starting", and systemd hit its start limit — leaving the session with no bar.
 - Clicking a notification now acts on it instead of only dismissing it: the
   client's `default` action is invoked when it has one, and otherwise the window
   of the app that sent it is focused (switching workspace when needed). Apps that
