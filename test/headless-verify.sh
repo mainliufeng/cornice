@@ -561,6 +561,39 @@ if jq -e '.calls | index("cn.lock.lock")' <<<"$menu_state" >/dev/null 2>&1; then
 else
   fail "menu has no lock row"
 fi
+
+# Keyboard navigation: arrows and Ctrl-j/k move the highlight, and moving must
+# not close the menu (pressing a key used to exit it).
+if command -v wtype >/dev/null 2>&1; then
+  menu_selection=$(cornice ipc menu state 2>/dev/null | jq -r '.selection')
+  wtype -k Down >/dev/null 2>&1
+  sleep 0.25
+  menu_down=$(cornice ipc menu state 2>/dev/null | jq -r '.selection')
+  if [[ $menu_down != "$menu_selection" ]]; then
+    pass "the down arrow moves the menu highlight ($menu_selection → $menu_down)"
+  else
+    fail "the down arrow did not move the highlight (still $menu_selection)"
+  fi
+  wtype -M ctrl -k j >/dev/null 2>&1
+  sleep 0.25
+  menu_ctrlj=$(cornice ipc menu state 2>/dev/null | jq -r '.selection')
+  if [[ $menu_ctrlj != "$menu_down" ]]; then
+    pass "Ctrl-j moves the menu highlight ($menu_down → $menu_ctrlj)"
+  else
+    fail "Ctrl-j did not move the highlight (still $menu_down)"
+  fi
+  expect_eq "keyboard navigation keeps the menu open" "true" "$(cornice ipc menu state 2>/dev/null | jq -r '.open')"
+  wtype -k Home >/dev/null 2>&1
+  sleep 0.25
+  expect_eq "Home selects the first row" "0" "$(cornice ipc menu state 2>/dev/null | jq -r '.selection')"
+  wtype -k Return >/dev/null 2>&1
+  sleep 0.4
+  expect_eq "Enter activates the highlighted row (launcher opens)" "1" \
+    "$(cornice ipc shell windows 2>/dev/null | jq '[.[] | select(.id == "cn.launcher" and .open == true)] | length')"
+  cornice ipc shell hide cn.launcher >/dev/null 2>&1
+else
+  warn "wtype missing; menu keyboard navigation not exercised"
+fi
 cornice ipc shell hide cn.menu >/dev/null 2>&1
 sleep 0.3
 menu_closed=$(cornice ipc menu state 2>/dev/null | jq -r '.open' 2>/dev/null)

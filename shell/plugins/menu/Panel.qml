@@ -27,6 +27,8 @@ PanelFrame {
   // Cycling is fine for two themes; the list needs a page.
   property string page: "root"
   property var themes: []
+  // Index into `rows` of the keyboard highlight; -1 until the first move.
+  property int selection: -1
 
   readonly property var rootRows: [
     { glyph: "\uf009", label: I18n.t("menu.applications"), toggle: "cn.launcher" },
@@ -34,7 +36,7 @@ PanelFrame {
     { glyph: "\uf118", label: I18n.t("menu.emoji"), toggle: "cn.emojis" },
     { glyph: "\uf0f3", label: I18n.t("menu.notifications"), toggle: "cn.notifications" },
     { separator: true },
-    { glyph: "\uf53f", label: I18n.t("menu.theme") + ": " + Theme.name, page: "themes", selected: true },
+    { glyph: "\uf1fc", label: I18n.t("menu.theme") + ": " + Theme.name, page: "themes" },
     { glyph: "\uf1ab", label: I18n.t("menu.language") + ": " + I18n.language,
       command: "cornice language " + (I18n.language === "zh-CN" ? "en" : "zh-CN") },
     { glyph: "\uf03e", label: I18n.t("menu.wallpaper"), command: "cornice background next" },
@@ -92,7 +94,73 @@ PanelFrame {
   // dropped in while the shell is running).
   onOpened: {
     root.page = "root"
+    resetSelection()
     themeList.running = true
+  }
+
+  onPageChanged: resetSelection()
+  onSelectionChanged: ensureVisible(selection)
+
+  function resetSelection() {
+    selection = -1
+    moveSelection(1)
+  }
+
+  // Skip separators and wrap around. `selection` stays a plain index so hover
+  // and the keyboard share one highlight.
+  function moveSelection(delta) {
+    if (rows.length === 0) return
+    let index = selection
+    for (let step = 0; step < rows.length; step++) {
+      index = (index + delta + rows.length) % rows.length
+      if (rows[index] && rows[index].separator !== true) {
+        selection = index
+        return
+      }
+    }
+  }
+
+  function activateSelected() {
+    if (selection < 0 || selection >= rows.length) return
+    const row = rows[selection]
+    if (row && row.separator !== true) activate(row)
+  }
+
+  function ensureVisible(index) {
+    if (index < 0 || !viewport || viewport.height <= 0) return
+    let y = 0
+    for (let i = 0; i < index; i++)
+      y += rows[i] && rows[i].separator === true ? Style.space(1.4) : rowHeight
+    const height = rows[index] && rows[index].separator === true ? Style.space(1.4) : rowHeight
+    if (y < viewport.contentY) viewport.contentY = y
+    else if (y + height > viewport.contentY + viewport.height)
+      viewport.contentY = Math.max(0, y + height - viewport.height)
+  }
+
+  // Navigation never closes the menu: only Escape (PanelFrame) or acting on a
+  // row does. Up/Down and Ctrl-j/k move the highlight, Enter/Space acts.
+  onKeyPressed: event => {
+    const control = (event.modifiers & Qt.ControlModifier) !== 0
+    switch (event.key) {
+    case Qt.Key_Down:
+      moveSelection(1); event.accepted = true; break
+    case Qt.Key_Up:
+      moveSelection(-1); event.accepted = true; break
+    case Qt.Key_J:
+      if (control) { moveSelection(1); event.accepted = true }
+      break
+    case Qt.Key_K:
+      if (control) { moveSelection(-1); event.accepted = true }
+      break
+    case Qt.Key_Return:
+    case Qt.Key_Enter:
+    case Qt.Key_Space:
+      activateSelected(); event.accepted = true; break
+    case Qt.Key_Home:
+      selection = -1; moveSelection(1); event.accepted = true; break
+    case Qt.Key_End:
+      selection = 0; moveSelection(-1); event.accepted = true; break
+    }
   }
 
   Process {
@@ -108,6 +176,7 @@ PanelFrame {
   }
 
   Flickable {
+    id: viewport
     anchors.fill: parent
     anchors.margins: Style.space(1.1)
     contentHeight: column.implicitHeight
@@ -125,6 +194,7 @@ PanelFrame {
         delegate: Item {
           id: row
           required property var modelData
+          required property int index
           width: column.width
           height: modelData.separator === true ? Style.space(1.4) : root.rowHeight
 
@@ -140,7 +210,8 @@ PanelFrame {
             anchors.fill: parent
             visible: row.modelData.separator !== true
             radius: Style.radius
-            color: row.hovered ? Color.hover : (row.modelData.selected ? Color.workspaceActive : "transparent")
+            color: row.index === root.selection ? Color.workspaceActive
+                 : row.hovered ? Color.hover : "transparent"
           }
 
           Row {
@@ -154,7 +225,7 @@ PanelFrame {
               anchors.verticalCenter: parent.verticalCenter
               width: Style.space(1.8)
               text: row.modelData.glyph || ""
-              color: row.modelData.selected ? Color.workspaceActiveText : Color.accent
+              color: row.index === root.selection ? Color.workspaceActiveText : Color.accent
               font.family: Style.iconFamily
               font.pixelSize: Style.fontSize
             }
@@ -163,7 +234,7 @@ PanelFrame {
               anchors.verticalCenter: parent.verticalCenter
               width: parent.width - Style.space(3.4)
               text: row.modelData.label || ""
-              color: row.modelData.selected ? Color.workspaceActiveText : Color.foreground
+              color: row.index === root.selection ? Color.workspaceActiveText : Color.foreground
               elide: Text.ElideRight
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
@@ -177,7 +248,10 @@ PanelFrame {
             enabled: row.modelData.separator !== true
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onEntered: row.hovered = true
+            onEntered: {
+              row.hovered = true
+              if (row.modelData.separator !== true) root.selection = row.index
+            }
             onExited: row.hovered = false
             onClicked: root.activate(row.modelData)
           }
@@ -203,6 +277,7 @@ PanelFrame {
         calls: entries.filter(row => row.call).map(row => row.call.join(".")),
         commands: entries.filter(row => row.command).map(row => String(row.command).split(" ").slice(0, 2).join(" ")),
         selected: entries.filter(row => row.selected === true).length,
+        selection: root.selection,
         theme: Theme.name,
         themes: root.themes
       })

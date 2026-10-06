@@ -32,6 +32,9 @@ Item {
 
   signal opened()
   signal dismissed()
+  // A panel that wants keyboard navigation (the menu) handles keys here and
+  // sets event.accepted. Default: ignored.
+  signal keyPressed(var event)
 
   default property alias content: contentArea.data
 
@@ -101,12 +104,15 @@ Item {
         anchors.fill: parent
         focus: true
 
-        // Escape closes any panel, focused input or not.
+        // Escape closes any panel, focused input or not. Everything else is
+        // offered to the panel through `keyPressed`.
         Keys.onPressed: event => {
           if (event.key === Qt.Key_Escape) {
             root.close()
             event.accepted = true
+            return
           }
+          root.keyPressed(event)
         }
       }
     }

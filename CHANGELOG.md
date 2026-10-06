@@ -5,7 +5,10 @@
 - Twelve new built-in themes (Catppuccin Mocha/Latte, Gruvbox Dark/Light, Nord,
   Tokyo Night, Rosé Pine and Rosé Pine Dawn, Everforest Dark, Dracula, Kanagawa,
   One Dark), and the bar menu's theme row now opens a picker list instead of
-  cycling through them.
+  cycling through them. The theme icon was a glyph Hack Nerd Font does not ship
+  and rendered as a box, so it now uses one that does.
+- The bar menu is keyboard-navigable: up/down and Ctrl-j/k move the highlight,
+  Enter/Space acts on it, and moving no longer closes the menu.
 - The launcher's single-instance lock no longer leaks into the processes the
   shell starts. Inheriting it meant any app (or watchdog child) that outlived a
   restart kept the lock, the next start refused with "another launcher is already
