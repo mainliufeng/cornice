@@ -199,7 +199,11 @@ public:
       cornice_human_lock_v1_unlock_and_destroy(lock);
       lock = nullptr;
     }
-    wl_display_roundtrip(display);
+    if (wl_display_roundtrip(display) < 0) {
+      event("disconnected");
+      QCoreApplication::exit(2);
+      return;
+    }
     secure = false;
     event("unlocked");
     QCoreApplication::quit();
