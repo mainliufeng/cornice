@@ -8,7 +8,8 @@
 中文粘贴及 Ctrl 释放、窗口切换、全屏/置顶/浮动/尺寸、中文带引号 WS 与 DPMS 均通过。
 
 新锁实现工作树验证：`/tmp/ad-okepdwzi`；全新 `--desktop --copy` 安装产物验证：
-`/tmp/ad-vdytw0aj`。测试真实调用安装后的程序、协议、原生 QML/Qt 组件及 Cornice UI，
+`/tmp/ad-vdytw0aj`；解锁仅在 Wayland 确认后报告完成的最终复跑：
+`/tmp/ad-r0tvjok7`。测试真实调用安装后的程序、协议、原生 QML/Qt 组件及 Cornice UI，
 没有操作宿主锁屏、关屏或睡眠。通过以下实际结果：
 
 - 三个 Agent 独立 private 输出；两个预创建 Agent 操作同一个 Agent 启动的 GTK 输入框。
@@ -114,3 +115,6 @@ agent1/2/3 均在实际 DRM 输出 eDP-1 上。3072×1920、2 倍缩放保留。
 证据：`~/.local/state/cornice-agent-desktop/physical-20261007-171801/result.json`
 及同目录实际截图、日志。物理会话已切换与独立应用路径通过，分别记录为真；
 完整多 seat 共享窗口验收记录为假，保留此缺口。
+
+全新安装产物的既有桌面专项也通过：`/tmp/ad-jp82ae54`，实际绘制 14.93 fps、
+最大应用绘制至观察 162 ms（58 samples、44 distinct frames）。
