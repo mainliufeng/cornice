@@ -1,6 +1,6 @@
 # Agent 桌面对接验证
 
-本轮完整对接证据：`/tmp/ad-p5q4v99m`；约 **14.91 fps**，最大绘制到观察时间 **149 ms**。
+本轮完整对接证据：`/tmp/ad-e6_6n7ax`；约 **14.94 fps**，最大绘制到观察时间 **124 ms**。
 文末界面截图来自 `/tmp/ad-fpovr9l2`。
 Hyprland 多 seat 回归证据：`/tmp/hyprland-multiseat.ugPdp5`。
 
@@ -14,6 +14,7 @@ Hyprland 多 seat 回归证据：`/tmp/hyprland-multiseat.ugPdp5`。
 
 - GTK 3 隐藏窗口的点击、组合键、中文输入；人的 ws/focus/cursor 不变。
 - 重复写请求身份不会重复点击；切 ws 后拒绝旧截图坐标；旧 binding 被撤销。
+- 截图后启动另一个真实 GTK 应用抢走焦点，旧帧文字输入被拒绝；两个应用均未收到错误文字。
 - 暂停释放 held Shift，旧虚拟设备保持无效；旧连接创建替代键盘/指针被协议拒绝。
 - Google Chrome 154 使用专用 profile，页面实际收到点击与中文文字。
 - kitty 0.49.1 在后台执行真实输入的 shell 命令，包含中文与 Return。

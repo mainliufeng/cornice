@@ -344,8 +344,8 @@ void Broker::validateFrame(const Binding &binding, const QString &frame, const Q
     if (!binding.frames.contains(frame))
         fail("Own screenshot frame required before input");
     const auto captured = binding.frames[frame];
-    for (const QString field :
-         {"seatId", "generation", "workspace", "position", "logicalSize", "pixelSize", "scale", "transform"})
+    for (const QString field : {"seatId", "generation", "workspace", "windowId", "position", "logicalSize", "pixelSize",
+                                "scale", "transform"})
         if (captured[field] != actual[field])
             fail("Screenshot became stale; capture again");
 }

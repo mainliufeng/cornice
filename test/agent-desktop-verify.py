@@ -220,6 +220,23 @@ hl.window_rule({name="human-test",match={title="^human-window$"},workspace="1"})
     cli("resume", "agent1"); binding = bind("agent1")
     tool(binding, "workspace", {"workspace": "10"})
     record("seat workspace isolation and stale screenshot rejection")
+    frame = tool(binding, "capture")
+    original_text = (BASE / "agent1.txt").read_text()
+    extra_path = BASE / "focus-race.txt"
+    cli("launch", "agent1", "--", "/usr/bin/python3", ROOT / "test/agent-desktop-client.py", "focus-race-window", extra_path)
+    extra = wait(lambda: next((c for c in ctl("clients", True) if c["title"] == "focus-race-window"), None))
+    OWNED_PIDS.append(extra["pid"])
+    wait(lambda: cli("state", "agent1")["windowId"] != frame["windowId"])
+    assert "stale" in tool(binding, "input", {"action": "text", "text": "WRONG CLIENT", "frameId": frame["frameId"]}, succeeds=False).lower()
+    assert not extra_path.exists() and (BASE / "agent1.txt").read_text() == original_text
+    os.kill(extra["pid"], signal.SIGTERM)
+    wait(lambda: len(ctl("clients", True)) == 4)
+    cli("resume", "agent1"); binding = bind("agent1")
+    original_window = next(w["id"] for w in tool(binding, "windows")["windows"] if w["title"] == "agent1-window")
+    tool(binding, "focus", {"windowId": original_window})
+    assert human_state() == baseline
+    record("application activation between capture and input cannot redirect text to a different Client")
+
     before = cli("state", "agent1")
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(5); connection.connect(str(RT / "cornice" / ENV["HYPRLAND_INSTANCE_SIGNATURE"] / "desktop.sock"))

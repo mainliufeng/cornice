@@ -80,6 +80,9 @@ cursor、尺寸、scale、transform、时间戳。模型/执行器消费图像�
 {"action":"click","x":420,"y":260,"frameId":"本次截图返回的 frameId"}
 ```
 
+切 ws、尺寸变化或截图后焦点窗口改变，会使旧帧失效；输入被拒绝并暂停 seat。
+恢复并重新 bind、截屏后才能继续，避免文字送入刚抢到焦点的另一个应用。
+
 ```bash
 cornice desktop tool /tmp/writer.binding.json desktop.input '<上面的 JSON>'
 cornice desktop tool /tmp/writer.binding.json desktop.input '{"action":"text","text":"中文也直接送到 agent seat","frameId":"本次 frameId"}'
