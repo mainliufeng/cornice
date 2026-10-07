@@ -272,6 +272,9 @@ headless 套件还需要 `pipewire`、`wpctl` 和 `pw-metadata`。它会启动�
 [DESIGN.md](DESIGN.md) 记录了架构决策、与 omarchy/Caelestia 的对比，以及刻意
 不做的部分。
 
+本特性分支另有 [agent 桌面对接设计](docs/agent-desktop-design.md)：多 seat 管理、
+只读观察、控制权交接及本地 Hyprland fork 迁移。它是待实施方案，不代表已有功能。
+
 ## 许可
 
 MIT —— 见 [LICENSE](LICENSE)。`wallpapers/` 里自带的那张壁纸是本项目生成的
