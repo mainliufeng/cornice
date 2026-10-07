@@ -38,8 +38,8 @@ PanelFrame {
             Row {
               spacing: Style.space(1)
               PanelButton { label: "只读观察"; onClicked: { root.close(); root.host.summon("cn.desktop-observer", {name: modelData.name}) } }
-              PanelButton { id: controlButton; label: modelData.paused ? "恢复输入" : "暂停输入"; enabled: root.service && !root.service.busy; onClicked: root.service.operate([modelData.paused ? "resume" : "pause", modelData.name]) }
-              PanelButton { label: "删除 seat"; destructive: true; enabled: root.service && !root.service.busy; onClicked: root.service.operate(["remove", modelData.name]) }
+              PanelButton { id: controlButton; label: modelData.paused ? "恢复输入" : "暂停输入"; enabled: !!root.service && !root.service.busy; onClicked: root.service.operate([modelData.paused ? "resume" : "pause", modelData.name]) }
+              PanelButton { label: "删除 seat"; destructive: true; enabled: !!root.service && !root.service.busy; onClicked: root.service.operate(["remove", modelData.name]) }
             }
           }
         }
@@ -50,7 +50,7 @@ PanelFrame {
         TextField { id: name; width: 155; placeholder: "名称，如 writer" }
         TextField { id: workspace; width: 90; text: "10"; placeholder: "工作区" }
         TextField { id: output; width: 150; placeholder: "输出，如 eDP-1" }
-        PanelButton { label: "创建"; enabled: root.service && root.service.available && !root.service.busy && name.text !== "" && output.text !== ""; onClicked: root.service.operate(["create", name.text, "--workspace", workspace.text, "--output", output.text]) }
+        PanelButton { label: "创建"; enabled: !!root.service && root.service.available && !root.service.busy && name.text !== "" && output.text !== ""; onClicked: root.service.operate(["create", name.text, "--workspace", workspace.text, "--output", output.text]) }
       }
       Text { width: parent.width; wrapMode: Text.Wrap; text: "新桌面默认暂停。恢复后通过 CLI 绑定执行器；删除 seat 会保留共享窗口。"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
     }
