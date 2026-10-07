@@ -126,14 +126,24 @@ wait_for_notification_id() {  # wait_for_notification_id <log>
 }
 
 click_popup() {  # click_popup — click the middle of the newest popup
-  local pop_x="" pop_y pop_w pop_h
+  local pop_x="" pop_y pop_w pop_h geometry previous="" ready=0
   for _ in $(seq 1 25); do
-    read -r pop_x pop_y pop_w pop_h <<<"$(hyprctl layers -j \
-      | jq -r '[.. | objects | select(.namespace? == "cornice-notification-popups")][0] | [.x,.y,.w,.h] | join(" ")')"
-    [[ -n $pop_x && $pop_x != null ]] && break
+    geometry=$(hyprctl layers -j \
+      | jq -r '[.. | objects | select(.namespace? == "cornice-notification-popups")][0] | [.x,.y,.w,.h] | join(" ")')
+    read -r pop_x pop_y pop_w pop_h <<<"$geometry"
+    # A newly mapped layer can precede the Repeater/card's first layout.
+    # Require an actual card-sized surface across two compositor reads, rather
+    # than clicking an empty initial layer. Keep the real sender/action checks.
+    if [[ $pop_w =~ ^[0-9]+$ && $pop_h =~ ^[0-9]+$ ]] && ((pop_w >= 200 && pop_h >= 50)) && [[ $geometry == "$previous" ]]; then
+      ready=1
+      break
+    fi
+    previous=$geometry
     sleep 0.2
   done
-  [[ -n $pop_x && $pop_x != null ]] || return 1
+  ((ready)) || return 1
+  printf '%s\n' "$geometry" >>"$runtime/notification-click-geometry.log"
+  grim "$runtime/notification-click-before.png" || return 1
   # The card lives inside the surface's padding, so the exact top edge is not
   # reliably clickable; the middle always is.
   printf '%s %s click\n' "$((pop_x + pop_w / 2))" "$((pop_y + pop_h / 2))" >&"$pointer_in"
