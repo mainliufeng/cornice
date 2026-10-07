@@ -32,8 +32,18 @@ Hyprland 多 seat 回归证据：`/tmp/hyprland-multiseat.ugPdp5`。
 ## 回归与安装
 
 - Hyprland：647/647 单元测试通过；multiseat 套件及其原有单 seat 集成回归通过。
-- cornice：既有 headless、idle/lock 与安装/打包验证；可选原生包构建。
+- cornice：既有 headless、idle/lock；全新复制安装回归通过，core 包文件与提交一致，
+  包产物的 headless 补验通过；可选原生包构建并实际运行完整桌面专项。
 - 全新 `--desktop --copy` 安装后的程序、QML 模块与 RPATH 实际运行上述场景。
+
+安装记录：`/tmp/cornice-install-feature-focus-final.log` 的复制安装套件通过；
+core 包套件遇到通知点击失败，测试原先只等待图层出现，现改为等待完整卡片尺寸稳定，
+并保存实际点击前截图。对包产物重跑后的全部通过记录是
+`/tmp/cornice-packaged-headless-final.log`，证据 `/tmp/cn-99kXlM`。
+可选原生包运行记录是 `/tmp/cornice-agent-desktop-packaged-final.log`，证据
+`/tmp/ad-a0ov62jw`（14.92 fps、最大 135 ms）。
+先前一次既有空闲锁屏等待也曾失败（`/tmp/cornice-install-feature-final.log`）；
+复跑的复制安装和包安装均通过，尚未确定该次间歇失败的原因。
 
 命令见 [使用说明](../agent-desktop.md)。每次运行的私有目录包含应用/合成器日志、
 observer/manager/browser/Qt 截图及 `observer-performance.json`。验证输出报告绝对路径。
