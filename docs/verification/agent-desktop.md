@@ -1,6 +1,7 @@
 # Agent 桌面对接验证
 
-本轮完整对接证据：`/tmp/ad-fpovr9l2`；约 **14.94 fps**，最大绘制到观察时间 **138 ms**。
+本轮完整对接证据：`/tmp/ad-p5q4v99m`；约 **14.91 fps**，最大绘制到观察时间 **149 ms**。
+文末界面截图来自 `/tmp/ad-fpovr9l2`。
 Hyprland 多 seat 回归证据：`/tmp/hyprland-multiseat.ugPdp5`。
 
 日期：2026-10-07。cornice `codex/agent-desktop`；Hyprland `codex/cornice-agent-desktop`。
@@ -20,6 +21,7 @@ Hyprland 多 seat 回归证据：`/tmp/hyprland-multiseat.ugPdp5`。
 - 只读跟随/浏览不改变任何 seat 状态；无人选中的 ws 的真实动画也继续更新。
 - 观察器消费原始帧；真人 seat 点击、输入及 Ctrl+W 未传给共享应用。
 - 实际 session lock 清空画面和缓冲，解锁保持 agent 暂停；只读重开不恢复写入。
+- 人的 Lua ws/窗口聚焦/通知回到应用/DPMS/带空格 argv 启动路径通过实际状态核验。
 - UI 退出不终止独立桌面服务；服务正常退出、SIGKILL、重启、seat 删除符合暂停/保留窗口契约。
 
 持续观察测试采样实际物理输出的应用绘制时钟，另读原生 view 的实际 paint 计数。
