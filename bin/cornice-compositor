@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Human-seat commands, adapting the existing compositor and the Lua fork.
+# Agent tools never call this helper.
+set -euo pipefail
+action=${1:?workspace|dpms|focus-window|exec}
+shift
+lua=0
+if hyprctl -j seat capabilities 2>/dev/null | jq -e '.dialect == "lua"' >/dev/null 2>&1; then lua=1; fi
+case "$action" in
+  workspace)
+    [[ $# == 1 && $1 =~ ^[1-9][0-9]*$ ]] || exit 2
+    if ((lua)); then result=$(hyprctl dispatch "hl.dsp.focus({workspace=\"$1\"})")
+    else result=$(hyprctl dispatch workspace "$1"); fi
+    ;;
+  dpms)
+    [[ $# == 1 && ( $1 == on || $1 == off ) ]] || exit 2
+    if ((lua)); then result=$(hyprctl dispatch "hl.dsp.dpms({action=\"$1\"})")
+    else result=$(hyprctl dispatch dpms "$1"); fi
+    ;;
+  focus-window)
+    [[ ( $# == 3 || $# == 4 ) && $1 =~ ^0x[0-9a-fA-F]+$ && $2 =~ ^[01]$ && $3 =~ ^[012]$ ]] || exit 2
+    if ((lua)); then
+      workspace_step=""
+      if [[ $# == 4 && -n $4 ]]; then
+        target_ws=$4
+        if [[ ! $target_ws =~ ^[1-9][0-9]*$ && $target_ws != name:* && $target_ws != special:* ]]; then target_ws="name:$target_ws"; fi
+        workspace_json=$(jq -Rn --arg workspace "$target_ws" '$workspace')
+        workspace_step="hl.dispatch(hl.dsp.focus({workspace=$workspace_json})); "
+      fi
+      result=$(hyprctl eval "hl.config({cursor={no_warps=true},misc={on_focus_under_fullscreen=1}}); ${workspace_step}hl.dispatch(hl.dsp.focus({window=\"address:$1\"})); hl.config({cursor={no_warps=$([[ $2 == 1 ]] && echo true || echo false)},misc={on_focus_under_fullscreen=$3}})")
+    else
+      result=$(hyprctl --batch "keyword cursor:no_warps 1; keyword misc:on_focus_under_fullscreen 1; dispatch focuswindow address:$1; keyword misc:on_focus_under_fullscreen $3; keyword cursor:no_warps $2")
+    fi
+    ;;
+  exec)
+    [[ $# -gt 0 ]] || exit 2
+    printf -v command '%q ' "$@"
+    if ((lua)); then
+      encoded=$(jq -Rn --arg command "$command" '$command')
+      result=$(hyprctl dispatch "hl.dsp.exec_raw($encoded)")
+    else result=$(hyprctl dispatch exec "$command"); fi
+    ;;
+  *) exit 2 ;;
+esac
+if [[ -z $result || $result == ok || $result =~ ^[0-9]+$ || $result =~ ^(ok[[:space:]]*)+$ ]]; then exit 0; fi
+echo "cornice compositor: $result" >&2
+exit 1

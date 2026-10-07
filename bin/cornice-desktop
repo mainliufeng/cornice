@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Seat-bound desktop tools. No compositor discovery or default-seat fallback.
+set -euo pipefail
+bin_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+prefix=${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}
+runtime="$prefix/native/bin/cornice-desktop-runtime"
+[[ -x $runtime ]] || runtime="$prefix/native/build/cornice-desktop-runtime"
+if [[ ! -x $runtime ]]; then
+  echo 'cornice desktop: native component missing; build with make desktop-build' >&2
+  exit 1
+fi
+if [[ ${1:-} == --instance ]]; then
+  [[ $# -ge 3 && $2 =~ ^[A-Za-z0-9_.-]+$ ]] || { echo 'explicit compositor instance required' >&2; exit 2; }
+  export HYPRLAND_INSTANCE_SIGNATURE=$2
+  shift 2
+fi
+if [[ ${1:-} == observe ]]; then
+  [[ $# == 2 ]] || { echo 'usage: cornice desktop observe NAME' >&2; exit 2; }
+  [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} && -n ${XDG_RUNTIME_DIR:-} ]] || { echo 'explicit compositor environment required' >&2; exit 1; }
+  status=$("$bin_dir/cornice" ipc desktop status)
+  expected="$XDG_RUNTIME_DIR/cornice/$HYPRLAND_INSTANCE_SIGNATURE/desktop.sock"
+  jq -e --arg expected "$expected" '.socket == $expected' <<<"$status" >/dev/null || {
+    echo 'cornice desktop: shell belongs to a different compositor instance' >&2; exit 1;
+  }
+  exec "$bin_dir/cornice" ipc desktop observe "$2"
+fi
+if [[ ${1:-} == help || $# == 0 ]]; then
+  cat <<'USAGE'
+Usage: cornice desktop [--instance SIGNATURE] COMMAND
+  serve                            Run the native service for this compositor
+  doctor | list                    Capabilities or managed desktops
+  create NAME --workspace WS --output OUTPUT
+  resume NAME | pause NAME          Grant fresh devices or revoke desktop input
+  state NAME | windows NAME         Inspect a managed seat
+  launch NAME -- APPLICATION ARG... Start an application on its seat display
+  capture NAME ABSOLUTE_PATH        Save the seat workspace screenshot
+  bind NAME PRIVATE_FILE           Create a seat-bound agent credential
+  tool PRIVATE_FILE METHOD [JSON]  desktop.state/capture/windows/input/workspace/focus/launch
+  request                          Send a JSON RPC object from stdin
+  observe NAME                     Open cornice's read-only observer
+  remove NAME                      Retire the seat; preserve shared windows
+The target is --instance or HYPRLAND_INSTANCE_SIGNATURE, never discovered.
+Tool commands take their target from the private binding file.
+USAGE
+  exit 0
+fi
+exec "$runtime" "$@"

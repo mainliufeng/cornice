@@ -49,9 +49,14 @@ workspace=${target##* }
 # Switch to the window's workspace, then focus it. The two cursor/fullscreen
 # options are restored in the same batch so a notification click never warps the
 # pointer or drops a fullscreen window (same trick as cornice-focus-window).
-warps=$(hyprctl -j getoption cursor:no_warps | jq -er '.int')
+warps=$(hyprctl -j getoption cursor:no_warps | jq -er 'if has("bool") then (if .bool then 1 else 0 end) else .int end')
 under=$(hyprctl -j getoption misc:on_focus_under_fullscreen | jq -er '.int')
 [[ $warps =~ ^[01]$ && $under =~ ^[012]$ ]] || exit 1
+
+if hyprctl -j seat capabilities 2>/dev/null | jq -e '.dialect == "lua"' >/dev/null 2>&1; then
+  bin_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+  exec "$bin_dir/cornice-compositor" focus-window "$address" "$warps" "$under" "$workspace"
+fi
 
 batch="keyword cursor:no_warps 1; keyword misc:on_focus_under_fullscreen 1"
 if [[ -n $workspace && $(hyprctl activeworkspace -j | jq -r '.name') != "$workspace" ]]; then

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+bin_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+if [[ ${1:-} == --instance ]]; then
+  [[ $# == 2 ]] || exit 2
+  exec "$bin_dir/cornice-desktop" --instance "$2" serve
+fi
+[[ $# == 0 ]] || exit 2
+exec "$bin_dir/cornice-desktop" serve

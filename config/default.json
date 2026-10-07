@@ -99,5 +99,9 @@
   "language": "en",
   "clock": {
     "zone": null
+  },
+  "agentDesktop": {
+    "enabled": false,
+    "desktops": []
   }
 }

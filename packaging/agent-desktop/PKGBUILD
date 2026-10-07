@@ -1,0 +1,21 @@
+# Optional native package; build in this directory, alongside the cornice tree.
+pkgname=cornice-agent-desktop-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Seat-bound desktop service and read-only workspace viewer for cornice'
+arch=('x86_64' 'aarch64')
+url='https://github.com/mainliufeng/cornice'
+license=('MIT')
+depends=('cornice' 'qt6-base' 'qt6-declarative' 'wayland' 'libxkbcommon')
+makedepends=('cmake' 'ninja' 'pkgconf')
+source=()
+
+build() {
+  cmake -S "$startdir/../../native/desktop" -B "$srcdir/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
+  cmake --build "$srcdir/build" -j4
+}
+
+package() {
+  cmake --install "$srcdir/build" --prefix "$pkgdir/usr/share/cornice"
+  install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

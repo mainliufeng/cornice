@@ -11,3 +11,4 @@ core.*
 pkg/
 src/
 *.pkg.tar.*
+native/build/

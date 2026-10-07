@@ -48,7 +48,7 @@ if [[ -z $(pgrep -f "$bin_dir/cornice-launch" 2>/dev/null) ]]; then
   # ~/.local/bin, and a failed relaunch after killing the old shell leaves the user
   # with no bar at all.
   if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && command -v hyprctl >/dev/null 2>&1; then
-    hyprctl dispatch "exec $bin_dir/cornice-launch" >/dev/null 2>&1
+    "$bin_dir/cornice-compositor" exec "$bin_dir/cornice-launch" >/dev/null 2>&1
   else
     setsid "$bin_dir/cornice-launch" >/dev/null 2>&1 &
     disown || true

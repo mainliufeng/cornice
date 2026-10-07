@@ -13,7 +13,8 @@ flock -w 2 9 || exit 1
 [[ $(hyprctl activeworkspace -j | jq -r '.id') == "$workspace" ]] || exit 0
 hyprctl clients -j | jq -e --arg address "$address" --argjson workspace "$workspace" \
   'any(.address == $address and .workspace.id == $workspace and .mapped)' >/dev/null || exit 0
-warps=$(hyprctl -j getoption cursor:no_warps | jq -er '.int')
+warps=$(hyprctl -j getoption cursor:no_warps | jq -er 'if has("bool") then (if .bool then 1 else 0 end) else .int end')
 under_fullscreen=$(hyprctl -j getoption misc:on_focus_under_fullscreen | jq -er '.int')
 [[ $warps =~ ^[01]$ && $under_fullscreen =~ ^[012]$ ]] || exit 1
-hyprctl --batch "keyword cursor:no_warps 1; keyword misc:on_focus_under_fullscreen 1; dispatch focuswindow address:$address; keyword misc:on_focus_under_fullscreen $under_fullscreen; keyword cursor:no_warps $warps" >/dev/null
+bin_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+"$bin_dir/cornice-compositor" focus-window "$address" "$warps" "$under_fullscreen"

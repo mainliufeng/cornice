@@ -234,9 +234,13 @@ Item {
 
   readonly property Process dpmsProcess: Process {
     property bool turnOff: false
-    command: ["hyprctl", "dispatch", "dpms", turnOff ? "off" : "on"]
+    command: [(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice") + "/bin/cornice-compositor", "dpms", turnOff ? "off" : "on"]
     stdout: StdioCollector { waitForEnd: true }
-    onExited: {
+    onExited: (exitCode, exitStatus) => {
+      if (exitCode !== 0) {
+        root.lastAction = "display-command-failed"
+        return
+      }
       root.screenOff = root.dpmsProcess.turnOff
       root.lastAction = root.dpmsProcess.turnOff ? "display-off" : "display-on"
       // An unlock can land while the off/on command is still in flight; finish

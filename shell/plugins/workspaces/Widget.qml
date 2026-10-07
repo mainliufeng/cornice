@@ -125,7 +125,7 @@ Item {
           hoverEnabled: true
           onEntered: slot.hovered = true
           onExited: slot.hovered = false
-          onClicked: Hyprland.dispatch("workspace " + slot.modelData.id)
+          onClicked: CompositorAdapter.workspace(slot.modelData.id)
           onWheel: wheel => {
             const target = slot.modelData.id + (wheel.angleDelta.y > 0 ? -1 : 1)
             if (target >= 1) Hyprland.dispatch("workspace " + target)
