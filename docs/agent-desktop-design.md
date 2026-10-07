@@ -229,6 +229,30 @@ cornice desktop doctor                         # 检查目标实例与能力
 agent 自动携带绑定的 Desktop 生命周期和控制代次，不能临时省略 seat 退回人的桌面。
 模型侧不暴露任意 compositor dispatch 或运行任意命令的桌面工具。
 
+### agent 操作必须路由到绑定的 seat
+
+人和 agent 可以使用相似的工具名称，但不能共用人的操作后端。以绑定 `agent1` 的
+执行器为例，每个请求由服务端补齐并校验实例、seat 生命周期和控制代次，路由如下：
+
+| agent 工具 | 实际目标与路径 | 不允许的替代路径 |
+| --- | --- | --- |
+| `desktop.workspace(10)` | 指定 `agent1` 的 seat 工作区接口；当前 fork 对应 `hyprctl seat workspace agent1 10` | 人的 `dispatch workspace`、工作区 widget 或模拟人的全局切 ws 快捷键 |
+| `desktop.focus(window)` | 指定 `agent1` 的 seat 聚焦接口，校验窗口仍存在且可在该 seat 当前 ws 接受输入 | 人的全局 `focuswindow` helper |
+| `desktop.input(...)` | SeatDriver 绑定 `agent1` 的 `wl_seat`，虚拟指针/键盘事件送入该 seat | 全局鼠标键盘注入、人的输入设备或只改变 `WAYLAND_DISPLAY` 后调用全局工具 |
+| `desktop.capture()` | `agent1` 当前真实 ws 的截图，并返回该帧的 seat/ws 身份 | 人的屏幕截图或物理输出截图 |
+
+虚拟键盘通过 `zwp_virtual_keyboard_manager_v1.create_virtual_keyboard(seat)` 创建，
+虚拟指针通过 `zwlr_virtual_pointer_manager_v1.create_virtual_pointer_with_output(seat, output)`
+创建；这里的 seat 必须是已校验的 agent seat。额外 Wayland socket 负责连接与应用启动，
+不能代替输入设备的 seat 绑定。发送到应用的按键与 compositor 桌面动作分开处理；
+切 ws、聚焦等必须使用 seat API，涉及 compositor 快捷键时只能启用经过验证的 seat 路由。
+
+`desktop.input` 依据 agent 自己的截图，把坐标映射到该 seat 的工作区，再通过该 seat
+命中窗口/Client。即使人的物理屏幕显示 ws1，也不能先把人切到 ws10 再点击。
+若两个 seat 在同一 ws，事件仍带各自的 seat 身份；选中同一个 Client 时共享其应用状态。
+目标 seat 丢失、身份不匹配或控制权被撤销时返回错误，不回退到默认 seat。
+CLI 若提供这些工具动作，也必须走同一绑定与校验路径，不能另写一套人的快捷操作实现。
+
 截图回复至少包含：frame ID、实例与 seat 身份、**这一帧实际渲染的 ws**、
 输出位置/尺寸/scale/transform、像素尺寸、cursor、焦点窗口身份和采集时间。
 截图与元数据由合成器一次生成；不能先 `seat list` 再截图并假设中间状态没变。
