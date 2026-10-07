@@ -187,7 +187,11 @@ def cleanup():
     for process in reversed(PROCESSES):
         try: process.wait(timeout=5)
         except subprocess.TimeoutExpired: os.killpg(process.pid, signal.SIGKILL)
-    if BUS_PID:
-        try: os.kill(BUS_PID, signal.SIGTERM)
-        except ProcessLookupError: pass
+    for pid in set(OWNED_BUS_PIDS + ([BUS_PID] if BUS_PID else [])):
+        try:
+            proc = pathlib.Path('/proc') / str(pid)
+            environment = (proc / 'environ').read_bytes().split(b'\0')
+            if ('XDG_RUNTIME_DIR=' + str(RT)).encode() in environment and b'dbus-daemon\0' in (proc / 'cmdline').read_bytes():
+                os.kill(pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError): pass
     print("Private test directory:", BASE, flush=True)

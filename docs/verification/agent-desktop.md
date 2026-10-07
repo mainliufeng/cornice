@@ -118,3 +118,11 @@ agent1/2/3 均在实际 DRM 输出 eDP-1 上。3072×1920、2 倍缩放保留。
 
 全新安装产物的既有桌面专项也通过：`/tmp/ad-jp82ae54`，实际绘制 14.93 fps、
 最大应用绘制至观察 162 ms（58 samples、44 distinct frames）。
+
+最终本地部署以 tracked 源码 `242113a0`（Cornice）和 clean `cda560fc`（Hyprland）构建，
+实际安装目录 `~/.local/share/cornice-agent-desktop/releases/242113a0-cda560fc-human-lock/`。
+直接运行这两个安装产物的全锁专项通过：`/tmp/ad-lqnlrnda`；copy/core PKGBUILD 的
+install-verify 全部通过：`/tmp/cornice-session-install-verify.log`。部署设为下次登录使用，
+未重启当前物理会话；默认创建 private 输出，策略仍默认 pause。
+日志、版本、真实画面和性能数据另存
+`~/.local/state/cornice-agent-desktop/session-lock-20261007/`。
