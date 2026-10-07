@@ -20,7 +20,9 @@
 2. **`SystemClock` 是要实例化的类型**，不是全局单例；`SystemClock.date` 直接访问得到 `undefined`，必须 `SystemClock { id: clock; precision: SystemClock.Minutes }`。
 3. **Headless 验证需要嵌套合成器**：Hyprland 无 `--headless` 后端；用 `mutter --headless` 当父合成器 + `LIBSEAT_BACKEND=noop AQ_DRM_DEVICES=/dev/null` 强制走 Wayland 后端（否则它会打开真实 DRM 节点），再 `hyprctl output create headless` 生成输出。缺了 noop seat 时 Hyprland 会认为会话处于 inactive 而完全不提交帧。
 
-**本轮范围（已确认）**：先做一个**通用**的 Hyprland shell——装得上、跑得稳、用得住。agent 一类的专有功能等 shell 站住了，通过插件 API 再加。本稿不包含任何 agent 定位。
+**原有 shell 范围（已确认）**：先做一个**通用**的 Hyprland shell——装得上、跑得稳、用得住。
+agent 桌面扩展现已进入单独的设计阶段，见 [agent 桌面对接设计](docs/agent-desktop-design.md)。
+该设计保存在特性分支，尚未实现，也不改变 main 的通用 shell 定位。
 
 ---
 
