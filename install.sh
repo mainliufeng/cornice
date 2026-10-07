@@ -3,6 +3,7 @@
 #
 #   ./install.sh                 symlink the CLI into ~/.local/bin, check deps
 #   ./install.sh --copy          copy instead of symlink (no dev-tree coupling)
+#   ./install.sh --desktop       also build/install optional agent desktop native components
 #   ./install.sh --prefix /usr/local
 #   ./install.sh --takeover      also hand the session over (mako/hypridle/…)
 #   ./install.sh --service       install + enable the systemd user service
@@ -19,6 +20,7 @@ copy=0
 takeover=0
 service=0
 uninstall=0
+desktop=0
 # NB: a `for arg in "$@"` loop cannot consume its own arguments — `shift` inside
 # it has no effect, so --prefix would swallow nothing and its value would be
 # treated as an unknown option.
@@ -32,7 +34,8 @@ while (($#)); do
     --takeover) takeover=1 ;;
     --service) service=1 ;;
     --uninstall) uninstall=1 ;;
-    -h | --help) sed -n '2,14p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    --desktop) desktop=1 ;;
+    -h | --help) sed -n '2,15p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "install.sh: unknown option '$arg'" >&2; exit 2 ;;
   esac
 done
@@ -118,6 +121,10 @@ fi
 
 # ---------------------------------------------------------------------------
 step "Installing"
+if ((desktop)); then
+  cmake -S "$repo/native/desktop" -B "$repo/native/build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+  cmake --build "$repo/native/build" -j4
+fi
 mkdir -p "$bindir"
 installed=0
 
@@ -132,6 +139,7 @@ if ((copy)); then
   for dir in bin shell i18n themes wallpapers config docs; do
     [[ -d $repo/$dir ]] && cp -r "$repo/$dir" "$staging/"
   done
+  if ((desktop)); then cmake --install "$repo/native/build" --prefix "$staging"; fi
   find "$staging" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
   chmod +x "$staging"/bin/* 2>/dev/null || true
   rm -rf "$libdir"

@@ -273,7 +273,9 @@ headless 套件还需要 `pipewire`、`wpctl` 和 `pw-metadata`。它会启动�
 不做的部分。
 
 本特性分支另有 [agent 桌面对接设计](docs/agent-desktop-design.md)：多 seat 管理、
-只读观察、控制权交接及本地 Hyprland fork 迁移。它是待实施方案，不代表已有功能。
+只读观察、控制权交接及本地 Hyprland fork 迁移。
+[已实现范围与 CLI 使用](docs/agent-desktop.md) 说明后台 seat 工具和只读观察；
+物理输入接管、具体执行器与正式会话迁移仍在后续阶段。
 
 ## 许可
 

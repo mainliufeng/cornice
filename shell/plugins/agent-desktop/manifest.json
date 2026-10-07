@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.agent-desktop",
+  "name": "Agent desktops",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Optional seat-bound agent desktop management",
+  "kinds": [
+    "service",
+    "bar-widget",
+    "panel"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Widget.qml",
+    "panel": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Agent desktops",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {}
+  },
+  "keepLoaded": true
+}

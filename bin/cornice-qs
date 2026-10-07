@@ -6,6 +6,11 @@
 # without sudo. Nothing here requires root.
 set -euo pipefail
 
+prefix=${CORNICE_PATH:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}
+for modules in "$prefix/native/qml" "$prefix/native/build/qml"; do
+  if [[ -d $modules ]]; then export QML_IMPORT_PATH="$modules${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"; fi
+done
+
 if [[ -n ${CORNICE_QS:-} && -x ${CORNICE_QS} ]]; then
   exec "$CORNICE_QS" "$@"
 fi

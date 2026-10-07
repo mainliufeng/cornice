@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.desktop-observer",
+  "name": "Desktop observer",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Read-only independent workspace view",
+  "kinds": [
+    "overlay"
+  ],
+  "entryPoints": {
+    "overlay": "Observer.qml"
+  },
+  "keepLoaded": true
+}

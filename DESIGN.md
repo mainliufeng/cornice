@@ -22,7 +22,7 @@
 
 **原有 shell 范围（已确认）**：先做一个**通用**的 Hyprland shell——装得上、跑得稳、用得住。
 agent 桌面扩展现已进入单独的设计阶段，见 [agent 桌面对接设计](docs/agent-desktop-design.md)。
-该设计保存在特性分支，尚未实现，也不改变 main 的通用 shell 定位。
+该扩展保存在特性分支；[当前实现与测试](docs/agent-desktop.md) 单独记录，不改变 main 的通用 shell 定位。
 
 ---
 
