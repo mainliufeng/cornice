@@ -29,13 +29,15 @@ if [[ ${1:-} == help || $# == 0 ]]; then
 Usage: cornice desktop [--instance SIGNATURE] COMMAND
   serve                            Run the native service for this compositor
   doctor | list                    Capabilities or managed desktops
-  create NAME --workspace WS --output OUTPUT
+  create NAME --workspace WS [--virtual-output 1920x1080 | --output OUTPUT]
+                [--human-lock-policy pause|continue]
+  lock-policy NAME pause|continue   Set policy while unlocked
   resume NAME | pause NAME          Grant fresh devices or revoke desktop input
   state NAME | windows NAME         Inspect a managed seat
   launch NAME -- APPLICATION ARG... Start an application on its seat display
   capture NAME ABSOLUTE_PATH        Save the seat workspace screenshot
   bind NAME PRIVATE_FILE           Create a seat-bound agent credential
-  tool PRIVATE_FILE METHOD [JSON]  desktop.state/capture/windows/input/workspace/focus/launch
+  tool PRIVATE_FILE METHOD [JSON]  desktop.state/capture/windows/input/workspace/focus/launch/browser
   request                          Send a JSON RPC object from stdin
   observe NAME                     Open cornice's read-only observer
   remove NAME                      Retire the seat; preserve shared windows

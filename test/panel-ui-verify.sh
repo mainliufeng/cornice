@@ -113,7 +113,11 @@ expect_eq "localizing a name preserves the saved configuration" Chengdu "$(corni
 cornice ipc shell hide cn.weather >/dev/null
 cp "$XDG_CONFIG_HOME/cornice/config.json" "$runtime/warning-config-before.json"
 jq '.idle = {dimAc:0,dimBattery:0,screenOffAc:0,screenOffBattery:0,lock:8,lockWarning:3}' "$runtime/warning-config-before.json" > "$XDG_CONFIG_HOME/cornice/config.json"
-sleep .5
+cornice ipc shell reloadConfig >/dev/null
+for _ in $(seq 1 30); do
+  [[ $(cornice ipc idle status | jq -r '.lockSeconds') == 8 ]] && break
+  sleep .1
+done
 panel_pointer 20 20 hover
 for _ in $(seq 1 65); do
   [[ $(cornice ipc idle status | jq -r '.warning') == true ]] && break
@@ -137,6 +141,7 @@ expect_eq "ignoring the warning reaches a secure lock" true "$(cornice ipc lock 
 cornice lock emergency-unlock >/dev/null
 sleep .3
 cp "$runtime/warning-config-before.json" "$XDG_CONFIG_HOME/cornice/config.json"
+cornice ipc shell reloadConfig >/dev/null
 sleep .5
 kill "$hover_pointer_pid" 2>/dev/null
 wait "$hover_pointer_pid" 2>/dev/null || true

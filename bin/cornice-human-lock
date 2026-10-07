@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+bin_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+prefix=${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}
+runtime="$prefix/native/bin/cornice-human-lock"
+[[ -x $runtime ]] || runtime="$prefix/native/build/cornice-human-lock"
+[[ -x $runtime ]] || { echo 'cornice: human lock provider missing' >&2; exit 1; }
+exec "$runtime" "$@"

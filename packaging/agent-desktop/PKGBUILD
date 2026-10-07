@@ -6,7 +6,7 @@ pkgdesc='Seat-bound desktop service and read-only workspace viewer for cornice'
 arch=('x86_64' 'aarch64')
 url='https://github.com/mainliufeng/cornice'
 license=('MIT')
-depends=('cornice' 'qt6-base' 'qt6-declarative' 'wayland' 'libxkbcommon')
+depends=('cornice' 'qt6-base' 'qt6-declarative' 'wayland' 'libxkbcommon' 'qt6-websockets' 'pam')
 makedepends=('cmake' 'ninja' 'pkgconf')
 source=()
 

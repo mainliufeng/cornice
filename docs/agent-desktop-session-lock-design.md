@@ -1,8 +1,8 @@
 # Agent 桌面的 Session lock 设计
 
-状态：**设计交付，尚未实现或验收**。日期：2026-10-07。
+状态：**特性分支已实现，私有嵌套实例验证；新锁能力尚未替换日常会话**。日期：2026-10-07。
 代码继续留在 cornice 的 `codex/agent-desktop` 和 Hyprland 的
-`codex/cornice-agent-desktop`，不合入 main。本次不改变正在运行的会话。
+`codex/cornice-agent-desktop`，不合入 main。当前物理会话仍运行先前的 `38351820`；新锁协议只能在匹配的新版二进制中启用。
 
 ## 1. 结果与边界
 
@@ -94,15 +94,17 @@ secure 事件明确表示人的输入/输出已被保护，不使用标准 ext �
 锁提供者的 QML 对象销毁、shell 重载或退出不能自动发送 unlock；只有显式认证成功
 或既有人工应急恢复路径可请求解锁。恢复锁所有者时递增所有者代次，拒绝旧连接请求。
 
-现有 Cornice 用 Quickshell 的 `WlSessionLock`，它提供标准全会话锁，
+普通 Cornice 使用 Quickshell 的 `WlSessionLock`，它提供标准全会话锁，
 不能只改 QML 参数就接入私有协议。
 [Quickshell 类型说明](https://quickshell.org/docs/v0.3.0/types/Quickshell.Wayland/WlSessionLock/)
 
-Cornice 需要原生 HumanLock/HumanLockSurface 提供者，负责私有协议和真正的锁 surface；
-锁界面与现有 PAM 流程复用。优先在 Cornice 原生模块实现并验证 Qt/Wayland surface
-角色与 QML 渲染集成，不预设已可用的 Qt 私有接口，也不要求预先替换系统 Quickshell。
-**原生提供者的真实实现是首个技术验证点**；若不能安全复用锁界面，必须完成实际原生
-渲染桥，不能拿普通全屏窗口替代。此能力完成前不启用 human 锁。
+Cornice 的 `cornice-human-lock` 原生进程实现真实 private/ext 锁 surface，通过
+Qt Quick 的公开 QQuickRenderControl 软件渲染到 Wayland SHM；不使用普通全屏窗口。
+它提供时钟、密码框、按钮、锁范围提示和真实 PAM 认证，支持 XKB 组合及按键重复。
+密码经私有 stdin 传给短生命周期 PAM 子进程，不进入命令参数或日志；认证失败及
+超时都保留锁，认证成功在合成器确认解锁后才报告完成。`showUser` 与 PAM 配置复用。
+原生界面目前使用不透明背景；旧锁界面的壁纸、模糊、主题与指定主屏配置没有接入。
+不具备全部旧锁界面的配置等价性。旧合成器保留原来的 Quickshell 标准锁路径。
 
 保留 `hyprlock` PAM service 及现有认证规则。Agent 截图、窗口列表、输入命中、IME 和
 CDP 都不得涉及锁 surface；密码只在锁客户端与 PAM 的现有认证路径流转。
@@ -223,9 +225,9 @@ CDP 正式接入须经过绑定的受控连接，与 seat 共用生命周期、�
 现有仅用于人工 TTY/SSH 恢复的 emergency-unlock 不进入 Agent 工具集，
 自动化测试只能在明确创建的私有实例使用，不能在用户当前会话触发。
 
-## 9. 配置与候选接口
+## 9. 配置与接口
 
-下面均是候选接口，不是当前可运行的命令：
+匹配新版 compositor 和原生模块后可用：
 
 ```json
 {
@@ -233,7 +235,7 @@ CDP 正式接入须经过绑定的受控连接，与 seat 共用生命周期、�
     "enabled": true,
     "desktops": [
       {"name": "agent1", "initialWorkspace": "11",
-       "virtualOutput": {"width": 1920, "height": 1080, "scale": 1},
+       "virtualOutput": "1920x1080",
        "humanLockPolicy": "continue"}
     ]
   },
@@ -241,8 +243,8 @@ CDP 正式接入须经过绑定的受控连接，与 seat 共用生命周期、�
 }
 ```
 
-候选能力位：human-lock-v1、agent-private-output、lock-aware-seat-input、
-lock-aware-agent-export；逐项检查，不能只看版本号或成功创建虚拟输出。
+能力位：human-lock-v1、agent-private-output、lock-aware-seat-input、
+lock-aware-agent-export、session-guard-v1；逐项检查，不能只看版本号或成功创建虚拟输出。
 
 管理 API 增加锁 scope/state、输出角色登记、seat 策略设置和显式全会话锁。
 锁 scope 与解锁走锁提供者协议，不给 desktop 工具增加通用 unlock 方法。
@@ -264,7 +266,7 @@ lockEpoch/viewEpoch 进入同帧元数据及输入校验；控制代次仅在真
 再实现 Agent 私有输出/输入/截图，验证共享 WS；再接 Cornice 缓存、idle、CDP；
 最后做安装、回退与物理会话验收。不能先放开全局 renderer 检查，再补保护范围。
 打包改动补 install-verify；shell 改动跑仓库既有 verify。原配置保留，部署用可撤销
-snippet 和既有 takeover undo 路径。设计阶段不触发当前会话的 lock/DPMS。
+snippet 和既有 takeover undo 路径。本轮仍不触发当前会话的 lock/DPMS 或真实睡眠。
 
 ## 11. 验收矩阵
 
@@ -299,3 +301,20 @@ snippet 和既有 takeover undo 路径。设计阶段不触发当前会话的 lo
 viewAvailable/capture/refresh 受全局锁及 DPMS 限制。Broker watchdog 与观察缓冲
 失效也按这个旧模型工作。当前没有 human 锁协议、原生锁提供者、私有输出隔离
 或受控 CDP；本稿及配置/API 示例不表示这些能力已经存在。
+
+## 12. 已实现的休眠门禁与验证范围
+
+`cornice-session-guard` 持有 logind 的 sleep block、sleep delay 和 handle-lid-switch
+inhibitor；运行期间只在自己发起的休眠请求已取得全会话 secure 确认后放行。
+因此启用该 guard 后应使用 `cornice suspend` 或电源面板；直接 `systemctl suspend`
+会被门禁拦住。合盖按 logind 的 AC/Docked/HandleLidSwitch 策略处理；ignore 不睡眠。
+失败或未确认的睡眠请求重新取得门禁，不自动重试；唤醒重新取得 inhibitor，保持锁住
+和全部 Agent 暂停。guard 丢失若发生于 human 锁，合成器原子升级为遗失的全锁，
+不继续保留任何 Agent 授权；认证提供者单独退出则保留 human 策略并恢复认证界面。
+
+验证通过 `test/human-lock-verify.sh`：真实 GTK 同窗口多 seat 输入、真实 Chrome pipe
+CDP（含超过管道容量的请求）、human/full 锁、PAM 成功/失败、输出 DPMS/未知输出
+热插拔与尺寸变化、观察缓冲清空、认证进程和完整 Cornice 被杀后的恢复。
+休眠测试使用私有 system bus 的 logind 测试夹具，真实传递并检查 inhibitor FD，
+核验 full secure 先于 Suspend，模拟唤醒和合盖。**未执行宿主睡眠、合盖或 DRM 热插拔**。
+记录与未验收项见 [验证记录](verification/agent-desktop.md)。

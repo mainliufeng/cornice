@@ -40,7 +40,9 @@ Item {
       done[desktop.name] = definition
       // Existing seats keep their real workspace. Unknown seats are never claimed.
       if (!desktops.some(item => item.name === desktop.name))
-        operate(["create", String(desktop.name), "--workspace", String(desktop.initialWorkspace || "10"), "--output", String(desktop.output || "")])
+        operate(["create", String(desktop.name), "--workspace", String(desktop.initialWorkspace || "10")]
+          .concat(desktop.output ? ["--output", String(desktop.output)] : ["--virtual-output", typeof desktop.virtualOutput === "object" ? String(desktop.virtualOutput.width || 1920) + "x" + String(desktop.virtualOutput.height || 1080) : String(desktop.virtualOutput || "1920x1080")])
+          .concat(["--human-lock-policy", String(desktop.humanLockPolicy || "pause")]))
     }
     bootstrapped = done
   }

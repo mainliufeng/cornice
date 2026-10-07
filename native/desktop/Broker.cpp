@@ -10,6 +10,7 @@
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QUuid>
 #include <stdexcept>
@@ -78,9 +79,10 @@ Broker::Broker(QString instance)
         for (auto it = saved.begin(); it != saved.end(); ++it) {
             try {
                 const auto actual = state(it.key());
-                if (actual["seatId"].toString() != it.value().toString())
+                if (actual["seatId"].toString() != (it.value().isString() ? it.value().toString() : it.value().toObject()["seatId"].toString()))
                     continue;
-                m_desktops.emplace(it.key(), Desktop{it.value().toString(), {}});
+                m_desktops.emplace(it.key(), Desktop{it.value().isString() ? it.value().toString() : it.value().toObject()["seatId"].toString(), {}, {}, {}, {}});
+                if (it.value().isObject()) m_desktops.at(it.key()).privateOutput = it.value().toObject()["privateOutput"].toString();
                 pause(it.key()); // Crash recovery revokes survivors; no automatic write restoration.
             } catch (...) {
             }
@@ -178,7 +180,7 @@ Broker::Desktop &Broker::managed(const QString &name) {
 void Broker::save() {
     QJsonObject saved;
     for (const auto &[name, desktop] : m_desktops)
-        saved[name] = desktop.id;
+        saved[name] = QJsonObject{{"seatId", desktop.id}, {"privateOutput", desktop.privateOutput}};
     QSaveFile file(m_directory + "/desktops.json");
     if (!file.open(QIODevice::WriteOnly))
         fail("Cannot save desktop lifecycle record");
@@ -248,7 +250,7 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
     const auto method = request["method"].toString();
     const auto token = request["token"].toString();
     const bool writing = method == "desktop.input" || method == "desktop.workspace" || method == "desktop.focus" ||
-                         method == "desktop.launch";
+                         method == "desktop.launch" || method == "desktop.browser";
     const auto key = token + ":" + id;
     const auto fingerprint =
         QCryptographicHash::hash(QJsonDocument(request).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
@@ -277,7 +279,7 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
     try {
         reply = {{"ok", true}, {"id", id}, {"result", perform(method, request["params"].toObject(), binding, owner)}};
     } catch (const std::exception &error) {
-        if (method == "desktop.input" && binding) {
+        if (method == "desktop.input" && binding && QString::fromUtf8(error.what()) != "Screenshot became stale; capture again") {
             try {
                 pause(binding->name);
             } catch (...) {
@@ -295,7 +297,7 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
 }
 
 QJsonObject Broker::capture(const QString &name, const QString &id, const QString &workspace, QLocalSocket *owner,
-                            const QString &format) {
+                            const QString &format, bool agent) {
     atom(workspace);
     QString path;
     std::unique_ptr<QTemporaryFile> temporary;
@@ -314,8 +316,9 @@ QJsonObject Broker::capture(const QString &name, const QString &id, const QStrin
             fail("Cannot allocate capture buffer");
         path = temporary->fileName();
     }
-    auto result =
-        json(compositor("seat snapshot " + name + " " + id + " " + workspace + " argb " + path, true)).object();
+    auto command = QString(agent ? "seat agent-snapshot " : "seat snapshot ") + name + " " + id + " " + workspace + " argb " + path;
+    if (agent) command += " " + state(name)["generation"].toString() + " " + managed(name).captureGrant;
+    auto result = json(compositor(command, true)).object();
     result["instance"] = m_instance;
     if (format == "argb")
         result["buffer"] = path;
@@ -345,7 +348,7 @@ void Broker::validateFrame(const Binding &binding, const QString &frame, const Q
         fail("Own screenshot frame required before input");
     const auto captured = binding.frames[frame];
     for (const QString field : {"seatId", "generation", "workspace", "windowId", "position", "logicalSize", "pixelSize",
-                                "scale", "transform"})
+                                "scale", "transform", "lockEpoch", "viewEpoch"})
         if (captured[field] != actual[field])
             fail("Screenshot became stale; capture again");
 }
@@ -369,23 +372,44 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     if (method == "create") {
         if (m_desktops.contains(name))
             fail("Desktop already managed");
-        const auto workspace = params["workspace"].toString("10"), output = params["output"].toString();
+        const auto workspace = params["workspace"].toString("10");
+        auto output = params["output"].toString();
+        const auto geometry = params["virtual-output"].toString(output.isEmpty() ? "1920x1080" : "");
+        bool privateOutput = !geometry.isEmpty();
+        if (privateOutput) {
+            if (!output.isEmpty() || !QRegularExpression("^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$").match(geometry).hasMatch()) fail("Expected virtual output dimensions, e.g. 1920x1080");
+            const auto dimensions = geometry.split('x');
+            if (dimensions[0].toInt() > 8192 || dimensions[1].toInt() > 8192) fail("Virtual output dimensions exceed 8192");
+            output = "cornice-agent-" + name + "-" + uuid();
+            const auto createdOutput = compositor("seat create-private-output " + output);
+            if (createdOutput != "ok") fail(QString::fromUtf8(createdOutput));
+            const auto configured = compositor("eval hl.monitor({output='" + output + "',mode='" + geometry + "',position='auto',scale=1})");
+            if (configured != "ok") { compositor("output remove " + output); fail(QString::fromUtf8(configured)); }
+        }
         atom(workspace);
         atom(output);
         const auto created = compositor("seat create " + name + " " + output);
-        if (created != "ok")
+        if (created != "ok") {
+            if (privateOutput) compositor("output remove " + output);
             fail(QString::fromUtf8(created));
+        }
         try {
             const auto actual = state(name);
-            m_desktops.emplace(name, Desktop{actual["seatId"].toString(), {}});
+            m_desktops.emplace(name, Desktop{actual["seatId"].toString(), {}, privateOutput ? output : QString{}, {}, {}});
             const auto switched = compositor("seat workspace " + name + " " + workspace);
             if (switched != "ok")
                 fail(QString::fromUtf8(switched));
             pause(name);
+            if (params.contains("human-lock-policy")) {
+                const auto paused = state(name);
+                const auto policy = params["human-lock-policy"].toString(); atom(policy);
+                json(compositor("seat lock-policy " + name + " " + paused["seatId"].toString() + " " + paused["generation"].toString() + " " + policy, true));
+            }
             save();
         } catch (...) {
             compositor("seat remove " + name);
             m_desktops.erase(name);
+            if (privateOutput) compositor("output remove " + output);
             throw;
         }
         return state(name);
@@ -397,6 +421,10 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         pause(name);
         return state(name);
     }
+    if (method == "lock-policy") {
+        const auto actual = state(name); const auto policy = params["policy"].toString(); atom(policy);
+        return json(compositor("seat lock-policy " + name + " " + desktop.id + " " + actual["generation"].toString() + " " + policy, true)).object();
+    }
     if (method == "resume") {
         desktop.driver.reset();
         const auto actual = state(name);
@@ -406,6 +434,8 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                         true));
         const auto resumed = state(name);
         try {
+            desktop.captureGrant = uuid() + uuid();
+            json(compositor("seat export-grant " + name + " " + desktop.id + " " + resumed["generation"].toString() + " " + desktop.captureGrant, true));
             desktop.driver =
                 std::make_unique<SeatDriver>(resumed["display"].toString(), name, resumed["output"].toString());
         } catch (...) {
@@ -419,13 +449,15 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         const auto reply = compositor("seat remove " + name);
         if (reply != "ok")
             fail(QString::fromUtf8(reply));
+        const auto privateOutput = desktop.privateOutput;
         m_desktops.erase(name);
+        if (!privateOutput.isEmpty()) compositor("output remove " + privateOutput);
         save();
         return {{"removed", name}, {"sharedWindowsPreserved", true}};
     }
     if (method == "bind") {
         const auto actual = state(name);
-        if (actual["paused"].toBool() || !actual["available"].toBool() || !desktop.driver)
+        if (actual["humanLocked"].toBool() || actual["paused"].toBool() || !actual["available"].toBool() || !desktop.driver)
             fail("Resume desktop before binding an agent");
         for (auto it = m_bindings.begin(); it != m_bindings.end();) {
             if (it.value().name != name) {
@@ -454,7 +486,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     }
     if (method == "frame" || method == "capture" || method == "desktop.capture") {
         const auto workspace = method == "frame" ? params["workspace"].toString("current") : QString("current");
-        auto result = capture(name, desktop.id, workspace, owner, method == "frame" ? "argb" : "png");
+        auto result = capture(name, desktop.id, workspace, owner, method == "frame" ? "argb" : "png", method == "desktop.capture");
         if (binding) {
             if (binding->frameOrder.size() >= 16)
                 binding->frames.remove(binding->frameOrder.takeFirst());
@@ -466,11 +498,35 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         }
         return result;
     }
+    if (method == "desktop.browser") {
+        const auto actual = state(name);
+        if (!binding || actual["paused"].toBool() || !actual["available"].toBool()) fail("Browser requires an active agent binding");
+        if (desktop.browser && !desktop.browser->running()) desktop.browser.reset();
+        if (!desktop.browser) {
+            auto environment = QProcessEnvironment::systemEnvironment(); environment.remove("WAYLAND_SOCKET"); environment.remove("DISPLAY");
+            environment.insert("WAYLAND_DISPLAY", actual["display"].toString()); environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
+            const auto profile = m_directory + "/profiles/" + name + "/" + desktop.id;
+            QDir().mkpath(profile);
+            desktop.browser = std::make_unique<BrowserSession>(params["executable"].toString(QStandardPaths::findExecutable("google-chrome-stable").isEmpty() ? QStandardPaths::findExecutable("chromium") : QStandardPaths::findExecutable("google-chrome-stable")),
+                QStringList{"--user-data-dir=" + profile, "--ozone-platform=wayland", "--no-first-run", "--no-default-browser-check", "about:blank"}, environment,
+                m_directory + "/browser-" + name + ".log", [this, name](const QString& token) {
+                    if (!m_bindings.contains(token)) return false;
+                    const auto& credential = m_bindings[token];
+                    if (credential.name != name) return false;
+                    const auto current = state(name);
+                    return current["seatId"].toString() == credential.id && current["generation"].toString() == credential.generation &&
+                        !current["paused"].toBool() && current["available"].toBool();
+                });
+        }
+        QString token;
+        for (auto it = m_bindings.begin(); it != m_bindings.end(); ++it) if (&it.value() == binding) { token = it.key(); break; }
+        return {{"cdpUrl", desktop.browser->endpoint(token)}, {"transport", "authorized-proxy-to-pipe"}};
+    }
     if (method == "windows" || method == "desktop.windows")
         return {{"windows", json(compositor("seat windows " + name, true)).array()}};
     if (method == "launch" || method == "desktop.launch") {
         const auto actual = state(name);
-        if (actual["paused"].toBool() || !actual["available"].toBool())
+        if ((!binding && actual["humanLocked"].toBool()) || actual["paused"].toBool() || !actual["available"].toBool())
             fail("Desktop writes paused");
         const auto argv = params["argv"].toArray();
         if (argv.isEmpty() || argv.size() > 128)
@@ -487,6 +543,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         const bool firefox = executable == "firefox";
         if (chromium || firefox) {
             for (const auto &arg : args) {
+                if (arg.startsWith("--remote-debugging")) fail("Use desktop.browser for authorized CDP; raw debug endpoints are disabled");
                 if (arg.startsWith("--user-data-dir") || arg == "-profile" || arg == "--profile" ||
                     arg.startsWith("--profile="))
                     fail("Browser profile is managed per desktop; omit profile overrides");

@@ -45,10 +45,11 @@ Inspecting the running shell (IPC)
   notifications       Toggle the notification centre
   dnd [on|off]        Toggle or set do-not-disturb
   osd <what>          volume | microphone | brightness | hide
-  lock [cmd]          lock now; status; try <password>; emergency-unlock (stuck session)
+  lock [cmd]          daily lock; full; recover; status; emergency-unlock (stuck session)
   logs                Follow the shell's journal (systemd only)
 
 Machine
+  suspend             Confirm a full session lock before sleeping
   doctor              Check dependencies, compositor and conflicts
   health              Print the health report saved at the last shell start
   verify              Check the running shell inside your real session
@@ -291,9 +292,24 @@ case "$command" in
     call osd "$1"
     ;;
 
+  suspend)
+    result=$(call idle suspend)
+    case "$result" in
+      requested) printf '%s\n' "$result" ;;
+      full-lock-required)
+        for ((attempt=0; attempt<50; attempt++)); do
+          if call lock status | jq -e '.secure == true' >/dev/null; then exec systemctl suspend; fi
+          sleep 0.1
+        done
+        echo 'cornice: full lock was not confirmed; sleep refused' >&2; exit 1 ;;
+      *) echo "cornice: sleep refused: $result" >&2; exit 1 ;;
+    esac
+    ;;
   lock)
     case "${1:-lock}" in
       lock) call lock lock ;;
+      full) call lock full ;;
+      recover) call lock recover ;;
       status) call lock status ;;
       try) (($# >= 2)) || { echo "usage: cornice lock try <password>" >&2; exit 2; }; call lock attempt "$2" ;;
       emergency-unlock)
@@ -301,7 +317,7 @@ case "$command" in
         call lock emergencyUnlock
         ;;
       *)
-        echo "usage: cornice lock [lock|status|try <password>|emergency-unlock]" >&2
+        echo "usage: cornice lock [lock|full|recover|status|try <password>|emergency-unlock]" >&2
         exit 2
         ;;
     esac

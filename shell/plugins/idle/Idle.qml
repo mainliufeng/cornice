@@ -329,6 +329,28 @@ Item {
     }
   }
 
+  // Hold logind's sleep-delay FD until a full lock has been presented. The
+  // private test stack disables host logind integration explicitly.
+  property bool sleepGuardReady: false
+  readonly property Process sleepGuard: Process {
+    command: [(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice") + "/bin/cornice-session-guard"]
+    stdinEnabled: true
+    running: !!root.lockService && root.lockService.humanLockAvailable === true && Quickshell.env("CORNICE_ISOLATED_TEST") !== "1"
+    stdout: SplitParser {
+      onRead: line => {
+        try {
+          const event = JSON.parse(line)
+          if (event.event === "full-lock-required") root.lockNow("sleep")
+          if (event.event === "lid-lock-required" && root.lockOnLidClose) root.lockNow("lid")
+          if (event.event === "suspend-failed" || event.event === "suspend-unconfirmed") root.lastAction = "suspend-failed"
+          if (event.event === "inhibitor-ready") root.sleepGuardReady = true
+          if (event.event === "inhibitor-unavailable" || event.event === "sleep-gate-unavailable" || event.event === "lid-control-unavailable") root.sleepGuardReady = false
+        } catch (e) {}
+      }
+    }
+    onExited: root.sleepGuardReady = false
+  }
+
   // ---- logind ---------------------------------------------------------------
   // `gdbus monitor` streams every signal from logind; the interesting ones are
   //   Manager.PrepareForSleep (true,)   → suspending now
@@ -388,7 +410,7 @@ Item {
       console.warn("cornice: idle wanted to lock but the lock service is not loaded")
       return
     }
-    if (lockService.compositorLocked) {
+    if (lockService.compositorLocked && !lockService.locked) {
       // Locking on top of an existing (possibly dead) lock is what crashed the
       // shell once; skip and say so.
       console.warn("cornice: idle skipping lock — the compositor already reports a locked session")
@@ -421,7 +443,10 @@ Item {
     interval: 15000
     repeat: true
     running: true
-    onTriggered: if (!logindMonitor.running) logindMonitor.running = true
+    onTriggered: {
+      if (!logindMonitor.running) logindMonitor.running = true
+      if (root.lockService && root.lockService.humanLockAvailable && Quickshell.env("CORNICE_ISOLATED_TEST") !== "1" && !sleepGuard.running) sleepGuard.running = true
+    }
   }
 
   Component.onCompleted: logindMonitor.running = true
@@ -450,6 +475,7 @@ Item {
         logindWatching: root.logindWatching,
         lastSignal: root.lastSignal,
         lockOnSleep: root.lockOnSleep,
+        sleepGuardReady: root.sleepGuardReady,
         lockOnLockSignal: root.lockOnLockSignal,
         lockOnLidClose: root.lockOnLidClose,
         docked: root.docked,
@@ -457,6 +483,14 @@ Item {
         monitorsEnabled: { "dim": dimMonitor.enabled, "screenOff": screenOffMonitor.enabled, "lock": lockMonitor.active },
         monitorsIdle: { "dim": dimMonitor.isIdle, "screenOff": screenOffMonitor.isIdle, "lock": !!lockMonitor.item && lockMonitor.item.isIdle }
       })
+    }
+
+    function suspend(): string {
+      if (root.lockService && root.lockService.humanLockAvailable) {
+        if (!root.sleepGuardReady || !root.sleepGuard.running) return "sleep-guard-unavailable"
+        root.lockNow("sleep"); root.sleepGuard.write("suspend\n"); return "requested"
+      }
+      root.lockNow("sleep"); return "full-lock-required"
     }
 
     function dim(): string {

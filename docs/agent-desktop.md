@@ -1,13 +1,15 @@
 # Agent 桌面：特性分支使用与测试
 
 实现分支：cornice `codex/agent-desktop`，Hyprland `codex/cornice-agent-desktop`。
-两者保持在特性分支，不合 main、不发版。本机已按后续授权切换物理会话。
+两者保持在特性分支，不合 main、不发版。本机物理会话仍运行先前的 `38351820`；
+新私有输出、human/full 锁与 CDP 功能已在私有实例验证，须成套安装后注销重登启用。
 
 本机日常会话切换已另行授权：通过 `~/dotfiles/linux/desktop/hyprland/agent-session/`
 中的登录入口启动已安装 fork，不覆盖系统包或原 hyprland.conf。SDDM 的原有 Hyprland
 登录项保持不变，注销重登后才切换正在运行的合成器。启动先创建 WS10/11/12 的三个
 暂停 seat，再启用 Cornice Agent 面板并启动原有应用。配置迁移保留原有主布局、
-2 倍缩放、100 个快捷键与启动项；兼容入口将人的旧脚本 IPC 转为 Lua 操作。
+2 倍缩放、100 个快捷键与启动项。dotfiles 桌面脚本直接使用新版 Lua API；
+全局 `hyprctl` 代理和旧命令转换器已删除，正式工具为 `/usr/bin/hyprctl`。
 `cornice takeover --undo` 恢复登录 profile 与 Cornice 设置，随后注销重登恢复系统版。
 会话切换的最终验收必须读取物理会话的 `hyprctl -j version`、`cornice desktop list`，
 并实际验证物理输入和隐藏 seat；嵌套验证不能代表主会话已替换。
@@ -19,13 +21,15 @@
 
 ## 构建与隔离测试
 
-原生组件依赖 CMake、Ninja、Qt 6 Core/Gui/Network/Quick/Qml、Wayland client、
+原生组件依赖 CMake、Ninja、Qt 6 Core/Gui/Network/Quick/Qml/WebSockets/DBus、PAM、Wayland client、
 wayland-scanner、xkbcommon。测试另需 Mutter、GTK 3/Pycairo 的 Python GI、grim 及已构建的 fork。
 兼容验证会运行系统 Google Chrome、kitty 和 Qt/Quickshell 客户端。
 
 ```bash
 make desktop-build
-CORNICE_TEST_HYPRLAND_SOURCE=/path/to/Hyprland make desktop-verify
+CORNICE_TEST_HYPRLAND_SOURCE=/path/to/Hyprland \
+  CORNICE_TEST_HYPRLAND=/path/to/Hyprland/build-agent-session/Hyprland make desktop-verify
+CORNICE_TEST_HYPRLAND_SOURCE=/path/to/Hyprland make human-lock-verify
 # 同一套验证也可直接测试全新安装后的产物：
 CORNICE_TEST_PRODUCT=/tmp/cornice-agent-install/share/cornice \
   CORNICE_TEST_HYPRLAND_SOURCE=/path/to/Hyprland ./test/agent-desktop-verify.sh
@@ -44,8 +48,8 @@ CORNICE_TEST_PRODUCT=/tmp/cornice-agent-install/share/cornice \
 ```bash
 cornice desktop serve                              # 前台服务；另一终端执行后续命令
 cornice desktop doctor                             # 能力与实例核验
-cornice desktop create writer --workspace 10 --output human
-cornice desktop create researcher --workspace 11 --output human
+cornice desktop create writer --workspace 10 --human-lock-policy continue
+cornice desktop create researcher --workspace 11 --virtual-output 1920x1080
 cornice desktop resume writer                      # 新帧确认后创建新输入设备
 cornice desktop launch writer -- kitty
 cornice desktop list
@@ -55,9 +59,12 @@ cornice desktop pause writer
 cornice desktop remove researcher                  # 保留共享应用窗口
 ```
 
-`human` 是测试输出名，真实会话应使用它自己的输出名。多个 seats 可以选择同一输出、
-同一 ws 和同一窗口。输出仅提供尺寸/坐标基准，不是 seat 独占的显示器。
-创建的桌面默认暂停，管理命令的成功状态以合成器回复为准。
+默认每个 seat 创建自己的 1920×1080 headless 输出，用于自己的 WS 尺寸与截图；
+`--virtual-output WxH` 可自定义。私有输出不出现在人的屏幕列表、鼠标跨屏或主 seat 焦点导航。
+多个 seat 仍可选择同一 WS/窗口，布局采用该 WS 的共享尺寸，不能同时有两套窗口排布。
+`--output OUTPUT` 保留显式共享输出模式。输出身份消失会撤销原 seat，不能退回人的输出。
+创建后默认暂停；`humanLockPolicy` 默认 `pause`，只有显式设置 `continue` 且锁前正在
+运行的 seat 能在日常锁屏后继续。管理命令的状态以合成器回复为准。
 
 **先创建全部 seats，再启动共享 GTK 应用**。运行中的 GTK 3 应用可能不会绑定热新增的
 seat；新增后需要重启相关应用。已验证 GTK 3、Google Chrome 154、kitty 0.49.1、
@@ -79,7 +86,7 @@ cornice desktop tool /tmp/writer.binding.json desktop.workspace '{"workspace":"1
 ```
 
 binding 文件是权限为 `0600` 的私有凭证，绑定具体实例、seat 生命周期和控制代次。
-agent 的工具请求不接受临时指定另一个 seat；省略目标、失联、锁屏、暂停或生命周期改变
+agent 的工具请求不接受临时指定另一个 seat；省略目标、失联、全会话锁、暂停或生命周期改变
 都不能转而操作人的桌面。为同一 desktop 重新 bind 会撤销前一个 binding。
 
 `desktop.capture` 返回 PNG 的 `pngBase64` 和同一帧的 `frameId`、ws、窗口身份、
@@ -89,8 +96,9 @@ cursor、尺寸、scale、transform、时间戳。模型/执行器消费图像�
 {"action":"click","x":420,"y":260,"frameId":"本次截图返回的 frameId"}
 ```
 
-切 ws、尺寸变化或截图后焦点窗口改变，会使旧帧失效；输入被拒绝并暂停 seat。
-恢复并重新 bind、截屏后才能继续，避免文字送入刚抢到焦点的另一个应用。
+切 ws、尺寸变化、锁 epoch 或焦点身份改变会使旧帧失效；过期帧被拒绝，应重新截图。
+这一类可恢复错误不会自动暂停 seat；输入状态无法确认时才暂停并撤销 binding，
+需要显式 resume/bind。不会自动重试无法确认的点击。
 
 ```bash
 cornice desktop tool /tmp/writer.binding.json desktop.input '<上面的 JSON>'
@@ -124,7 +132,7 @@ CLI 自己生成新 ID；需要重试语义的执行器应直接使用 JSON 协�
 ```json
 {
   "agentDesktop": {"enabled":true,"desktops":[
-    {"name":"writer","initialWorkspace":"10","output":"human"}
+    {"name":"writer","initialWorkspace":"10","virtualOutput":"1920x1080","humanLockPolicy":"continue"}
   ]},
   "bar":{"layout":{"left":[{"id":"cn.workspaces"},{"id":"cn.agent-desktop"}]}}
 }
@@ -134,15 +142,48 @@ CLI 自己生成新 ID；需要重试语义的执行器应直接使用 JSON 协�
 「跟随」读取 agent 当前 ws，「浏览」读取人选的已有 ws；浏览不会修改任何 seat 的实际 ws。
 窗口、popup、目标 seat 的 cursor 属于导出画面；物理输出上的 bar/launcher/壁纸不属于
 agent 截图。其他 ws 的浏览画面不会绘制 agent 当前 ws 的错误光标。
-锁屏阻断导出并清除观察缓存；焦点抓取被清除时观察器可关闭，解锁后可以重新打开。
+任意锁屏都阻断人的观察导出并清除观察缓存；焦点抓取被清除时观察器可关闭，解锁后可以重新打开。
 再次执行 observe 会打开/保持打开，不会把已有观察器关闭。关闭观察器释放缓冲。服务独立于 UI，UI 关闭不结束 agent 输入。
 
 暂停只阻断桌面写入口，不表示外部 agent 的文件/网络/终端动作已暂停。
-暂停、锁屏和服务崩溃会使旧设备/凭证失效，解锁/重连不会自动恢复写入；需要人显式
-resume，再绑定执行器、重新截图。此机制是共享会话中的控制契约，不是同 UID 安全沙箱。
+暂停、全会话锁和服务崩溃会使旧设备/凭证失效，解锁/重连不会自动恢复写入；
+需要人显式 resume，再绑定执行器、重新截图。human 锁保留事先授权的 active/continue
+seat，暂停策略或已暂停的 seat 均不自动恢复。这是共享会话控制契约，不是同 UID 沙箱。
 
-上面是当前实现。后续“每 Agent 虚拟屏幕、人锁屏后继续运行”的协议、权限和验收
-设计见 [Session lock 设计](agent-desktop-session-lock-design.md)，尚未实现，不改变当前锁屏行为。
+## 日常锁屏、全锁与休眠
+
+```bash
+cornice desktop lock-policy writer continue  # 只能在未锁屏时设置
+cornice lock                                # 日常 human 锁
+cornice lock status                         # scope、secure 和认证提供者状态
+cornice lock full                           # 原子升级为全会话锁，撤销所有 Agent
+cornice lock recover                        # 恢复遗失锁的认证界面
+cornice suspend                             # full secure 后由 guard 放行休眠
+```
+
+协议与原生模块能力齐全时启用 human 锁；缺失时仍走 Quickshell 标准全会话锁。
+日常锁保护人的输入与全部物理/未知输出；continue Agent 可切换共享 WS、输入、启动应用
+并截自己的画面，包括和人共用的 WS。人的观察器锁后清空，Agent 不得获取锁 surface。
+原生锁界面使用不透明背景和真实 PAM，支持 showUser；旧壁纸/主题/主屏配置未接入。
+
+guard 持有 sleep block/delay 和 lid inhibitor；启用后使用 Cornice 的 suspend/面板入口，
+外部直接 `systemctl suspend` 被门禁拦住。唤醒仍锁住且全部 Agent 暂停；认证进程丢失
+保留锁并恢复认证，guard 或整个 Cornice 在 human 锁期间丢失会升级全锁、撤销所有 Agent。
+详细规定和物理验证边界见 [Session lock 设计](agent-desktop-session-lock-design.md)。
+
+## Agent 浏览器的 CDP
+
+```bash
+cornice desktop tool /tmp/writer.binding.json desktop.browser
+```
+
+首次请求启动该 seat 的专用 Chrome；返回标准 CDP HTTP discovery endpoint，可连接
+`endpoint + /json/version` 返回的 WebSocket。Chrome 内部使用 remote-debugging-pipe，
+不开放原始 debug 端口；endpoint 含当前 binding 的秘密，不能当作公开 URL 分享。
+每个 discovery、命令、响应、事件都检查 seat 授权；手动暂停、全锁、binding 失效或
+服务退出关闭连接。human 锁期间 active/continue 可继续用同一授权；恢复后需新 binding
+和新 endpoint。在途已执行脚本不能撤回，不自动重放失败请求。Codex 固定 9222 的插件
+不会自动改连这个 endpoint，需要执行器支持传入返回的 CDP 地址。
 
 ## 安装与打包
 
@@ -153,7 +194,7 @@ resume，再绑定执行器、重新截图。此机制是共享会话中的控�
 默认 core 包仍为架构无关的 shell；可选平台包在 `packaging/agent-desktop/PKGBUILD`。
 原生模块缺失/特性关闭时，普通 cornice shell 不应因为顶层 import 失败而退出。
 嵌套 fork 使用 Lua 调度，人的 ws/聚焦/DPMS/重启路径经 `cornice-compositor` 适配；
-agent 工具完全绕开这个人的适配器。现有日常 Hyprland 与用户配置保持原样。
+agent 工具完全绕开这个人的适配器。系统 Hyprland 包与原 hyprland.conf 保留，登录迁移可通过 takeover undo 撤销。
 
 ## 本轮验收边界
 
@@ -185,3 +226,10 @@ Cornice 只读观察的跟随/浏览已在物理屏幕绘制并目视检查，�
 其中 result.json、test.log、agent-gtk.png、agent-browser.png、agent-terminal.png、
 agent-qt.png 和 physical-observer.png 为实际执行与绘制结果。测试窗口已清理，
 三个 seat 均恢复暂停；没有在物理会话注入人的输入或触发锁屏/DPMS。
+
+## 2026-10-07 新锁分支补充
+
+此前物理 GTK 跨 Agent 窗口失败保留为历史结果。新分支修正 agent socket 上 primary
+seat 的发布时序，私有实例已验证两个预创建 Agent 向同一个 Agent 启动的 GTK 输入。
+旧 GTK 应用不一定绑定后新增 seat，Chrome 仍不保证同窗口多 seat；物理修复待重登验证。
+新锁测试的真实画面、FD、应用效果与失败恢复记录见验证文档；没有拿当前会话锁屏或睡眠试验。

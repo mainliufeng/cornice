@@ -200,7 +200,11 @@ PanelFrame {
             glyph: modelData.glyph
             filled: true
             destructive: modelData.key === "power.off"
-            onClicked: Util.exec(modelData.command)
+            onClicked: {
+              if (modelData.key === "power.suspend")
+                Quickshell.execDetached([(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice") + "/bin/cornice", "suspend"])
+              else Util.exec(modelData.command)
+            }
           }
         }
       }

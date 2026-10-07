@@ -63,6 +63,7 @@ int main(int argc, char **argv) {
             lock.setStaleLockTime(0);
             if (!lock.tryLock(0))
                 throw std::runtime_error("Desktop service already running for this instance");
+            std::signal(SIGPIPE, SIG_IGN);
             Broker broker(instance);
             broker.listen();
             std::signal(SIGTERM, stop);
@@ -102,10 +103,12 @@ int main(int argc, char **argv) {
             if (command == "create") {
                 while (!args.isEmpty()) {
                     const auto flag = take(args);
-                    if (flag != "--workspace" && flag != "--output")
+                    if (flag != "--workspace" && flag != "--output" && flag != "--virtual-output" && flag != "--human-lock-policy")
                         throw std::runtime_error("Expected --workspace or --output");
                     params[flag.mid(2)] = take(args);
                 }
+            } else if (command == "lock-policy") {
+                params["policy"] = take(args);
             } else if (command == "launch") {
                 if (args.value(0) == "--")
                     args.removeFirst();

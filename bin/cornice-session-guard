@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+bin_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+prefix=${CORNICE_PATH:-$(cd "$bin_dir/.." && pwd)}
+runtime="$prefix/native/bin/cornice-session-guard"
+[[ -x $runtime ]] || runtime="$prefix/native/build/cornice-session-guard"
+[[ -x $runtime ]] || { echo 'cornice: session guard missing' >&2; exit 1; }
+exec "$runtime" "$@"
