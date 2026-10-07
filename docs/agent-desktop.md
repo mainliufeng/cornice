@@ -3,6 +3,15 @@
 实现分支：cornice `codex/agent-desktop`，Hyprland `codex/cornice-agent-desktop`。
 两者保持在特性分支，不合 main、不发版、不替换当前会话。
 
+本机日常会话切换已另行授权：通过 `~/dotfiles/linux/desktop/hyprland/agent-session/`
+中的登录入口启动已安装 fork，不覆盖系统包或原 hyprland.conf。SDDM 的原有 Hyprland
+登录项保持不变，注销重登后才切换正在运行的合成器。启动先创建 WS10/11/12 的三个
+暂停 seat，再启用 Cornice Agent 面板并启动原有应用。配置迁移保留原有主布局、
+2 倍缩放、100 个快捷键与启动项；兼容入口将人的旧脚本 IPC 转为 Lua 操作。
+`cornice takeover --undo` 恢复登录 profile 与 Cornice 设置，随后注销重登恢复系统版。
+会话切换的最终验收必须读取物理会话的 `hyprctl -j version`、`cornice desktop list`，
+并实际验证物理输入和隐藏 seat；嵌套验证不能代表主会话已替换。
+
 本阶段已实现独立 seat 的工具输入、工作区切换、窗口聚焦、截图、管理面板、只读跟随与
 只读浏览，以及暂停/恢复的输入门禁。**人的物理输入接管、具体 AI 执行器的任务启动/停止
 和正式会话迁移仍是后续阶段**；面板没有假任务状态，也没有尚不能工作的接管按钮。
