@@ -76,6 +76,14 @@ Item {
     return ""
   }
 
+  // Human scope uses the private protocol; full scope retains ext-session-lock.
+  readonly property string prefix: Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
+  property string scope: "none"
+  property bool compositorHumanLockAvailable: false
+  property bool nativeProviderAvailable: false
+  readonly property bool humanLockAvailable: compositorHumanLockAvailable && nativeProviderAvailable
+  property bool nativeOwned: false
+  property bool providerUnlockReceived: false
   property bool locked: false
   property bool secure: false
   property bool pamAvailable: false
@@ -139,9 +147,10 @@ Item {
 
   WlSessionLock {
     id: sessionLock
-    locked: root.locked
+    locked: root.locked && root.scope === "session" && !root.nativeOwned
 
     onSecureChanged: {
+      if (root.scope !== "session") return
       root.secure = secure
       // Do NOT flip to "authenticating" here. Nothing is being authenticated yet,
       // and that state disables the password field — which locked the user out
@@ -502,22 +511,96 @@ Item {
     }
   }
 
-  // A session lock that outlives its client leaves Hyprland showing its
-  // "lockscreen app died" failsafe, and only a compositor restart clears that.
-  // Releasing on destruction means a graceful exit (cornice stop/restart,
-  // SIGTERM) never strands the session. A SIGKILL still can — nothing can run
-  // then — which is why `cornice stop` refuses while locked.
-  Component.onDestruction: {
-    if (!locked) return
-    try {
-      locked = false
-    } catch (error) {
-      console.warn("cornice: could not release the lock while shutting down: " + error)
+  readonly property Process capabilityProbe: Process {
+    command: ["hyprctl", "-j", "seat", "capabilities"]
+    running: true
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try { const features = JSON.parse(text).features; root.compositorHumanLockAvailable = ["human-lock-v1", "agent-private-output", "lock-aware-seat-input", "lock-aware-agent-export", "session-guard-v1"].every(name => features.indexOf(name) >= 0) } catch (e) {}
+      }
     }
   }
 
+  readonly property Process nativeProviderProbe: Process {
+    command: [root.prefix + "/bin/cornice-human-lock", "--help"]
+    running: true
+    onExited: (code, status) => root.nativeProviderAvailable = code === 0
+  }
+
+  readonly property Process protectionProbe: Process {
+    command: ["hyprctl", "-j", "seat", "lock-state"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          const actual = JSON.parse(text)
+          root.compositorLocked = actual.locked === true
+          if (root.nativeOwned && root.scope === actual.scope) root.secure = actual.secure === true
+          if (actual.locked && !actual.ownerConnected && root.pamChecked && root.pamAvailable && root.humanLockAvailable) {
+            root.nativeOwned = true; root.scope = actual.scope; root.locked = true
+            const provider = actual.scope === "human" ? root.humanProvider : root.fullProvider
+            if (!provider.running) root.startHumanProvider()
+          }
+        } catch (e) {}
+      }
+    }
+  }
+  Timer { interval: 250; running: root.humanLockAvailable; repeat: true; triggeredOnStart: true; onTriggered: if (!protectionProbe.running) protectionProbe.running = true }
+
+  readonly property Process humanProvider: Process {
+    stdinEnabled: true
+    stdout: SplitParser { onRead: line => root.nativeEvent(line, "human") }
+    onExited: root.nativeExited("human")
+  }
+
+  readonly property Process fullProvider: Process {
+    stdinEnabled: true
+    stdout: SplitParser { onRead: line => root.nativeEvent(line, "session") }
+    onExited: root.nativeExited("session")
+  }
+
+  function nativeEvent(line, providerScope) {
+    try {
+      const event = JSON.parse(line)
+      if (root.scope !== providerScope) return
+      if (event.event === "secure") { root.secure = true; root.state = "locked"; root.message = "" }
+      if (event.event === "authenticating") root.state = "authenticating"
+      if (event.event === "authentication-failed") { root.state = "failed"; root.message = "验证失败，请重试" }
+      if (event.event === "unlocked") {
+        root.providerUnlockReceived = true; root.locked = false; root.secure = false; root.compositorLocked = false
+        root.scope = "none"; root.state = "idle"; root.journal += "|unlock:ok"
+      }
+    } catch (e) { console.warn("cornice: invalid lock provider event") }
+  }
+
+  function nativeExited(providerScope) {
+    if (scope === providerScope && locked && !providerUnlockReceived) {
+      secure = false; state = "failed"; message = "锁屏进程已退出，桌面保持锁定"
+    }
+  }
+
+  function startHumanProvider() {
+    let args = [prefix + "/bin/cornice-human-lock", "--pam-service", pamService,
+      "--pam-directory", pamDirectory === "" ? "/etc/pam.d" : pamDirectory, "--scope", scope]
+    if (allowEmergency) args.push("--allow-emergency")
+    if (!showUser) args.push("--hide-user")
+    providerUnlockReceived = false
+    const provider = scope === "human" ? humanProvider : fullProvider
+    provider.command = args; provider.running = true
+  }
+
+  // Both providers fail closed when their owner exits. The CLI already refuses
+  // ordinary stop/restart while locked; forced termination must not unlock.
   function lock(reason) {
-    if (locked) return "already-locked"
+    const full = reason === "sleep" || reason === "full" || Util.option(lockConfig, "scope", "human") === "session"
+    if (locked) {
+      if (full && scope === "human") {
+        // The compositor replaces the human owner atomically; never unlock first.
+        secure = false; scope = "session"; state = "locked"; journal += "|upgrade:session"
+        if (humanLockAvailable) startHumanProvider()
+        return "ok"
+      }
+      return "already-locked"
+    }
 
     // The compositor may already hold a lock we do not own: a previous lock
     // client died, or Hyprland is showing its crashed-lockscreen failsafe.
@@ -542,13 +625,17 @@ Item {
     // Only screenshot when the wallpaper is not the background: grim costs a
     // frame capture and a PNG write on every lock.
     if (wantedScreenshot) captureScreenshot()
+    nativeOwned = humanLockAvailable
+    scope = !full && nativeOwned ? "human" : "session"
     locked = true
+    if (nativeOwned) startHumanProvider()
     journal = journal + "|lock:" + (reason === undefined ? "manual" : reason)
     return "ok"
   }
 
   function authenticate() {
     if (!locked) return "not-locked"
+    if (nativeOwned) return "use-lockscreen"
     if (pam.active) return "busy"
     if (password === "") return "empty"
 
@@ -585,6 +672,7 @@ Item {
     password = ""
     journal = journal + "|unlock:ok"
     locked = false
+    scope = "none"
     secure = false
     state = "idle"
   }
@@ -602,12 +690,19 @@ Item {
   function emergencyUnlock() {
     if (!allowEmergency) return "disabled"
     console.warn("cornice: EMERGENCY unlock requested — the session is being released without authentication")
+    if (nativeOwned) {
+      const provider = scope === "human" ? humanProvider : fullProvider
+      if (!provider.running) return "provider-unavailable"
+      provider.write("emergency-unlock\n")
+      return "requested"
+    }
     pendingPassword = ""
     password = ""
     message = ""
     state = "idle"
     secure = false
     locked = false
+    scope = "none"
     journal = journal + "|emergency-unlock"
     return "ok"
   }
@@ -619,12 +714,23 @@ Item {
       return root.lock("ipc")
     }
 
+    function full(): string { return root.lock("full") }
+
+    function recover(): string {
+      if (!root.pamAvailable || !root.humanLockAvailable || (root.scope !== "human" && root.scope !== "session")) return "unavailable"
+      const provider = root.scope === "human" ? root.humanProvider : root.fullProvider
+      if (provider.running) return "already-running"
+      root.startHumanProvider(); return "ok"
+    }
+
     function status(): string {
       return JSON.stringify({
         showUser: root.showUser,
         background: root.backgroundMode,
         backgroundSource: root.backgroundSource,
         wallpaper: root.wallpaperPath,
+        scope: root.scope,
+        humanLockAvailable: root.humanLockAvailable,
         locked: root.locked,
         secure: root.secure,
         state: root.state,

@@ -14,7 +14,17 @@ case "$action" in
     ;;
   dpms)
     [[ $# == 1 && ( $1 == on || $1 == off ) ]] || exit 2
-    if ((lua)); then result=$(hyprctl dispatch "hl.dsp.dpms({action=\"$1\"})")
+    if ((lua)) && hyprctl -j seat private-outputs >/dev/null 2>&1; then
+      private=$(hyprctl -j seat private-outputs)
+      monitors=$(hyprctl -j monitors)
+      result=ok
+      while IFS= read -r output; do
+        [[ -n $output ]] || continue
+        encoded=$(jq -Rn --arg output "$output" '$output')
+        response=$(hyprctl dispatch "hl.dsp.dpms({action=\"$1\",monitor=$encoded})")
+        [[ $response == ok ]] || { result=$response; break; }
+      done < <(jq -r --argjson private "$private" '.[] | .name as $name | select($private | index($name) | not) | .name' <<<"$monitors")
+    elif ((lua)); then result=$(hyprctl dispatch "hl.dsp.dpms({action=\"$1\"})")
     else result=$(hyprctl dispatch dpms "$1"); fi
     ;;
   focus-window)

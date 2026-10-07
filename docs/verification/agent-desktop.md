@@ -1,5 +1,44 @@
 # Agent 桌面对接验证
 
+## 2026-10-07 human/full 锁与私有输出实现
+
+此次实现仅在特性分支，物理会话仍运行旧 `38351820`，新锁协议未在宿主启用。
+没有新增旧命令兼容层；dotfiles 全局 hyprctl 代理与转换器已删除，直接使用系统工具
+及原生 Lua API。当前安装版本的 native API 私有回归：`/tmp/ad-zrj541x2`，实际 GTK
+中文粘贴及 Ctrl 释放、窗口切换、全屏/置顶/浮动/尺寸、中文带引号 WS 与 DPMS 均通过。
+
+新锁实现工作树验证：`/tmp/ad-okepdwzi`；全新 `--desktop --copy` 安装产物验证：
+`/tmp/ad-vdytw0aj`。测试真实调用安装后的程序、协议、原生 QML/Qt 组件及 Cornice UI，
+没有操作宿主锁屏、关屏或睡眠。通过以下实际结果：
+
+- 三个 Agent 独立 private 输出；两个预创建 Agent 操作同一个 Agent 启动的 GTK 输入框。
+- active/continue 在 human 锁后仍切 WS、实际输入、启动 GTK 和截自己的画面；pause 被撤销。
+- Agent 可以操作人的同一个 WS；持续物理截图没有应用内容，Agent 导出内应用时钟继续变化。
+- 人侧观察 SHM/纹理在锁后清空；原始 private/window 导出及旧帧输入被拒绝。
+- 真实 Chrome 通过 pipe CDP 运行 JavaScript；128 KB 请求分段写入，没有命令重放。
+  暂停关闭授权连接；重新 resume/bind 后用新 endpoint；human continue 保留授权；full 拒绝旧 endpoint。
+- 真实 PAM permit/deny 认证、主 seat 密码框输入、提供者 SIGKILL、遗失锁恢复；失败保持锁。
+- 人的 DPMS off 不关 private 输出；未知 headless 输出/模式变化加入保护并重新确认实际呈现。
+- guardian 在 human 锁中退出原子升级全锁，全部 Agent 暂停；重启 Cornice 恢复认证而不恢复授权。
+- logind 测试夹具在私有 system bus 上传递真实 inhibitor FD，检查 block/delay/lid、
+  full secure 先于 Suspend、模拟唤醒与合盖。没有执行宿主 Suspend。
+- private home 输出丢失，即便该 seat 正在看人的 WS 也被撤销；人的 WS/focus/cursor 保持不变。
+
+主 seat 新原生锁界面已目视检查：`/tmp/ad-okepdwzi/cornice-native-lock.png`，
+是不透明的真实锁 surface，含时钟、密码框、按钮及 human/full 提示。该界面仍未接入
+旧锁的壁纸/模糊/主题/指定主屏配置，不能声称配置完全等价；XKB compose 不是独立 IME。
+
+既有桌面专项工作树回归通过：`/tmp/ad-45cbd37y`，GTK/Chrome/kitty/Qt 输入、只读观察、
+真实面板点击、生命周期撤销均覆盖。实际观察约 14.9 fps，最大延迟 128 ms（58 samples）。
+既有 shell headless、lock、idle-lock 回归分别见 `/tmp/cornice-headless-regression.log`、
+`/tmp/cornice-lock-regression.log`、`/tmp/cornice-idle-regression.log`。headless 的配置重载
+测试现在等待实际新配置生效，不将一次性 reload IPC 回复当作已应用。
+
+新版本物理合盖/睡眠、DRM 多输出及 PAM 用户本人解锁仍未验收。此前物理 GTK 跨 seat
+失败是下方旧版本的历史记录；新 source 修复在私有实例通过，不能将物理结果改写为通过。
+
+## 先前独立 seat 阶段记录
+
 本轮完整对接证据：`/tmp/ad-e6_6n7ax`；约 **14.94 fps**，最大绘制到观察时间 **124 ms**。
 文末界面截图来自 `/tmp/ad-fpovr9l2`。
 Hyprland 多 seat 回归证据：`/tmp/hyprland-multiseat.ugPdp5`。

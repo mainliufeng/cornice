@@ -1,5 +1,6 @@
 #pragma once
 #include "SeatDriver.hpp"
+#include "BrowserSession.hpp"
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLocalServer>
@@ -23,7 +24,9 @@ class Broker : public QObject {
   private:
     struct Desktop {
         QString id;
+        QString captureGrant, privateOutput;
         std::unique_ptr<SeatDriver> driver;
+        std::unique_ptr<BrowserSession> browser;
     };
     struct Binding {
         QString name, id, generation;
@@ -35,7 +38,7 @@ class Broker : public QObject {
     QJsonObject handle(const QJsonObject &, QLocalSocket *);
     QJsonObject perform(const QString &method, const QJsonObject &, Binding *, QLocalSocket *);
     QJsonObject capture(const QString &name, const QString &id, const QString &workspace, QLocalSocket *owner,
-                        const QString &format);
+                        const QString &format, bool agent = false);
     Desktop &managed(const QString &name);
     void save();
     void pause(const QString &name);

@@ -6,7 +6,7 @@
 PREFIX ?= $(HOME)/.local
 
 .PHONY: help check install uninstall run launch stop restart status doctor verify \
-        test test-quick installer headless lock takeover install-verify bench pkg clean fmt desktop-build desktop-verify
+        test test-quick installer headless lock takeover install-verify bench pkg clean fmt desktop-build desktop-verify human-lock-verify
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -14,12 +14,15 @@ help: ## show this help
 
 check: ## syntax-check every script
 	@set -e; for f in bin/cornice* test/*.sh install.sh; do bash -n "$$f"; done
-	@python3 -c "import ast,sys;[ast.parse(open(f).read()) for f in ['test/fake-mpris-player.py','test/inject-click.py','test/agent-desktop-client.py','test/agent-desktop-verify.py']]"
+	@python3 -c "import ast,sys;[ast.parse(open(f).read()) for f in ['test/fake-mpris-player.py','test/inject-click.py','test/agent-desktop-client.py','test/agent-desktop-verify.py','test/desktop_harness.py','test/human-lock-verify.py','test/cdp_client.py','test/logind-fixture.py']]"
 	@echo "syntax ok"
 
 desktop-build: ## build optional native seat service and read-only viewer
 	cmake -S native/desktop -B native/build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 	cmake --build native/build -j4
+
+human-lock-verify: desktop-build ## private lock, CDP and sleep lifecycle integration
+	./test/human-lock-verify.sh
 
 desktop-verify: desktop-build ## real seat tools and viewer in an isolated fork
 	./test/agent-desktop-verify.sh
