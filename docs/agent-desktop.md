@@ -1,7 +1,7 @@
 # Agent 桌面：特性分支使用与测试
 
 实现分支：cornice `codex/agent-desktop`，Hyprland `codex/cornice-agent-desktop`。
-两者保持在特性分支，不合 main、不发版、不替换当前会话。
+两者保持在特性分支，不合 main、不发版。本机已按后续授权切换物理会话。
 
 本机日常会话切换已另行授权：通过 `~/dotfiles/linux/desktop/hyprland/agent-session/`
 中的登录入口启动已安装 fork，不覆盖系统包或原 hyprland.conf。SDDM 的原有 Hyprland
@@ -14,7 +14,7 @@
 
 本阶段已实现独立 seat 的工具输入、工作区切换、窗口聚焦、截图、管理面板、只读跟随与
 只读浏览，以及暂停/恢复的输入门禁。**人的物理输入接管、具体 AI 执行器的任务启动/停止
-和正式会话迁移仍是后续阶段**；面板没有假任务状态，也没有尚不能工作的接管按钮。
+仍是后续阶段；本机物理会话迁移已完成**；面板没有假任务状态，也没有尚不能工作的接管按钮。
 完整目标与分阶段验收见 [设计方案](agent-desktop-design.md)。
 
 ## 构建与隔离测试
@@ -37,7 +37,7 @@ CORNICE_TEST_PRODUCT=/tmp/cornice-agent-install/share/cornice \
 
 手动调试时，先进入自己创建的嵌套 fork 环境，显式设置 `XDG_RUNTIME_DIR`、
 `HYPRLAND_INSTANCE_SIGNATURE` 与 `WAYLAND_DISPLAY`。以下命令不会自动发现其他实例，
-也不会在缺少 seat 能力时退回人的默认输入。正式使用须等匹配 fork 发版并完成会话迁移。
+也不会在缺少 seat 能力时退回人的默认输入。本机使用已安装的特性版 fork；其他机器须先安装匹配 fork 并完成会话迁移。
 
 ## CLI 管理
 
@@ -164,3 +164,21 @@ agent 工具完全绕开这个人的适配器。现有日常 Hyprland 与用户�
 这不是所有 GPU、分辨率、输出变换及真实会话负载下的性能保证。
 
 真实运行记录、截图、分支范围与后续缺口见 [验证记录](verification/agent-desktop.md)。
+
+## 2026-10-07 物理会话补充验收
+
+日常会话已运行 `38351820` 的 Release fork，DRM 输出 eDP-1，3072×1920、scale 2。
+已实际测试隐藏 WS 的 GTK 点击/中文输入、kitty 中文命令与 Return、专用 Chrome
+中文输入、Qt/Quickshell 中文输入、Agent 切 WS、独立截图、暂停及旧凭证撤销。
+Cornice 只读观察的跟随/浏览已在物理屏幕绘制并目视检查，约 14.96 fps。
+测试期间人继续操作；按物理输入事件计数区分人主动改变状态，未把整段前后相等作为验收代理。
+
+**尚未通过：agent1 启动的同一个 GTK 窗口，agent2 可见但输入框未收到文字。**
+在 GTK_IM_MODULE=fcitx 与 wayland 下均复现，尚未确定根因。因此本轮物理会话
+完整验收为失败；独立应用操作路径通过，不能据此承诺任意窗口都可跨 seat 操作。
+这里的失败与嵌套环境里主 seat 启动 GTK 的共享窗口通过结果需要分别保留。
+
+证据目录：`~/.local/state/cornice-agent-desktop/physical-20261007-171801/`，
+其中 result.json、test.log、agent-gtk.png、agent-browser.png、agent-terminal.png、
+agent-qt.png 和 physical-observer.png 为实际执行与绘制结果。测试窗口已清理，
+三个 seat 均恢复暂停；没有在物理会话注入人的输入或触发锁屏/DPMS。

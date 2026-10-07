@@ -50,10 +50,28 @@ observer/manager/browser/Qt 截图及 `observer-performance.json`。验证输出
 
 ## 尚未验收
 
-物理输入接管、具体执行器的真实任务/取消/状态同步、正式 fork 发版与实际会话切换。
+物理输入接管、具体执行器的真实任务/取消/状态同步与正式 fork 发版。
+本机实际会话切换结果与新增失败项见下方物理会话验收。
 多输出热插拔、所有 scale/transform 组合、所有常用应用及多 seat 输入法矩阵也没有
 全部验收。同窗口的应用数据仍共享；Chrome 的单 seat 客户端限制按使用说明处理。
 
 ![真实 cornice 只读观察器](agent-desktop-observer.png)
 
 ![实际面板按钮暂停/恢复验证后](agent-desktop-manager.png)
+
+## 2026-10-07 实际物理会话验收
+
+特性版 `38351820` 已通过原 SDDM 登录入口启动；cornice.service 正常运行，
+agent1/2/3 均在实际 DRM 输出 eDP-1 上。3072×1920、2 倍缩放保留。
+隐藏 Workspace 内的 GTK 点击/中文、kitty 命令、Chrome 中文、Qt 中文、切 ws、
+截图、暂停/恢复与旧 binding 撤销通过。只读观察器的跟随/浏览约 14.96 fps，
+已检查实际物理输出截图。测试期间有人的真实输入，逐步核对输入事件计数
+与 primary 状态，观察到 3 个状态不变检查点和 5 个人主动操作检查点。
+
+完整验收仍未通过：agent1 启动的 GTK 窗口，在 agent2 上可见但输入框不接受
+第二 seat 的文字。fcitx/native Wayland IM 两种配置均复现，不能将原因归结为 fcitx。
+这与以前主 seat 启动 GTK 的共享窗口通过结果不是同一个场景。
+
+证据：`~/.local/state/cornice-agent-desktop/physical-20261007-171801/result.json`
+及同目录实际截图、日志。物理会话已切换与独立应用路径通过，分别记录为真；
+完整多 seat 共享窗口验收记录为假，保留此缺口。
