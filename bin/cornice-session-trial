@@ -140,6 +140,15 @@ def prepare(args):
                 flags = re.sub(r"(?m)^\s*--force-device-scale-factor=[^\n]+\n?", "", child.read_text())
                 flags = re.sub(r"(?m)^\s*--ozone-platform=[^\n]+\n?", "", flags)
                 atomic(config_root / child.name, flags.rstrip() + "\n--ozone-platform=wayland\n")
+            elif child.name == "fcitx5" and child.is_dir():
+                shutil.copytree(child, config_root / child.name, symlinks=False)
+                classic = config_root / child.name / "conf/classicui.conf"
+                if classic.is_file():
+                    text = classic.read_text()
+                    # The stable X11 setup compensates with 24pt. This native
+                    # Wayland session applies the output scale automatically.
+                    text = re.sub(r'(?m)^Font="?Sans 24"?\s*$', 'Font="Sans 12"', text)
+                    atomic(classic, text)
             elif child.name != "cornice":
                 (config_root / child.name).symlink_to(child.resolve(), target_is_directory=child.is_dir())
         if (original / "cornice").exists():

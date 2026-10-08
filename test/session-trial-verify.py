@@ -80,11 +80,19 @@ hl.define_submap("trial-test", function() hl.bind("escape", hl.dsp.submap("reset
     chrome_flags = BASE / "config/chrome-flags.conf"
     chrome_flags.write_text("# Stable Xwayland flags\n--force-device-scale-factor=2\n--force-renderer-accessibility=complete\n")
     original_chrome_flags = chrome_flags.read_text()
+    classic = BASE / "config/fcitx5/conf/classicui.conf"
+    classic.parent.mkdir(parents=True, exist_ok=True)
+    classic.write_text('Font="Sans 24"\nVertical Candidate List=False\n')
+    original_classic = classic.read_text()
     original_settings = settings.read_bytes()
     prepared = json.loads(trial("prepare", "--hyprland", os.environ["CORNICE_TEST_HYPRLAND"],
                                 "--cornice", PRODUCT, "--config", configuration))
     release = pathlib.Path(prepared["prepared"])
     assert not status()["armed"] and settings.read_bytes() == original_settings
+    trial_classic = release / "config-home/fcitx5/conf/classicui.conf"
+    assert not (release / "config-home/fcitx5").is_symlink()
+    assert 'Font="Sans 12"' in trial_classic.read_text()
+    assert classic.read_text() == original_classic
     trial_flags = release / "config-home/chrome-flags.conf"
     assert not trial_flags.is_symlink() and "force-device-scale-factor" not in trial_flags.read_text()
     assert "--ozone-platform=wayland" in trial_flags.read_text()

@@ -20,6 +20,9 @@ make desktop-build
 `prepare` 只创建状态目录中的版本快照、Cornice 配置副本与校验清单；不启用登录切换。
 源码构建的组件在快照中通过 `patchelf` 设置相对库路径，需要系统已提供该工具。
 Hyprland 与 Cornice 的运行依赖仍来自当前系统；这不是静态系统镜像。
+Chrome 在配置副本中使用 Wayland 原生缩放，移除额外的固定缩放倍数。
+Fcitx 配置也独立复制；旧 X11 配置的 `Sans 24` 在试运行副本中改为 `Sans 12`，
+配合 Wayland 的输出缩放。原始配置与其他自定义字号保留。
 
 需要试用时执行：
 

@@ -21,6 +21,8 @@ try:
     assert select.select([keyboard.stdout],[],[],5)[0] and keyboard.stdout.readline().strip()=='ready'
     profile=BASE/'config/fcitx5/profile';profile.parent.mkdir(parents=True,exist_ok=True)
     profile.write_text('[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=pinyin\n\n[Groups/0/Items/0]\nName=keyboard-us\n\n[Groups/0/Items/1]\nName=pinyin\n\n[GroupOrder]\n0=Default\n')
+    classic=profile.parent/'conf/classicui.conf';classic.parent.mkdir(parents=True,exist_ok=True)
+    classic.write_text('Font="Sans 24"\nForceWaylandDPI=0\n')
     ENV.update(GTK_IM_MODULE='fcitx',QT_IM_MODULE='fcitx',XMODIFIERS='@im=fcitx')
     fcitx=start(['fcitx5','-D','--disable=vinput,cloudpinyin'],'fcitx')
     def ime_ready():
@@ -49,6 +51,13 @@ try:
     ok('dispatch hl.dsp.focus({window="title:^human-window$"})')
     remote('-o');wait(lambda:remote()=='2')
     send('type nihao');time.sleep(.5)
+    subprocess.run(['grim','-o','human',str(BASE/'pinyin-font-before.png')],env=ENV,check=True)
+    classic.write_text('Font="Sans 12"\nForceWaylandDPI=0\n')
+    subprocess.run(['gdbus','call','--session','--dest','org.fcitx.Fcitx5','--object-path','/controller','--method','org.fcitx.Fcitx.Controller1.ReloadAddonConfig','classicui'],env=ENV,check=True,capture_output=True)
+    settings=subprocess.check_output(['gdbus','call','--session','--dest','org.fcitx.Fcitx5','--object-path','/controller','--method','org.fcitx.Fcitx.Controller1.GetConfig','fcitx://config/addon/classicui'],env=ENV,text=True)
+    assert "'Font': <'Sans 12'>" in settings
+    send('key 1 1');send('key 1 0');send('type nihao')
+    time.sleep(.3)
     subprocess.run(['grim','-o','human',str(BASE/'pinyin-preedit.png')],env=ENV,check=True)
     send('key 57 1');send('key 57 0')
     wait(lambda:destinations[0].read_text()=='你好')
