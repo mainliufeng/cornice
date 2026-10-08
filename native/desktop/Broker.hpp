@@ -1,6 +1,7 @@
 #pragma once
-#include "SeatDriver.hpp"
 #include "BrowserSession.hpp"
+#include "SeatDriver.hpp"
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLocalServer>
@@ -42,6 +43,8 @@ class Broker : public QObject {
     Desktop &managed(const QString &name);
     void save();
     void pause(const QString &name);
+    void endTakeover(const QString &reason);
+    void resume(const QString &name, QLocalSocket *owner, bool agent);
     void validateFrame(const Binding &, const QString &frame, const QJsonObject &actual);
     QString m_instance, m_socketPath, m_directory;
     QLocalServer m_server;
@@ -50,6 +53,9 @@ class Broker : public QObject {
     QTimer m_watchdog;
     std::map<QString, Desktop> m_desktops;
     QMap<QString, Binding> m_bindings;
+    QLocalSocket *m_humanOwner = nullptr;
+    Binding m_humanBinding;
+    QElapsedTimer m_humanHeartbeat;
     QMap<QLocalSocket *, QString> m_buffers;
     QMap<QString, QJsonObject> m_completed;
     QMap<QString, QByteArray> m_requestHashes;

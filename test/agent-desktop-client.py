@@ -45,6 +45,7 @@ def geometry():
     for key, widget in (("entry", entry), ("button", button)):
         x, y = widget.translate_coordinates(window, 0, 0)
         bounds[key] = [x, y, widget.get_allocated_width(), widget.get_allocated_height()]
+    bounds["selection"] = list(entry.get_selection_bounds())
     path.with_suffix(".geometry").write_text(json.dumps(bounds))
     return True
 

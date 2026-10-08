@@ -33,12 +33,12 @@ PanelFrame {
           Column {
             id: rowBody; anchors.left: parent.left; anchors.right: parent.right
             anchors.top: parent.top; anchors.margins: Style.space(1); spacing: Style.space(0.7)
-            Text { text: modelData.name + " · WS " + (modelData.workspace || "?") + " · " + (modelData.error || !modelData.available ? "桌面不可用" : modelData.paused ? "输入已暂停" : "允许 agent 输入"); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
+            Text { text: modelData.name + " · WS " + (modelData.workspace || "?") + " · " + (modelData.error || !modelData.available ? "桌面不可用" : root.service.stateLabel(modelData)); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
             Text { width: parent.width; text: modelData.error || modelData.window || "无焦点窗口"; elide: Text.ElideRight; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
             Row {
               spacing: Style.space(1)
-              PanelButton { label: "只读观察"; onClicked: { root.close(); root.host.summon("cn.desktop-observer", {name: modelData.name}) } }
-              PanelButton { id: controlButton; label: modelData.paused ? "恢复输入" : "暂停输入"; enabled: !!root.service && !root.service.busy && !modelData.error; onClicked: root.service.operate([modelData.paused ? "resume" : "pause", modelData.name]) }
+              PanelButton { label: "全屏查看"; onClicked: { root.close(); root.host.summon("cn.desktop-observer", {name: modelData.name}) } }
+              PanelButton { id: controlButton; label: modelData.paused ? "恢复输入" : "暂停输入"; enabled: !!root.service && !root.service.busy && !modelData.error && modelData.controlMode !== "human"; onClicked: root.service.operate([modelData.paused ? "resume" : "pause", modelData.name]) }
               PanelButton { label: "删除 seat"; destructive: true; enabled: !!root.service && !root.service.busy && !modelData.error; onClicked: root.service.operate(["remove", modelData.name]) }
             }
           }

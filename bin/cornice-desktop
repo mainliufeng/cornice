@@ -39,7 +39,7 @@ Usage: cornice desktop [--instance SIGNATURE] COMMAND
   bind NAME PRIVATE_FILE           Create a seat-bound agent credential
   tool PRIVATE_FILE METHOD [JSON]  desktop.state/capture/windows/input/workspace/focus/launch/browser
   request                          Send a JSON RPC object from stdin
-  observe NAME                     Open cornice's read-only observer
+  observe NAME                     Open fullscreen view (read-only until takeover)
   remove NAME                      Retire the seat; preserve shared windows
 The target is --instance or HYPRLAND_INSTANCE_SIGNATURE, never discovered.
 Tool commands take their target from the private binding file.

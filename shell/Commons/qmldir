@@ -8,3 +8,4 @@ ShellIpc 1.0 ShellIpc.qml
 singleton I18n 1.0 I18n.qml
 singleton CompositorAdapter 1.0 CompositorAdapter.qml
 LockContent 1.0 LockContent.qml
+DesktopSwitcher 1.0 DesktopSwitcher.qml

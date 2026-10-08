@@ -286,8 +286,27 @@ void SeatDriver::input(const QJsonObject &params, int width, int height) {
             (axisName != "horizontal" && axisName != "vertical"))
             fail("Invalid scroll axis");
         const auto axis = axisName == "horizontal" ? 1 : 0;
-        zwlr_virtual_pointer_v1_axis_source(m_pointer, WL_POINTER_AXIS_SOURCE_WHEEL);
-        zwlr_virtual_pointer_v1_axis(m_pointer, now(), axis, wl_fixed_from_double(delta));
+        const auto source = params["source"].toString("wheel");
+        if ((params.contains("source") && !params["source"].isString()) ||
+            (source != "wheel" && source != "continuous"))
+            fail("Invalid scroll source");
+        if (source == "wheel") {
+            int steps = 0;
+            if (params.contains("steps"))
+                steps = params["steps"].toInt();
+            else if (delta != 0)
+                steps = static_cast<int>(std::copysign(std::max(1.0, std::round(std::abs(delta) / 10)), delta));
+            if ((params.contains("steps") && (!params["steps"].isDouble() || params["steps"].toDouble() != steps)) ||
+                steps < -1000 || steps > 1000)
+                fail("Invalid scroll steps");
+            // Modern Wayland clients use value120 for a wheel source. Sending
+            // only a continuous value produces a zero-step wheel in Hyprland.
+            zwlr_virtual_pointer_v1_axis_discrete(m_pointer, now(), axis, wl_fixed_from_double(delta), steps);
+            zwlr_virtual_pointer_v1_axis_source(m_pointer, WL_POINTER_AXIS_SOURCE_WHEEL);
+        } else {
+            zwlr_virtual_pointer_v1_axis(m_pointer, now(), axis, wl_fixed_from_double(delta));
+            zwlr_virtual_pointer_v1_axis_source(m_pointer, WL_POINTER_AXIS_SOURCE_CONTINUOUS);
+        }
         zwlr_virtual_pointer_v1_frame(m_pointer);
     } else if (action == "text") {
         if (!params["text"].isString())

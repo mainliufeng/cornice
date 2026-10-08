@@ -12,6 +12,21 @@ Item {
   readonly property string prefix: Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
   readonly property string instance: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || ""
   readonly property string socketPath: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/cornice/" + instance + "/desktop.sock"
+  property string selectedDesktop: ""
+  function show(name) {
+    if (!host) return "unavailable"
+    host.hide("cn.agent-desktop")
+    if (!name) return host.hide("cn.desktop-observer")
+    if (!available || !desktops.some(item => item.name === name)) return "desktop-unavailable"
+    return host.summon("cn.desktop-observer", {name: name})
+  }
+  function desktopLabel(name) {
+    const definition = (options.desktops || []).find(item => item.name === name)
+    return definition && definition.label || String(name).replace(/^agent([0-9]+)(?:-[0-9a-f]{8})?$/, "Agent $1")
+  }
+  function stateLabel(desktop) {
+    return desktop.error || !desktop.available ? "不可用" : desktop.controlMode === "human" ? "接管中" : desktop.paused ? "已暂停" : "运行中"
+  }
   property bool available: false
   property var desktops: []
   property var workspaces: []
@@ -81,11 +96,11 @@ Item {
     target: "desktop"
     function status(): string {
       return JSON.stringify({enabled: root.enabled, available: root.available, desktops: root.desktops,
-        error: root.error, socket: root.socketPath, busy: root.busy})
+        selected: root.selectedDesktop, error: root.error, socket: root.socketPath, busy: root.busy})
     }
     function observe(name: string): string {
       if (!root.available) return "desktop-unavailable"
-      return root.host.summon("cn.desktop-observer", {name: name})
+      return root.show(name)
     }
   }
 }

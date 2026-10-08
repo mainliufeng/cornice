@@ -10,13 +10,25 @@ Item {
   readonly property var paintedFrames: view.paintedFrames
   readonly property var lastPaintMs: view.lastPaintMs
   readonly property string error: view.error
-  WorkspaceView { id: view; anchors.fill: parent; socketPath: root.service ? root.service.socketPath : ""; desktop: root.desktop; workspace: root.workspace; active: root.visible && root.service && root.service.available }
-  Text {
-    anchors.top: parent.top; anchors.left: parent.left; anchors.margins: Style.space(1)
-    text: view.error !== "" ? view.error : "正在看 WS " + (view.metadata.viewWorkspace || "?") + " · agent 在 WS " + (view.metadata.workspace || "?")
-    color: view.error !== "" ? Color.urgent : Color.foreground
-    font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize
+  readonly property bool humanControl: view.humanControl
+  signal returned()
+  function takeControl(enabled) { view.takeControl(enabled) }
+  function fit(width, height, scale) { view.fit(width, height, scale) }
+  WorkspaceView {
+    id: view; anchors.fill: parent; focus: true
+    socketPath: root.service ? root.service.socketPath : ""
+    desktop: root.desktop; workspace: root.workspace
+    active: root.visible && root.service && root.service.available
+    Keys.onPressed: event => {
+      if (event.key === Qt.Key_Escape && !view.humanControl) {
+        root.returned(); event.accepted = true
+      }
+    }
   }
-  // Consume interaction locally. No target input channel exists in this view.
-  MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
+  Rectangle {
+    anchors.centerIn: parent; width: message.implicitWidth + Style.space(4); height: message.implicitHeight + Style.space(3)
+    visible: view.error !== "" || !view.metadata.frameId
+    color: Color.panel; radius: Style.radius
+    Text { id: message; anchors.centerIn: parent; text: view.error || "正在连接桌面…"; color: view.error !== "" ? Color.urgent : Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
+  }
 }

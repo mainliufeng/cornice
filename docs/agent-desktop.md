@@ -16,6 +16,7 @@ export CORNICE_TEST_HYPRLAND_SOURCE=/path/to/Hyprland
 export CORNICE_TEST_HYPRLAND=$CORNICE_TEST_HYPRLAND_SOURCE/build-agent-session/Hyprland
 ./test/isolated-desktop-test.sh
 ./test/isolated-desktop-test.sh agent-desktop-verify.py
+./test/isolated-desktop-test.sh desktop-switcher-verify.py
 ./test/isolated-desktop-test.sh human-lock-verify.py
 ./test/isolated-desktop-test.sh capture-lock-race-verify.py
 ```
@@ -168,32 +169,39 @@ cornice desktop tool /tmp/writer.binding.json desktop.input '{"action":"chord","
 CLI 自己生成新 ID；需要重试语义的执行器应直接使用 JSON 协议和自己的稳定请求 ID。
 协议处理成功不代表应用业务完成；执行器还应截图/读取状态确认结果。
 
-## cornice 面板与只读观察
+## Cornice 全屏桌面切换与接管
 
-在该实例的 cornice 配置中启用 `agentDesktop.enabled`，并将 `cn.agent-desktop`
-加入 bar layout；默认安装关闭此特性。桌面定义可以放在 `agentDesktop.desktops` 中，
-已有桌面保持真实当前 ws，配置重载不会把它拉回初始 ws。
+状态栏直接显示「人 / 各 Agent」按钮。圆点表示运行（绿）、暂停（灰）、接管（主题色）
+或不可用（红）；「管理」打开创建、移除和状态管理面板。点击 Agent 打开覆盖整个输出的
+桌面视图，顶部保留同样的切换入口、真实状态和运行/暂停按钮。
 
-```json
-{
-  "agentDesktop": {"enabled":true,"desktops":[
-    {"name":"writer","initialWorkspace":"10","virtualOutput":"1920x1080","humanLockPolicy":"continue"}
-  ]},
-  "bar":{"layout":{"left":[{"id":"cn.workspaces"},{"id":"cn.agent-desktop"}]}}
-}
+默认只看：键鼠不会传入 Agent 应用，也不会恢复暂停中的 Agent。点击「接管」才会撤销
+旧 Agent 的输入设备、截图凭证和 CDP 权限，创建由当前查看窗口独占的新输入源。
+此时可以点击、拖动、滚动、输入和使用应用快捷键；中文由人的 Fcitx 在查看窗口完成
+组合，再将已提交文字发给目标应用。接管与 Agent 工具的输入使用独立控制代次的 composed 模式，避免
+目标 seat 的 Wayland 输入法再次吞掉或重复组合按键。人的 compositor 快捷键仍由人的
+会话处理，接管没有把人的物理 seat 改成 Agent seat。Agent seat 对 X11 的原有限制仍在。
+
+「结束接管」或 Ctrl+Alt+Esc 释放输入，Agent 保持暂停；需点击「运行 Agent」才恢复。
+切到人或另一个 Agent、关闭窗口、查看进程退出、连接断开、输入帧过期、锁屏或目标
+不可用都会撤销接管。接管连接须持续读取新帧；停止响应 3 秒后撤权并暂停该 Agent，
+不会注销人的会话。每次切到另一个 Agent 都从只看开始，不自动延续接管。
+
+独立虚拟输出随查看区的物理像素与缩放重新配置，让应用以正确 DPI 重新渲染；共享
+输出保持原有几何。此适配会改变该 Agent 的窗口布局，旧截图坐标会被判过期，执行器
+需要重新截图。画面保持宽高比。浏览其他工作区仍通过 desktopObserver IPC 提供，接管
+期间禁止浏览；返回只看后可继续浏览，浏览不会改变任何 seat 的工作区。
+
+```sh
+cornice desktop observe writer
+cornice ipc desktopObserver status
+cornice ipc desktopObserver browse 12
+cornice ipc desktopObserver follow
 ```
 
-观察器只消费合成器导出的原始 ARGB 帧缓冲，默认 15 fps；不建立 agent 输入设备。
-「跟随」读取 agent 当前 ws，「浏览」读取人选的已有 ws；浏览不会修改任何 seat 的实际 ws。
-窗口、popup、目标 seat 的 cursor 属于导出画面；物理输出上的 bar/launcher/壁纸不属于
-agent 截图。其他 ws 的浏览画面不会绘制 agent 当前 ws 的错误光标。
-任意锁屏都阻断人的观察导出并清除观察缓存；焦点抓取被清除时观察器可关闭，解锁后可以重新打开。
-再次执行 observe 会打开/保持打开，不会把已有观察器关闭。关闭观察器释放缓冲。服务独立于 UI，UI 关闭不结束 agent 输入。
-
-暂停只阻断桌面写入口，不表示外部 agent 的文件/网络/终端动作已暂停。
-暂停、全会话锁和服务崩溃会使旧设备/凭证失效，解锁/重连不会自动恢复写入；
-需要人显式 resume，再绑定执行器、重新截图。human 锁保留事先授权的 active/continue
-seat，暂停策略或已暂停的 seat 均不自动恢复。这是共享会话控制契约，不是同 UID 沙箱。
+重复 observe 相同桌面保持打开。UI 关闭保留独立桌面服务；关闭正在接管的 UI 会将
+对应 Agent 暂停。`desktop-switcher-verify.py` 使用真实物理 seat 的虚拟键鼠点击实际
+状态栏与全屏按钮，验证 2 倍缩放、GTK 输入、Fcitx 拼音、旧凭证撤销、切换及锁屏释放。
 
 ## 日常锁屏、全锁与休眠
 
