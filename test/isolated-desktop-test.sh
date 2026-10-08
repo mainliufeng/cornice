@@ -9,7 +9,7 @@ export CORNICE_TEST_HYPRLAND=${CORNICE_TEST_HYPRLAND:-$CORNICE_TEST_HYPRLAND_SOU
 [[ -x $CORNICE_TEST_HYPRLAND ]] || { echo 'Built fork missing' >&2; exit 1; }
 suite=${1:-desktop-recovery-verify.py}
 case "$suite" in
-  desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py) ;;
+  desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py) ;;
   *) echo 'Unknown isolated suite' >&2; exit 2 ;;
 esac
 artifacts=$(mktemp -d /tmp/cornice-agent-test.XXXXXX)
@@ -30,4 +30,5 @@ exec nice -n 15 bwrap --unshare-all --die-with-parent --new-session \
   --setenv CORNICE_TEST_SANDBOX 1 --setenv PYTHONDONTWRITEBYTECODE 1 \
   --unsetenv WAYLAND_DISPLAY --unsetenv WAYLAND_SOCKET --unsetenv DISPLAY \
   --unsetenv HYPRLAND_INSTANCE_SIGNATURE --unsetenv DBUS_SESSION_BUS_ADDRESS \
+  --unsetenv CORNICE_TRIAL_STATE_DIR \
   -- /usr/bin/python3 "$prefix/test/$suite"

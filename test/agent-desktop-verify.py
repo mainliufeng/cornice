@@ -130,8 +130,14 @@ try:
     assert cli("state", "agent2") == before
     for source, command in revoked_sources:
         source.stdin.write(command + "\n"); source.stdin.flush()
-        assert source.wait(timeout=5) != 0
-        assert "seat input source revoked" in (BASE / (command + ".log")).read_text()
+        assert select.select([source.stdout], [], [], 5)[0] and source.stdout.readline().strip() == "done"
+        assert source.poll() is None
+        old_text = (BASE / "agent2.txt").read_text() if (BASE / "agent2.txt").exists() else ""
+        for event in ("motion 900 700", "type blocked"):
+            source.stdin.write(event + "\n"); source.stdin.flush()
+            assert select.select([source.stdout], [], [], 5)[0] and source.stdout.readline().strip() == "done"
+        assert ((BASE / "agent2.txt").read_text() if (BASE / "agent2.txt").exists() else "") == old_text
+        assert "seat input source revoked" not in (BASE / (command + ".log")).read_text()
     assert cli("state", "agent2") == before
     record("old devices remain inert; revoked connections cannot create replacement virtual devices")
     frame = tool(binding, "capture")

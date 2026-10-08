@@ -69,16 +69,27 @@ try:
     configuration.write_text('''hl.monitor({output="",mode="1280x800",position="auto",scale=1})
 hl.config({animations={enabled=false},xwayland={enabled=true},misc={disable_hyprland_logo=true,disable_splash_rendering=true,force_default_wallpaper=0}})
 hl.on("hyprland.start", function() hl.exec_cmd("/usr/bin/hyprctl output create headless trial") end)
+hl.env("QT_IM_MODULE", "fcitx")
+hl.env("GTK_IM_MODULE", "fcitx")
+hl.env("CORNICE_TRIAL_ENV_PROBE", "from-lua")
 hl.define_submap("trial-test", function() hl.bind("escape", hl.dsp.submap("reset"), {}) end)
 ''')
     SDDM = BASE / "wayland-session"
     sentinel_path = BASE / "normal-login"
     SDDM.write_text('print -r -- "normal stable entry" > ' + shlex.quote(str(sentinel_path)) + '\n')
+    chrome_flags = BASE / "config/chrome-flags.conf"
+    chrome_flags.write_text("# Stable Xwayland flags\n--force-device-scale-factor=2\n--force-renderer-accessibility=complete\n")
+    original_chrome_flags = chrome_flags.read_text()
     original_settings = settings.read_bytes()
     prepared = json.loads(trial("prepare", "--hyprland", os.environ["CORNICE_TEST_HYPRLAND"],
                                 "--cornice", PRODUCT, "--config", configuration))
     release = pathlib.Path(prepared["prepared"])
     assert not status()["armed"] and settings.read_bytes() == original_settings
+    trial_flags = release / "config-home/chrome-flags.conf"
+    assert not trial_flags.is_symlink() and "force-device-scale-factor" not in trial_flags.read_text()
+    assert "--ozone-platform=wayland" in trial_flags.read_text()
+    assert "--force-renderer-accessibility=complete" in trial_flags.read_text()
+    assert chrome_flags.read_text() == original_chrome_flags
     assert profile.read_text() == original
     record("prepare snapshots real candidate without arming, modifying config or touching the existing compositor")
     trial("arm", "--seconds", "5", "--startup-seconds", "30")
@@ -102,6 +113,11 @@ hl.define_submap("trial-test", function() hl.bind("escape", hl.dsp.submap("reset
     assert not status()["armed"]
     compositor_environment = pathlib.Path('/proc/' + str(info["compositorPid"]) + '/environ').read_bytes().split(b'\0')
     assert b'HYPRLAND_NO_SD_VARS=1' in compositor_environment and b'HYPRLAND_NO_SD_TARGET=1' in compositor_environment
+    shell_environment = pathlib.Path('/proc/' + str(info["shellPid"]) + '/environ').read_bytes().split(b'\0')
+    assert b'QT_IM_MODULE=fcitx' in shell_environment and b'GTK_IM_MODULE=fcitx' in shell_environment
+    assert b'CORNICE_TRIAL_ENV_PROBE=from-lua' in shell_environment
+    assert not pathlib.Path(info['run'], 'launch-environment').exists()
+    record("supervised Cornice inherits actual Lua IME and application environment; temporary export is removed")
     selected = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
     subprocess.run(["grim", str(BASE / "trial-desktop.png")], env=selected, check=True, timeout=5)
     # Inspect actual registered emergency bindings, not just generated config text.
@@ -120,6 +136,14 @@ hl.define_submap("trial-test", function() hl.bind("escape", hl.dsp.submap("reset
         keyboard.stdin.write(event + "\n"); keyboard.stdin.flush()
         assert select.select([keyboard.stdout], [], [], 5)[0] and keyboard.stdout.readline().strip() == "done"
     wait(lambda: status()["current"]["status"] == "confirmed")
+    trial("arm", succeeds=False)
+    trial("arm", "--after-current", succeeds=False)
+    trial("prepare", "--hyprland", os.environ["CORNICE_TEST_HYPRLAND"], "--cornice", PRODUCT, "--config", configuration)
+    trial("arm", "--after-current")
+    assert status()["armed"] and status()["running"] and process.poll() is None
+    trial("cancel")
+    assert not status()["armed"] and status()["running"]
+    record("explicit rearm selects only a different future candidate; current trial survives; cancel restores stable next login")
     for event in ("mods 76", "key 14 1"):
         keyboard.stdin.write(event + "\n"); keyboard.stdin.flush()
         assert select.select([keyboard.stdout], [], [], 5)[0] and keyboard.stdout.readline().strip() == "done"
@@ -184,7 +208,8 @@ hl.define_submap("trial-test", function() hl.bind("escape", hl.dsp.submap("reset
     process = login_session(); process.wait(timeout=5)
     assert process.returncode == 0 and not status()["armed"]
     record("malformed ticket fails closed without leaving a repeatable bad login")
-    (release / "hyprland.lua").write_text('error("damaged candidate")')
+    latest_release = pathlib.Path(json.loads((pathlib.Path(TEST_ENV["XDG_STATE_HOME"]) / "cornice/session-trial/prepared.json").read_text())["release"])
+    (latest_release / "hyprland.lua").write_text('error("damaged candidate")')
     trial("arm", succeeds=False)
     assert not status()["armed"]
     record("changed candidate cannot be armed; immutable manifest detects drift")

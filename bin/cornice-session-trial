@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -121,6 +122,7 @@ def prepare(args):
         # Route existing absolute Cornice shortcuts to this immutable candidate instead.
         configuration = configuration.replace(str(Path.home() / ".local/bin/cornice"), str(product / "bin/cornice"))
         configuration = configuration.replace('\\"$HOME/.local/bin/cornice\\"', '\\"' + str(product / "bin/cornice") + '\\"')
+        configuration = configuration.replace("~/.config/hypr/scripts/cycle-focus-fullscreen.sh", str(product / "bin/cornice-cycle-focus"))
         atomic(release / "hyprland.lua", configuration)
         commands = read(args.autostart) if args.autostart else []
         if not isinstance(commands, list) or not all(isinstance(c, str) for c in commands):
@@ -132,7 +134,13 @@ def prepare(args):
         config_root.mkdir()
         original = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
         for child in original.iterdir():
-            if child.name != "cornice":
+            if child.name == "chrome-flags.conf" and child.is_file():
+                # Stable Xwayland's fixed 2x becomes another multiplier on native
+                # Wayland's 2x output. Change only the trial's configuration copy.
+                flags = re.sub(r"(?m)^\s*--force-device-scale-factor=[^\n]+\n?", "", child.read_text())
+                flags = re.sub(r"(?m)^\s*--ozone-platform=[^\n]+\n?", "", flags)
+                atomic(config_root / child.name, flags.rstrip() + "\n--ozone-platform=wayland\n")
+            elif child.name != "cornice":
                 (config_root / child.name).symlink_to(child.resolve(), target_is_directory=child.is_dir())
         if (original / "cornice").exists():
             shutil.copytree(original / "cornice", config_root / "cornice", symlinks=False)
@@ -179,10 +187,13 @@ def verify_release(release):
 def arm(args):
     with locked():
         current = read(STATE / "current.json") if (STATE / "current.json").exists() else {}
-        if is_running(current):
-            raise RuntimeError("A trial is already running")
-        cancel_ticket()
         release = Path(read(STATE / "prepared.json")["release"])
+        if is_running(current):
+            if not args.after_current:
+                raise RuntimeError("A trial is already running; use --after-current only to explicitly select a different candidate for the next login")
+            if str(release) == current.get("release"):
+                raise RuntimeError("Prepare a different candidate before arming after the current trial")
+        cancel_ticket()
         verify_release(release)
         profile = Path(os.environ.get("ZDOTDIR", str(Path.home()))) / ".zprofile"
         profile = profile.resolve()
@@ -362,6 +373,26 @@ class Trial:
         errors = ipc(self.environment, "configerrors", False)
         if errors:
             raise RuntimeError("Hyprland configuration errors: " + errors)
+        # Lua hl.env changes the compositor's child environment, not its parent.
+        # Export through a compositor-spawned child before directly supervising
+        # Cornice/autostarts; otherwise IM modules and application scaling vanish.
+        environment_file = self.directory / "launch-environment"
+        atomic(environment_file, "")
+        try:
+            command = "/usr/bin/env -0 > " + shlex.quote(str(environment_file))
+            ipc(self.environment, "dispatch hl.dsp.exec_cmd(" + json.dumps(command) + ")", False)
+            while time.monotonic() < deadline:
+                self.check_request()
+                contents = environment_file.read_bytes()
+                if contents.endswith(b"\0"):
+                    exported = dict(item.decode().split("=", 1) for item in contents.split(b"\0") if b"=" in item)
+                    self.environment.update(exported)
+                    break
+                time.sleep(.05)
+            else:
+                raise RuntimeError("Compositor launch environment export failed")
+        finally:
+            environment_file.unlink(missing_ok=True)
         broker = self.start([self.product / "bin/cornice-desktopd"], "desktop")
         self.info["brokerPid"] = broker.pid
         while time.monotonic() < deadline:
@@ -522,6 +553,7 @@ def main():
     arming = sub.add_parser("arm", help="Enable exactly one future SDDM Hyprland login")
     arming.add_argument("--seconds", type=int, help="Deprecated and ignored: healthy sessions have no confirmation deadline")
     arming.add_argument("--startup-seconds", type=int, default=60)
+    arming.add_argument("--after-current", action="store_true", help="Explicitly select a DIFFERENT candidate for one next login while this trial keeps running")
     sub.add_parser("status")
     sub.add_parser("cancel", help="Cancel the next login ticket; does not terminate any desktop")
     sub.add_parser("remove-hook", help="Cancel and remove only the managed login snippet, keeping other edits")
