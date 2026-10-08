@@ -6,4 +6,4 @@ prefix=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 : "${CORNICE_TEST_HYPRLAND_SOURCE:?Set CORNICE_TEST_HYPRLAND_SOURCE to the fork checkout}"
 export CORNICE_TEST_HYPRLAND=${CORNICE_TEST_HYPRLAND:-$CORNICE_TEST_HYPRLAND_SOURCE/build-agent-session/Hyprland}
 [[ -x $CORNICE_TEST_HYPRLAND ]] || { echo 'built fork missing' >&2; exit 1; }
-exec /usr/bin/python3 "$prefix/test/human-lock-verify.py"
+exec "$prefix/test/isolated-desktop-test.sh" human-lock-verify.py

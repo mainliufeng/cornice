@@ -124,6 +124,10 @@ try:
     human = subprocess.Popen([str(BASE / "human-input"), "Hyprland", "human"], env=ENV, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(BASE / "human-input.log", "w"), start_new_session=True, text=True)
     PROCESSES.append(human)
     assert select.select([human.stdout], [], [], 5)[0] and human.stdout.readline().strip() == "ready"
+    # No physical keyboard exists in the sandbox. Verify hotplug restored lock
+    # focus, then wait for the lock client to bind its new wl_keyboard before
+    # injecting input; an injector roundtrip alone cannot synchronize clients.
+    wait(lambda: any('wl_keyboard#' in line and '.enter(' in line for line in (BASE / 'lock.log').read_text().splitlines()))
     for command in ("motion 640 400", "type secret", "key 28 1", "key 28 0"):
         human.stdin.write(command + "\n"); human.stdin.flush()
         assert select.select([human.stdout], [], [], 5)[0] and human.stdout.readline().strip() == "done"
@@ -234,7 +238,7 @@ try:
         "idle": {"lock": 0, "screenOffAc": 0, "screenOffBattery": 0, "dimAc": 0, "dimBattery": 0, "lockScreenOff": 0,
                  "lockOnSleep": False, "lockOnLockSignal": False, "lockOnLidClose": False},
         "lock": {"pamService": "permit", "pamDirectory": str(pam), "emergencyUnlock": True, "showUser": False}}))
-    assert '/tmp/ad-' in str(RT) and guard_env['DBUS_SYSTEM_BUS_ADDRESS'] == system_bus[0]
+    assert RT.is_relative_to(BASE) and guard_env['DBUS_SYSTEM_BUS_ADDRESS'] == system_bus[0]
     ui_env = guard_env | {"CORNICE_ISOLATED_TEST": "0"}
     cornice_ui = start([str(PRODUCT / "bin/cornice-qs"), "-p", str(PRODUCT / "shell")], "cornice-shell", ui_env)
     wait(lambda: json.loads(shell("ipc", "lock", "status"))["humanLockAvailable"])

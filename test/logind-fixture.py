@@ -11,7 +11,10 @@ import gi
 from gi.repository import Gio, GLib
 
 bus_address, destination = sys.argv[1:]
-assert bus_address == os.environ['DBUS_SYSTEM_BUS_ADDRESS'] and '/tmp/ad-' in os.environ['XDG_RUNTIME_DIR']
+assert bus_address == os.environ['DBUS_SYSTEM_BUS_ADDRESS']
+assert os.getenv('CORNICE_TEST_SANDBOX') == '1'
+assert pathlib.Path(os.environ['XDG_RUNTIME_DIR']).resolve().is_relative_to(pathlib.Path(os.environ['TMPDIR']).resolve())
+assert not pathlib.Path('/run/dbus/system_bus_socket').exists()
 path = pathlib.Path(destination)
 properties = {'LidClosed': False, 'Docked': False, 'OnExternalPower': False,
               'HandleLidSwitch': 'suspend', 'HandleLidSwitchDocked': 'ignore', 'HandleLidSwitchExternalPower': ''}

@@ -1,28 +1,42 @@
 # Agent 桌面：特性分支使用与测试
 
-实现分支：cornice `codex/agent-desktop`，Hyprland `codex/cornice-agent-desktop`。
-两者保持在特性分支，不合 main、不发版。本机物理会话仍运行先前的 `38351820`；
-新私有输出、human/full 锁与 CDP 功能已在私有实例验证，须成套安装后注销重登启用。
+修复分支：Cornice `codex/agent-desktop-recovery`，Hyprland `codex/cornice-agent-desktop`。
+当前修复只在特性分支，不安装、不切换日常登录入口、不修改用户的 Cornice 配置或服务。
 
-本机日常会话切换已另行授权：通过 `~/dotfiles/linux/desktop/hyprland/agent-session/`
-中的登录入口启动已安装 fork，不覆盖系统包或原 hyprland.conf。SDDM 的原有 Hyprland
-登录项保持不变，注销重登后才切换正在运行的合成器。启动先创建 WS10/11/12 的三个
-暂停 seat，再启用 Cornice Agent 面板并启动原有应用。配置迁移保留原有主布局、
-2 倍缩放、100 个快捷键与启动项。dotfiles 桌面脚本直接使用新版 Lua API；
-全局 `hyprctl` 代理和旧命令转换器已删除，正式工具为 `/usr/bin/hyprctl`。
-`cornice takeover --undo` 恢复登录 profile 与 Cornice 设置，随后注销重登恢复系统版。
-会话切换的最终验收必须读取物理会话的 `hyprctl -j version`、`cornice desktop list`，
-并实际验证物理输入和隐藏 seat；嵌套验证不能代表主会话已替换。
+## 不影响日常桌面的测试
 
-本阶段已实现独立 seat 的工具输入、工作区切换、窗口聚焦、截图、管理面板、只读跟随与
-只读浏览，以及暂停/恢复的输入门禁。**人的物理输入接管、具体 AI 执行器的任务启动/停止
-仍是后续阶段；本机物理会话迁移已完成**；面板没有假任务状态，也没有尚不能工作的接管按钮。
-完整目标与分阶段验收见 [设计方案](agent-desktop-design.md)。
+先构建特性版 Hyprland 与本工作树的 native 组件，再执行：
+
+```sh
+make desktop-build
+export CORNICE_TEST_HYPRLAND_SOURCE=/path/to/Hyprland
+export CORNICE_TEST_HYPRLAND=$CORNICE_TEST_HYPRLAND_SOURCE/build-agent-session/Hyprland
+./test/isolated-desktop-test.sh
+./test/isolated-desktop-test.sh agent-desktop-verify.py
+./test/isolated-desktop-test.sh human-lock-verify.py
+```
+
+统一入口使用 bubblewrap 隔离进程、网络、设备、运行目录和 HOME，再启动无窗口的
+Mutter → Hyprland → Cornice。宿主文件系统只读，只有本次临时目录可写；物理键鼠、
+DRM card 设备、宿主 Wayland/X11 socket、systemd 与系统 D-Bus 均不可见。
+仅开放 `/dev/dri/renderD128` 供普通 GPU 渲染，不能设置物理屏幕模式；纯软件 Mutter
+会公告旧版 dmabuf，目前 Aquamarine 嵌套后端不能使用该组合。
+测试不会连接当前合成器，也不会自动安装或启动宿主服务。退出时进程命名空间被清理。
+
+入口打印实际宿主证据目录；sandbox 内 `/tmp/t/` 对应该目录。日志、截图均保留在其中。
+可设置 `CORNICE_TEST_SESSION_START=/path/to/agent-session/session-start`，在同一沙箱中
+对真实 bootstrap 执行 `--test-bootstrap`，回归带换行的发布指针及 11–13 工作区。
+
+首个套件专门覆盖普通 GTK/Xwayland 客户端先运行，再动态创建和销毁私有输出；检查
+普通客户端不收到私有 wl_output、人的 1–10 工作区归属、Agent 输入不改变人的焦点、
+实际 Cornice 启动和截图，以及新增 X11 应用仍能显示。
+锁屏套件中的 logind 是私有测试服务，不能触发真实休眠；物理合盖、热插拔和 DRM
+显示验证仍未覆盖，不能据此认为可以直接接管日常会话。
 
 ## 构建与隔离测试
 
 原生组件依赖 CMake、Ninja、Qt 6 Core/Gui/Network/Quick/Qml/WebSockets/DBus、PAM、Wayland client、
-wayland-scanner、xkbcommon。测试另需 Mutter、GTK 3/Pycairo 的 Python GI、grim 及已构建的 fork。
+wayland-scanner、xkbcommon。测试另需 bubblewrap、Mutter、GTK 3/Pycairo 的 Python GI、grim、xmessage 及已构建的 fork。
 兼容验证会运行系统 Google Chrome、kitty 和 Qt/Quickshell 客户端。
 
 ```bash
@@ -36,19 +50,19 @@ CORNICE_TEST_PRODUCT=/tmp/cornice-agent-install/share/cornice \
 ```
 
 测试使用独立 runtime、配置、session bus、Mutter 父合成器和指定 fork 二进制。
-它禁用与当前会话同名的物理输入设备，拒绝 DRM 后端；不会调用当前会话的锁屏或切 ws。
+它不查询当前合成器；物理输入及 DRM card 设备不可访问，只连接私有父合成器。
 测试目录里的截图和日志用于核验，输出会报告其绝对路径。
 
 手动调试时，先进入自己创建的嵌套 fork 环境，显式设置 `XDG_RUNTIME_DIR`、
 `HYPRLAND_INSTANCE_SIGNATURE` 与 `WAYLAND_DISPLAY`。以下命令不会自动发现其他实例，
-也不会在缺少 seat 能力时退回人的默认输入。本机使用已安装的特性版 fork；其他机器须先安装匹配 fork 并完成会话迁移。
+也不会在缺少 seat 能力时退回人的默认输入。测试仅使用显式指定的本地构建，不需要安装或迁移日常会话。
 
 ## CLI 管理
 
 ```bash
 cornice desktop serve                              # 前台服务；另一终端执行后续命令
 cornice desktop doctor                             # 能力与实例核验
-cornice desktop create writer --workspace 10 --human-lock-policy continue
+cornice desktop create writer --human-lock-policy continue
 cornice desktop create researcher --workspace 11 --virtual-output 1920x1080
 cornice desktop resume writer                      # 新帧确认后创建新输入设备
 cornice desktop launch writer -- kitty
@@ -59,9 +73,12 @@ cornice desktop pause writer
 cornice desktop remove researcher                  # 保留共享应用窗口
 ```
 
-默认每个 seat 创建自己的 1920×1080 headless 输出，用于自己的 WS 尺寸与截图；
+默认每个 seat 创建自己的命名工作区及 1920×1080 headless 输出，用于自己的 WS 尺寸与截图；
 `--virtual-output WxH` 可自定义。私有输出不出现在人的屏幕列表、鼠标跨屏或主 seat 焦点导航。
-多个 seat 仍可选择同一 WS/窗口，布局采用该 WS 的共享尺寸，不能同时有两套窗口排布。
+多个 seat 仍可显式选择同一 WS/窗口，布局采用该 WS 的共享尺寸，不能同时有两套窗口排布。
+未指定工作区时使用 `name:cornice-agent-<seat>`；合成器初始化私有输出也使用命名
+工作区，避免中间状态自动占用人的数字工作区。输出隐私在创建时固定，禁止把已经
+公告的公共输出通过旧 `seat private-output` 命令改为私有。
 `--output OUTPUT` 保留显式共享输出模式。输出身份消失会撤销原 seat，不能退回人的输出。
 创建后默认暂停；`humanLockPolicy` 默认 `pause`，只有显式设置 `continue` 且锁前正在
 运行的 seat 能在日常锁屏后继续。管理命令的状态以合成器回复为准。

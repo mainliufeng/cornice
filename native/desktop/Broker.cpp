@@ -372,7 +372,8 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     if (method == "create") {
         if (m_desktops.contains(name))
             fail("Desktop already managed");
-        const auto workspace = params["workspace"].toString("10");
+        const auto workspace = params["workspace"].toString("name:cornice-agent-" + name);
+        atom(workspace);
         auto output = params["output"].toString();
         const auto geometry = params["virtual-output"].toString(output.isEmpty() ? "1920x1080" : "");
         bool privateOutput = !geometry.isEmpty();
@@ -386,7 +387,6 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             const auto configured = compositor("eval hl.monitor({output='" + output + "',mode='" + geometry + "',position='auto',scale=1})");
             if (configured != "ok") { compositor("output remove " + output); fail(QString::fromUtf8(configured)); }
         }
-        atom(workspace);
         atom(output);
         const auto created = compositor("seat create " + name + " " + output);
         if (created != "ok") {

@@ -6,7 +6,7 @@
 PREFIX ?= $(HOME)/.local
 
 .PHONY: help check install uninstall run launch stop restart status doctor verify \
-        test test-quick installer headless lock takeover install-verify bench pkg clean fmt desktop-build desktop-verify human-lock-verify
+        test test-quick installer headless lock takeover install-verify bench pkg clean fmt desktop-build desktop-verify human-lock-verify desktop-recovery-verify
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -14,7 +14,7 @@ help: ## show this help
 
 check: ## syntax-check every script
 	@set -e; for f in bin/cornice* test/*.sh install.sh; do bash -n "$$f"; done
-	@python3 -c "import ast,sys;[ast.parse(open(f).read()) for f in ['test/fake-mpris-player.py','test/inject-click.py','test/agent-desktop-client.py','test/agent-desktop-verify.py','test/desktop_harness.py','test/human-lock-verify.py','test/cdp_client.py','test/logind-fixture.py']]"
+	@python3 -c "import ast,sys;[ast.parse(open(f).read()) for f in ['test/fake-mpris-player.py','test/inject-click.py','test/agent-desktop-client.py','test/agent-desktop-verify.py','test/desktop-recovery-verify.py','test/desktop_harness.py','test/human-lock-verify.py','test/cdp_client.py','test/logind-fixture.py']]"
 	@echo "syntax ok"
 
 desktop-build: ## build optional native seat service and read-only viewer
@@ -26,6 +26,9 @@ human-lock-verify: desktop-build ## private lock, CDP and sleep lifecycle integr
 
 desktop-verify: desktop-build ## real seat tools and viewer in an isolated fork
 	./test/agent-desktop-verify.sh
+
+desktop-recovery-verify: desktop-build ## existing human clients survive private-output hotplug
+	./test/isolated-desktop-test.sh
 
 install: ## install into PREFIX (default ~/.local), symlinking the tree
 	./install.sh --prefix $(PREFIX)

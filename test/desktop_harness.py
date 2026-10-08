@@ -136,16 +136,14 @@ def displayed_clock(path):
     raise AssertionError("Application clock pixels absent from actual observer output")
 
 
-def initialize():
+def initialize(xwayland=False):
     global BUS_PID
-    host = json.loads(subprocess.check_output(["hyprctl", "-j", "devices"], text=True, timeout=5))
-    disable = ["hl.device({name=" + json.dumps(d["name"]) + ",enabled=false})"
-               for kind in ("mice", "keyboards", "touch") for d in host.get(kind, [])]
+    assert os.getenv("CORNICE_TEST_SANDBOX") == "1", "Use isolated-desktop-test.sh; never discover the host compositor"
     config = BASE / "hyprland.lua"
     config.write_text('''hl.monitor({output="",mode="1280x800",position="auto",scale=1})
-hl.config({animations={enabled=false},xwayland={enabled=false},misc={disable_hyprland_logo=true,disable_splash_rendering=true,force_default_wallpaper=0},debug={enable_stdout_logs=true}})
+hl.config({animations={enabled=false},xwayland={enabled=XWAYLAND},misc={disable_hyprland_logo=true,disable_splash_rendering=true,force_default_wallpaper=0},debug={enable_stdout_logs=true}})
 hl.window_rule({name="human-test",match={title="^human-window$"},workspace="1"})
-''' + "\n".join(disable))
+'''.replace("XWAYLAND", "true" if xwayland else "false"))
     bus = subprocess.check_output(["dbus-daemon", "--session", "--fork", "--print-address=1", "--print-pid=1"], env=ENV, text=True).splitlines()
     ENV["DBUS_SESSION_BUS_ADDRESS"] = bus[0]
     BUS_PID = int(bus[1])
