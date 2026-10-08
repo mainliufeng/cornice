@@ -72,3 +72,32 @@
 或日常登录接管；这些尚不能视为通过。测试结果不构成切换当前桌面的授权。
 运行中的 GTK 3 不一定绑定后新增 seat，Chrome 不保证同窗口多 seat 输入，Agent
 尚不支持 X11 输入。客户端边界详见 [使用说明](agent-desktop.md)。
+
+## 继续补验：无后续截图时的跨锁屏请求
+
+对前一轮 `51fd1a9` 补充确定性回归后，确认该修复仍不完整：截图等待期间发生
+锁屏，如果后续没有新截图要求准备 copy framebuffer，提交回调不会执行，旧请求
+仍会一直等待。前一轮录制成功不能证明这个分支已修复。
+
+新增真实 Wayland C 客户端在同一连接上顺序发送 copy 与 session lock 请求，
+保证锁 epoch 在下一次渲染前改变。它同时提交真实不透明锁 surface，不使用假协议
+响应。旧版本在 5 秒内收不到 failed；新版立即返回 failed，且 SHM 目标缓冲仍全零。
+测试随后等待恢复提供者自己的 secure 事件，视觉确认原生锁界面，再分别验证锁内
+及解锁后的新截图。该测试只允许从隔离入口运行。
+
+Hyprland `b5bcf31` 将锁、解锁、恢复与受保护输出变化统一经过 epoch 更新入口，
+直接清理并通知失效截图，不依赖未来的输出渲染。
+
+| 当前构建验证 | 结果 | 宿主证据 |
+| --- | --- | --- |
+| 新增确定性截图回归 | 1 项 PASS | `/tmp/cornice-agent-test.QUL3aC/ad-k2ly18th/` |
+| 恢复与 X11 回归 | 10 项 PASS | `/tmp/cornice-agent-test.uzcSOS/ad-2tsvixqs/` |
+| 桌面、应用与 observer 回归 | 20 项 PASS | `/tmp/cornice-agent-test.WjMLhM/ad-tsosbmpx/` |
+| 原生锁屏与生命周期回归 | 15 项 PASS | `/tmp/cornice-agent-test.6Qmm15/ad-5momk4nd/` |
+| 当前代码重新录制 | 7 项断言 PASS，56.125 秒，无录制错误 | `/tmp/cornice-agent-test.1rz7G6/ad-t373v8ch/` |
+
+共 46 项回归通过。旧版本失败对照与协议事件保存在
+`/home/liufeng/Videos/cornice-agent-desktop-2026-10-08-v2-evidence/`。
+物理验证和客户端兼容边界仍同上，未接管日常会话。
+新版视频为 `/home/liufeng/Videos/cornice-agent-desktop-2026-10-08-v2.mp4`；
+录制中实际遇到一次跨锁 epoch 的截图拒绝，丢弃后新截图正常完成。

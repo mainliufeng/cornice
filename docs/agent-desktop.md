@@ -14,6 +14,7 @@ export CORNICE_TEST_HYPRLAND=$CORNICE_TEST_HYPRLAND_SOURCE/build-agent-session/H
 ./test/isolated-desktop-test.sh
 ./test/isolated-desktop-test.sh agent-desktop-verify.py
 ./test/isolated-desktop-test.sh human-lock-verify.py
+./test/isolated-desktop-test.sh capture-lock-race-verify.py
 ```
 
 统一入口使用 bubblewrap 隔离进程、网络、设备、运行目录和 HOME，再启动无窗口的
@@ -32,6 +33,10 @@ DRM card 设备、宿主 Wayland/X11 socket、systemd 与系统 D-Bus 均不可�
 实际 Cornice 启动和截图，以及新增 X11 应用仍能显示。
 锁屏套件中的 logind 是私有测试服务，不能触发真实休眠；物理合盖、热插拔和 DRM
 显示验证仍未覆盖，不能据此认为可以直接接管日常会话。
+
+截图锁屏回归使用真实 Wayland 客户端，在同一连接上依次提交截图 copy 和锁屏请求，
+确保截图尚未处理时锁 epoch 已改变。断言旧帧收到 failed 且目标缓冲未被写入，
+不依赖再次截图触发渲染；随后恢复原生锁界面并验证锁内、解锁后的新截图。
 
 录制同一隔离环境的真实演示（另需 ffmpeg、Python Pillow 与 Noto CJK 字体）：
 
