@@ -222,6 +222,7 @@ try:
     subprocess.run(['grim','-o','human',str(BASE/'hover-menu.png')],env=ENV,check=True)
     click(row['x']+row['width']/2,row['y']+row['height']/2)
     wait(lambda: status()['open'] and status()['frame'].get('frameId'))
+    wait(lambda: status()['keyboardReady'])
     send('key 1 1'); send('key 1 0'); wait(lambda: not status()['open'])
     record('Escape returns from read-only view without sending Escape to the Agent application')
     # The owner is a persistent socket, not a reusable agent credential.

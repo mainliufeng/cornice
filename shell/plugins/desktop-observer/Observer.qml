@@ -55,6 +55,7 @@ Item {
     WlrLayershell.namespace: "cornice-desktop"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     Loader {
+      focus: true
       id: frame; anchors { top: parent.top; bottom: parent.bottom; left: parent.left; right: parent.right }
       active: root.isOpen && root.service && root.service.available
       source: active ? "NativeView.qml" : ""
@@ -79,7 +80,7 @@ Item {
   }
   ShellIpc {
     target: "desktopObserver"
-    function status(): string { return JSON.stringify({open: root.isOpen, fullscreen: true, name: root.desktopName, workspace: root.selectedWorkspace, readonly: !root.humanControl, humanControl: root.humanControl, paintedFrames: frame.item ? frame.item.paintedFrames : 0, lastPaintMs: frame.item ? frame.item.lastPaintMs : 0, frame: frame.item ? frame.item.metadata : ({}), error: frame.item ? frame.item.error : ""}) }
+    function status(): string { return JSON.stringify({open: root.isOpen, fullscreen: true, name: root.desktopName, workspace: root.selectedWorkspace, readonly: !root.humanControl, humanControl: root.humanControl, keyboardReady: !!frame.item && frame.item.keyboardReady, paintedFrames: frame.item ? frame.item.paintedFrames : 0, lastPaintMs: frame.item ? frame.item.lastPaintMs : 0, frame: frame.item ? frame.item.metadata : ({}), error: frame.item ? frame.item.error : ""}) }
     function controls(): string {
       const reply = IpcRegistry.dispatch("bar", "geometry", [])
       if (!reply.ok) return "[]"

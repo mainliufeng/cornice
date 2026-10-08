@@ -126,6 +126,7 @@ Item {
         selected: root.selectedDesktop, prompt: {open:taskPrompt.opened,name:taskPrompt.name}, tasks: root.tasks, model: root.modelConfig, error: root.error, socket: root.socketPath, busy: root.busy})
     }
     function prompt(name: string): string { root.prompt(name); return "opened" }
+    function promptDraft(): string { return JSON.stringify(taskPrompt.draft()) }
     function observe(name: string): string {
       if (!root.available) return "desktop-unavailable"
       return root.show(name)

@@ -1,8 +1,9 @@
 import QtQuick
 import Cornice.Desktop
 import qs.Commons
-Item {
+FocusScope {
   id: root
+  focus: true
   property var service: null
   property string desktop: ""
   property string workspace: "current"
@@ -11,6 +12,7 @@ Item {
   readonly property var lastPaintMs: view.lastPaintMs
   readonly property string error: view.error
   readonly property bool humanControl: view.humanControl
+  readonly property bool keyboardReady: view.activeFocus && Window.active
   signal returned()
   signal promptRequested()
   function takeControl(enabled) { view.takeControl(enabled) }

@@ -10,6 +10,7 @@ def remote(*args):
     return subprocess.check_output(['fcitx5-remote',*args],env=ENV,text=True).strip()
 
 try:
+    ENV.update(QT_IM_MODULE='fcitx', XMODIFIERS='@im=fcitx')
     initialize()
     for source,name in (('virtual-keyboard-unstable-v1','virtual-keyboard'),('wlr-virtual-pointer-unstable-v1','virtual-pointer')):
         for mode,ext in (('client-header','h'),('private-code','c')):
@@ -96,6 +97,72 @@ try:
     subprocess.run(['grim','-o','human',str(BASE/'launcher-chinese.png')],env=ENV,check=True)
     record('actual Cornice launcher receives composed Chinese through Fcitx and reports 中文 query')
     shell('ipc','shell','hide','cn.launcher')
+    shell('ipc','desktop','observe','private0')
+    wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['open'])
+    wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['frame'].get('frameId'))
+    time.sleep(.3)
+    remote('-c')
+    # Super+A in the actual read-only fullscreen viewer must focus a native
+    # text editor, rather than forwarding pinyin keys into the Agent app.
+    send('mods 64');send('key 30 1');send('key 30 0');send('mods 0')
+    wait(lambda:json.loads(shell('ipc','desktop','status'))['prompt']['open'])
+    def prompt_draft(env=None):
+        return json.loads(subprocess.check_output([str(PRODUCT/'bin/cornice'),'ipc','desktop','promptDraft'],env=env or ENV,text=True,stderr=subprocess.PIPE))
+    wait(lambda:prompt_draft()['focused'])
+    time.sleep(.5)
+    remote('-o');wait(lambda:remote()=='2');send('type zhongwen')
+    wait(lambda:prompt_draft()['preedit']!='')
+    assert prompt_draft()['text']==''
+    subprocess.run(['grim','-o','human',str(BASE/'task-pinyin-preedit.png')],env=ENV,check=True)
+    send('key 57 1');send('key 57 0')
+    wait(lambda:prompt_draft()['text']=='中文')
+    subprocess.run(['grim','-o','human',str(BASE/'task-chinese.png')],env=ENV,check=True)
+    record('Super+A task prompt accepts real Fcitx pinyin and Space commits 中文 in the read-only fullscreen viewer')
+    send('mods 4');send('key 28 1');send('key 28 0');send('mods 0')
+    wait(lambda:prompt_draft()['submitted']=='中文')
+    wait(lambda:prompt_draft()['error']!='')
+    assert prompt_draft()['text']=='中文'
+    # Do not turn a pending pinyin candidate into Latin text by committing it
+    # programmatically. Wait for the user's actual candidate selection.
+    send('type nihao');wait(lambda:prompt_draft()['preedit']!='')
+    layer=next(item for item in ctl('layers',True)['human']['levels']['3'] if item['namespace']=='cornice-agent-prompt')
+    button=prompt_draft()['run']
+    send(f"motion {round(layer['x']+button['x']+button['width']/2)} {round(layer['y']+button['y']+button['height']/2)}")
+    send('button 272 1');send('button 272 0')
+    wait(lambda:'候选词' in prompt_draft()['error'])
+    assert prompt_draft()['submitted']=='中文' and prompt_draft()['preedit']!=''
+    send('key 57 1');send('key 57 0')
+    wait(lambda:prompt_draft()['text']=='中文你好')
+    send('button 272 1');send('button 272 0')
+    wait(lambda:prompt_draft()['submitted']=='中文你好')
+    wait(lambda:prompt_draft()['error']!='')  # Isolated HOME has no model credentials.
+    assert prompt_draft()['text']=='中文你好'
+    record('pending pinyin cannot submit raw Latin text; candidate selection and UTF-8 submission preserve the Chinese draft on startup error')
+    send('key 1 1');send('key 1 0')
+    wait(lambda:not json.loads(shell('ipc','desktop','status'))['prompt']['open'])
+    shell('ipc','desktop','observe','')
+    cli('resume','private0')
+    binding=bind('private0')
+    import hashlib
+    own_env=dict(ENV,CORNICE_SHELL_SOCKET=str(RT/('cs-'+hashlib.sha256(ENV['HYPRLAND_INSTANCE_SIGNATURE'].encode()).hexdigest()[:8]+'-private0.sock')))
+    shot=tool(binding,'capture')
+    tool(binding,'input',{'frameId':shot['frameId'],'action':'chord','keys':['SUPER','a']})
+    wait(lambda:prompt_draft(own_env)['focused'])
+    time.sleep(.5)
+    remote('-o')
+    for key in 'zhongwen':
+        shot=tool(binding,'capture')
+        tool(binding,'input',{'frameId':shot['frameId'],'action':'chord','keys':[key]})
+    wait(lambda:prompt_draft(own_env)['preedit']!='')
+    shot=tool(binding,'capture')
+    tool(binding,'input',{'frameId':shot['frameId'],'action':'chord','keys':['space']})
+    wait(lambda:prompt_draft(own_env)['text']=='中文')
+    shot=tool(binding,'capture')
+    (BASE/'agent-task-chinese.png').write_bytes(base64.b64decode(shot['pngBase64']))
+    record('independent Agent shell task prompt also accepts actual Fcitx pinyin; human launcher and prompt remain isolated')
+    shot=tool(binding,'capture')
+    tool(binding,'input',{'frameId':shot['frameId'],'action':'chord','keys':['Escape']})
+    cli('pause','private0')
     remote('-c')
     ok('eval hl.monitor({output="human",mode="2560x1600",position="0x0",scale=2})')
     page=BASE/'chrome-scale.html'
