@@ -57,6 +57,7 @@ Machine
   weather [cmd]       Places: list | add <name> [--city C] | set | rename | remove | move | select
   clock [cmd]         World clocks: list | add <name> <zone> | set | rename | remove | move | zones
   desktop [cmd]       Optional seat-bound agent desktops (desktop help)
+  session-trial [cmd] One-shot login trial with automatic fallback (session-trial --help)
   takeover [--apply]  Take over from mako/hypridle/waybar/polkit-gnome (plan first!)
   test [--quick|suite]  Run the test suites (takeover, headless, lock, live)
   session-env         Print compositor env exports (for TTYs / stale shells)
@@ -405,6 +406,10 @@ case "$command" in
 
   desktop)
     exec "$bin_dir/cornice-desktop" "$@"
+    ;;
+
+  session-trial)
+    exec "$bin_dir/cornice-session-trial" "$@"
     ;;
 
   takeover)

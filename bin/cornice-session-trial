@@ -1,0 +1,575 @@
+#!/usr/bin/python3
+"""One-shot SDDM/Hyprland trial; the normal login and installed versions stay intact."""
+import argparse
+import ctypes
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import time
+import uuid
+
+
+ROOT = Path(__file__).resolve().parent.parent
+if (Path(__file__).resolve().parent / "cornice/bin/cornice").is_file():
+    ROOT = Path(__file__).resolve().parent / "cornice"
+STATE = Path(os.environ.get("CORNICE_TRIAL_STATE_DIR",
+    str(Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "cornice/session-trial")))
+HOOK_BEGIN = "# BEGIN cornice one-shot session trial"
+HOOK_END = "# END cornice one-shot session trial"
+
+
+def atomic(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        with temporary.open("x") as stream:
+            temporary.chmod(0o600)
+            stream.write(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+        descriptor = os.open(path.parent, os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def read(path):
+    return json.loads(Path(path).read_text())
+
+
+def digest(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def run(args, env=None, timeout=4):
+    result = subprocess.run(list(map(str, args)), env=env, capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"Command failed: {args[0]}")
+    return result.stdout.strip()
+
+
+def locked():
+    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    stream = (STATE / "control.lock").open("a")
+    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return stream
+
+
+def cancel_ticket():
+    (STATE / "pending.json").unlink(missing_ok=True)
+    descriptor = os.open(STATE, os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def remove_block(contents):
+    if HOOK_BEGIN not in contents:
+        return contents
+    start = contents.index("\n" + HOOK_BEGIN) if "\n" + HOOK_BEGIN in contents else contents.index(HOOK_BEGIN)
+    end = contents.index(HOOK_END, start) + len(HOOK_END)
+    if contents[end:end + 1] == "\n":
+        end += 1
+    return contents[:start] + contents[end:]
+
+
+def prepare(args):
+    # No system package, deployment pointer, service or existing configuration is changed.
+    with locked():
+        source = Path(args.cornice).resolve()
+        identifier = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
+        release = STATE / "releases" / identifier
+        product = release / "cornice"
+        product.mkdir(parents=True, mode=0o700)
+        for directory in ("bin", "shell", "i18n", "themes", "wallpapers", "config"):
+            shutil.copytree(source / directory, product / directory, ignore=shutil.ignore_patterns("__pycache__"))
+        if (source / "native/bin/cornice-desktop-runtime").is_file():
+            shutil.copytree(source / "native", product / "native")
+        else:
+            # Stage already-built components without CMake writing its install
+            # manifest into the source/build tree (which may be read-only).
+            build = source / "native/build"
+            native_bin = product / "native/bin"
+            native_bin.mkdir(parents=True)
+            for name in ("cornice-desktop-runtime", "cornice-human-lock", "cornice-session-guard"):
+                shutil.copy2(build / name, native_bin / name)
+            module = product / "native/qml/Cornice/Desktop"
+            shutil.copytree(build / "qml/Cornice/Desktop", module)
+            shutil.copy2(build / "libcornice_desktop_qml.so", module / "libcornice_desktop_qml.so")
+            for library in module.glob("*.so"):
+                run(["patchelf", "--set-rpath", "$ORIGIN", library])
+        shutil.copy2(Path(args.hyprland).resolve(), release / "Hyprland")
+        shutil.copy2(__file__, release / "runner")
+        configuration = Path(args.config).read_text()
+        # The old bootstrap rewrites real config and starts cornice.service. Suppress it.
+        # Route existing absolute Cornice shortcuts to this immutable candidate instead.
+        configuration = configuration.replace(str(Path.home() / ".local/bin/cornice"), str(product / "bin/cornice"))
+        configuration = configuration.replace('\\"$HOME/.local/bin/cornice\\"', '\\"' + str(product / "bin/cornice") + '\\"')
+        atomic(release / "hyprland.lua", configuration)
+        commands = read(args.autostart) if args.autostart else []
+        if not isinstance(commands, list) or not all(isinstance(c, str) for c in commands):
+            raise RuntimeError("Autostart must be a JSON array of commands")
+        # User manager's Cornice remains the stable version. Trial shell is supervised directly.
+        commands = [c for c in commands if "cornice.service" not in c]
+        atomic(release / "autostart.json", commands)
+        config_root = release / "config-home"
+        config_root.mkdir()
+        original = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+        for child in original.iterdir():
+            if child.name != "cornice":
+                (config_root / child.name).symlink_to(child.resolve(), target_is_directory=child.is_dir())
+        if (original / "cornice").exists():
+            shutil.copytree(original / "cornice", config_root / "cornice", symlinks=False)
+        else:
+            (config_root / "cornice").mkdir()
+        config_file = config_root / "cornice/config.json"
+        settings = read(config_file) if config_file.exists() else {}
+        settings["agentDesktop"] = {"enabled": True, "desktops": []}
+        left = settings.setdefault("bar", {}).setdefault("layout", {}).setdefault("left", [])
+        if not any(item.get("id") == "cn.agent-desktop" for item in left):
+            left.append({"id": "cn.agent-desktop"})
+        atomic(config_file, settings)
+        files = [p for p in product.rglob("*") if p.is_file()]
+        files += [release / name for name in ("Hyprland", "runner", "hyprland.lua", "autostart.json")]
+        stable_cli = (Path.home() / ".local/bin/cornice").resolve()
+        stable_files = {"/usr/bin/Hyprland": digest("/usr/bin/Hyprland"),
+                        "/usr/bin/start-hyprland": digest("/usr/bin/start-hyprland")}
+        for directory in (stable_cli.parent, stable_cli.parent.parent / "shell"):
+            if directory.is_dir():
+                for path in directory.rglob("*"):
+                    if path.is_file() and "__pycache__" not in path.parts:
+                        stable_files[str(path)] = digest(path)
+        manifest = {"id": identifier, "release": str(release), "product": str(product),
+                    "hashes": {str(p.relative_to(release)): digest(p) for p in files},
+                    "stable": {"entry": "/usr/bin/start-hyprland", "hyprland": digest("/usr/bin/Hyprland"),
+                               "cornice": str(stable_cli), "hashes": stable_files}}
+        atomic(release / "manifest.json", manifest)
+        atomic(STATE / "prepared.json", {"release": str(release)})
+        print(json.dumps({"prepared": str(release), "armed": False}, ensure_ascii=False))
+
+
+def verify_release(release):
+    manifest = read(release / "manifest.json")
+    for relative, expected in manifest["hashes"].items():
+        if digest(release / relative) != expected:
+            raise RuntimeError("Candidate changed after preparation: " + relative)
+    # We never overwrite stable files; reject a drifted system binary instead of promising an old fallback.
+    for path, expected in manifest["stable"]["hashes"].items():
+        if digest(path) != expected:
+            raise RuntimeError("Stable version changed; prepare a fresh baseline: " + path)
+    return manifest
+
+
+def arm(args):
+    with locked():
+        current = read(STATE / "current.json") if (STATE / "current.json").exists() else {}
+        if is_running(current):
+            raise RuntimeError("A trial is already running")
+        cancel_ticket()
+        release = Path(read(STATE / "prepared.json")["release"])
+        verify_release(release)
+        profile = Path(os.environ.get("ZDOTDIR", str(Path.home()))) / ".zprofile"
+        profile = profile.resolve()
+        contents = profile.read_text() if profile.exists() else ""
+        if HOOK_BEGIN not in contents:
+            atomic(STATE / "login-profile-backup.json", {"path": str(profile), "existed": profile.exists(), "contents": contents})
+        runner = ("/usr/bin/env " + shlex.quote("CORNICE_TRIAL_STATE_DIR=" + str(STATE)) +
+                  " /usr/bin/python3 " + shlex.quote(str(release / "runner")))
+        hook = (f"\n{HOOK_BEGIN}\n"
+                f"if {runner} is-login \"$$\"; then\n"
+                f"  exec {runner} login\nfi\n{HOOK_END}\n")
+        mode = profile.stat().st_mode & 0o777 if profile.exists() else 0o600
+        atomic(profile, remove_block(contents) + hook)
+        profile.chmod(mode)
+        # Durable, one-use ticket. Login consumes it before launching any candidate code.
+        atomic(STATE / "pending.json", {"release": str(release), "seconds": args.seconds,
+                                        "startupSeconds": args.startup_seconds, "armedAt": time.time()})
+        print("Armed for ONE SDDM Hyprland login. Current session unchanged.")
+
+
+def login_matches(pid):
+    try:
+        arguments = Path(f"/proc/{int(pid)}/cmdline").read_bytes().split(b"\0")
+        return (b"/usr/bin/start-hyprland" in arguments and
+                any(a.endswith(b"/wayland-session") for a in arguments) and
+                (STATE / "pending.json").exists())
+    except (OSError, ValueError):
+        return False
+
+
+def start_identity(pid):
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except OSError:
+        return None
+
+
+def is_running(info):
+    return info.get("pid") and info.get("processStart") == start_identity(info["pid"])
+
+
+def request(action):
+    with locked():
+        info = read(STATE / "current.json")
+        if not is_running(info) or info["status"] not in ("starting", "ready", "confirmed"):
+            raise RuntimeError("No running trial")
+        if action == "confirm" and info["status"] == "starting":
+            raise RuntimeError("Trial has not passed startup checks")
+        atomic(Path(info["run"]) / action, {"requestedAt": time.time()})
+        print("Requested " + action + " for trial session only.")
+
+
+def ipc(env, command, structured=True):
+    target = Path(env["XDG_RUNTIME_DIR"]) / "hypr" / env["HYPRLAND_INSTANCE_SIGNATURE"] / ".socket.sock"
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(2)
+        connection.connect(str(target))
+        connection.sendall((("j/" if structured else "/") + command).encode())
+        result = bytearray()
+        while data := connection.recv(65536):
+            result.extend(data)
+            if len(result) > 16 * 1024 * 1024:
+                raise RuntimeError("Compositor reply too large")
+    text = result.decode().strip()
+    return json.loads(text) if structured else text
+
+
+def child_setup():
+    # If the supervisor itself dies, do not strand a compositor on the display.
+    parent = os.getppid()
+    ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0)
+    if os.getppid() != parent or parent == 1:
+        os._exit(1)
+
+
+class Trial:
+    def __init__(self, ticket):
+        self.ticket = ticket
+        self.release = Path(ticket["release"])
+        self.product = self.release / "cornice"
+        self.directory = STATE / "runs" / (time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8])
+        self.directory.mkdir(parents=True, mode=0o700)
+        self.children = []
+        self.sockets = []
+        self.seat_names = ["agent" + str(index + 1) + "-" + uuid.uuid4().hex[:8] for index in range(3)]
+        self.environment = os.environ.copy()
+        for key in ("HYPRLAND_INSTANCE_SIGNATURE", "DISPLAY", "WAYLAND_SOCKET", "CORNICE_LAUNCH_LOCKED"):
+            self.environment.pop(key, None)
+        self.environment.update(CORNICE_PATH=str(self.product), CORNICE_SESSION_TEST="1", CORNICE_TRIAL_STATE_DIR=str(STATE),
+                                XDG_CONFIG_HOME=str(self.release / "config-home"),
+                                PATH=str(self.product / "bin") + ":" + self.environment["PATH"],
+                                HYPRLAND_NO_SD_VARS="1", HYPRLAND_NO_SD_TARGET="1", HYPRLAND_NO_SD_NOTIFY="1",
+                                QS_DISABLE_FILE_WATCHER="1", QS_NO_RELOAD_POPUP="1")
+        self.info = {"pid": os.getpid(), "processStart": start_identity(os.getpid()), "run": str(self.directory),
+                     "release": str(self.release), "status": "starting", "stableSelected": True}
+        self.interrupted = False
+
+    def update(self, status, **kwargs):
+        self.info.update(status=status, updatedAt=time.time(), **kwargs)
+        atomic(STATE / "current.json", self.info)
+        atomic(self.directory / "status.json", self.info)
+
+    def start(self, arguments, name):
+        with (self.directory / (name + ".log")).open("a") as logfile:
+            process = subprocess.Popen(list(map(str, arguments)), env=self.environment, stdout=logfile,
+                                       stderr=subprocess.STDOUT, process_group=0, preexec_fn=child_setup)
+        self.children.append(process)
+        return process
+
+    def command(self, *args):
+        return run([self.product / "bin/cornice", *args], env=self.environment)
+
+    def check_request(self):
+        if self.interrupted or (self.directory / "rollback").exists():
+            raise RuntimeError("Manual rollback or session termination requested")
+
+    def health(self):
+        self.check_request()
+        for child in self.children[:3]:
+            if child.poll() is not None:
+                raise RuntimeError("A supervised desktop process exited")
+        version = ipc(self.environment, "version")
+        if version.get("commit") != self.version.get("commit"):
+            raise RuntimeError("Wrong compositor instance")
+        errors = ipc(self.environment, "configerrors", False)
+        if errors:
+            raise RuntimeError("Hyprland configuration errors: " + errors)
+        if not ipc(self.environment, "monitors"):
+            raise RuntimeError("No visible output")
+        if not self.command("ping").startswith("pong"):
+            raise RuntimeError("Cornice did not answer ping")
+        layers = ipc(self.environment, "layers")
+        if not any(layer.get("namespace") == "cornice-bar" for monitor in layers.values()
+                   for level in monitor.get("levels", {}).values() for layer in level):
+            raise RuntimeError("Cornice bar is missing")
+        desktops = json.loads(self.command("desktop", "list"))["desktops"]
+        if {d["name"] for d in desktops} != set(self.seat_names):
+            raise RuntimeError("Agent desktops are missing")
+
+    def execute(self):
+        self.update("starting")
+        config = self.directory / "hyprland.lua"
+        runner = shlex.join(["/usr/bin/python3", str(self.release / "runner")])
+        # Additional hotkeys work even when the Cornice UI is broken.
+        config.write_text((self.release / "hyprland.lua").read_text() + "\n" +
+            'hl.config({misc={disable_watchdog_warning=true}})\n' +
+            'hl.bind("SUPER + CTRL + ALT + BackSpace", hl.dsp.exec_cmd(' + json.dumps(runner + " rollback") + '), {locked=true,submap_universal=true})\n' +
+            'hl.bind("SUPER + CTRL + ALT + Return", hl.dsp.exec_cmd(' + json.dumps(runner + " confirm") + '), {submap_universal=true})\n')
+        compositor = self.start([self.release / "Hyprland", "-c", config], "Hyprland")
+        self.info["compositorPid"] = compositor.pid
+        self.update("starting")
+        deadline = time.monotonic() + self.ticket["startupSeconds"]
+        runtime = Path(self.environment["XDG_RUNTIME_DIR"])
+        while time.monotonic() < deadline:
+            self.check_request()
+            if compositor.poll() is not None:
+                raise RuntimeError("Hyprland exited during startup")
+            for candidate in (runtime / "hypr").glob("*/hyprland.lock"):
+                try:
+                    pid, display = candidate.read_text().splitlines()[:2]
+                    if int(pid) != compositor.pid:
+                        continue
+                    self.environment.update(HYPRLAND_INSTANCE_SIGNATURE=candidate.parent.name, WAYLAND_DISPLAY=display)
+                    self.version = ipc(self.environment, "version")
+                    if not ipc(self.environment, "monitors"):
+                        continue
+                    break
+                except (OSError, ValueError, IndexError):
+                    continue
+            else:
+                time.sleep(.1)
+                continue
+            break
+        else:
+            raise RuntimeError("Hyprland startup timeout")
+        self.info["instance"] = self.environment["HYPRLAND_INSTANCE_SIGNATURE"]
+        self.info["display"] = self.environment["WAYLAND_DISPLAY"]
+        errors = ipc(self.environment, "configerrors", False)
+        if errors:
+            raise RuntimeError("Hyprland configuration errors: " + errors)
+        broker = self.start([self.product / "bin/cornice-desktopd"], "desktop")
+        self.info["brokerPid"] = broker.pid
+        while time.monotonic() < deadline:
+            self.check_request()
+            try:
+                self.command("desktop", "list")
+                break
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                time.sleep(.1)
+        else:
+            raise RuntimeError("Agent desktop service startup timeout")
+        # Per-trial names also avoid stale sockets left by SIGKILL/power-loss.
+        # Never unlink an unknown socket to make a candidate start.
+        for name in self.seat_names:
+            self.command("desktop", "create", name, "--virtual-output", "1920x1080")
+            for item in (runtime).glob("seat-" + name + "-*"):
+                identity = item.lstat()
+                if stat.S_ISSOCK(identity.st_mode):
+                    self.sockets.append((item, identity.st_dev, identity.st_ino))
+        self.info["desktops"] = self.seat_names
+        shell = self.start([self.product / "bin/cornice-qs", "-p", self.product / "shell"], "cornice")
+        self.info["shellPid"] = shell.pid
+        while time.monotonic() < deadline:
+            self.check_request()
+            try:
+                self.health()
+                break
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+                time.sleep(.2)
+        else:
+            raise RuntimeError("Cornice/Agent desktops failed startup health checks")
+        self.update("ready", confirmSeconds=self.ticket["seconds"])
+        # These are the user's real autostart commands, only after the desktop is ready.
+        for index, command in enumerate(read(self.release / "autostart.json")):
+            self.start(["/bin/sh", "-c", command], "autostart-" + str(index))
+        notice = (f"试运行桌面：请在 {self.ticket['seconds']} 秒内按 Super+Ctrl+Alt+Enter 确认。"
+                  "有问题按 Super+Ctrl+Alt+Backspace 回退。下一次登录始终使用稳定版。")
+        self.start(["notify-send", "Cornice 试运行", notice, "--expire-time=0"], "notice")
+        deadline = time.monotonic() + self.ticket["seconds"]
+        failures = 0
+        while True:
+            self.check_request()
+            if compositor.poll() is not None:
+                self.update("exited" if compositor.returncode == 0 else "rolled-back", reason="Hyprland exited; stable login remains selected")
+                return
+            if (self.directory / "confirm").exists() and self.info["status"] != "confirmed":
+                self.update("confirmed")
+            if self.info["status"] != "confirmed" and time.monotonic() >= deadline:
+                raise RuntimeError("Confirmation deadline expired")
+            try:
+                self.health()
+                failures = 0
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                failures += 1
+                if failures >= 3:
+                    raise RuntimeError("Desktop health failed three times: " + str(error)) from error
+            time.sleep(.5)
+
+    def cleanup(self):
+        # Only process groups created by this supervisor; never terminate-user or pkill Hyprland.
+        for child in reversed(self.children):
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + 3
+        for child in reversed(self.children):
+            try:
+                child.wait(timeout=max(.01, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.wait()
+        for path, device, inode in self.sockets:
+            try:
+                identity = path.lstat()
+                if identity.st_dev == device and identity.st_ino == inode and stat.S_ISSOCK(identity.st_mode):
+                    path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def login():
+    sandbox = os.environ.get("CORNICE_TEST_SANDBOX") == "1"
+    if not sandbox and (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")):
+        raise RuntimeError("Refusing to start a login trial inside an existing desktop")
+    # Hold the session lock for its whole lifetime; CLI requests use a different lock.
+    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (STATE / "session.lock").open("a") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with locked():
+            pending = STATE / "pending.json"
+            if not pending.exists():
+                if sandbox:
+                    return
+                os.execv("/usr/bin/start-hyprland", ["/usr/bin/start-hyprland"])
+            # Atomic rename and directory fsync before any candidate launch. A power loss,
+            # SIGKILL or failed login cannot re-enter the candidate on the next login.
+            pending.replace(STATE / "consumed.json")
+            descriptor = os.open(STATE, os.O_DIRECTORY)
+            os.fsync(descriptor)
+            os.close(descriptor)
+            try:
+                ticket = read(STATE / "consumed.json")
+            except (OSError, ValueError) as error:
+                atomic(STATE / "current.json", {"status": "rolled-back", "stableSelected": True,
+                                                "reason": "Invalid one-shot ticket: " + str(error)})
+                return
+        trial = Trial(ticket)
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal.signal(sig, lambda *_: setattr(trial, "interrupted", True))
+        manager_environment = None
+        try:
+            verify_release(trial.release)
+            # Do not send candidate CORNICE_PATH/PATH into the persistent user manager.
+            # The normal service is stopped only at the NEXT login, never by arm/prepare.
+            if not sandbox:
+                others = subprocess.run(["pgrep", "-u", str(os.getuid()), "-x", "Hyprland"],
+                                        capture_output=True, text=True, timeout=4)
+                if others.returncode == 0:
+                    raise RuntimeError("Another Hyprland session is still running; refusing to stop its Cornice service")
+                names = {"WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "XDG_CURRENT_DESKTOP", "DISPLAY", "CORNICE_PATH", "PATH"}
+                previous = dict(line.split("=", 1) for line in run(["systemctl", "--user", "show-environment"]).splitlines() if "=" in line)
+                manager_environment = {key: previous.get(key) for key in names}
+                atomic(trial.directory / "manager-environment.json", manager_environment)
+                run(["systemctl", "--user", "stop", "cornice.service"], timeout=10)
+            trial.execute()
+        except Exception as error:
+            trial.update("rolled-back", reason=str(error))
+            print("cornice trial: stable login selected; logging out: " + str(error), file=sys.stderr)
+        finally:
+            trial.cleanup()
+            if manager_environment is not None:
+                try:
+                    present = [key + "=" + value for key, value in manager_environment.items() if value is not None]
+                    absent = [key for key, value in manager_environment.items() if value is None]
+                    if present:
+                        run(["systemctl", "--user", "set-environment", *present])
+                    if absent:
+                        run(["systemctl", "--user", "unset-environment", *absent])
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    trial.update(trial.info["status"], environmentRestoreError=str(error))
+        # Returning success lets SDDM end this session; never auto-login with saved credentials.
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="action", required=True)
+    preparation = sub.add_parser("prepare", help="Snapshot candidate without changing the current desktop")
+    preparation.add_argument("--hyprland", required=True)
+    preparation.add_argument("--cornice", default=str(ROOT))
+    preparation.add_argument("--config", required=True)
+    preparation.add_argument("--autostart")
+    arming = sub.add_parser("arm", help="Enable exactly one future SDDM Hyprland login")
+    arming.add_argument("--seconds", type=int, default=180)
+    arming.add_argument("--startup-seconds", type=int, default=60)
+    sub.add_parser("status")
+    sub.add_parser("cancel", help="Cancel the next login ticket; does not terminate any desktop")
+    sub.add_parser("remove-hook", help="Cancel and remove only the managed login snippet, keeping other edits")
+    sub.add_parser("confirm", help="Keep this trial running until logout; health watchdog remains active")
+    sub.add_parser("rollback", help="End only the running trial; next login uses the stable version")
+    sub.add_parser("login", help=argparse.SUPPRESS)
+    detector = sub.add_parser("is-login", help=argparse.SUPPRESS)
+    detector.add_argument("pid")
+    args = parser.parse_args()
+    if args.action == "prepare":
+        prepare(args)
+    elif args.action == "arm":
+        if not 5 <= args.seconds <= 3600 or not 5 <= args.startup_seconds <= 300:
+            raise RuntimeError("Confirmation must be 5..3600 seconds; startup 5..300 seconds")
+        arm(args)
+    elif args.action == "is-login":
+        return 0 if login_matches(args.pid) else 1
+    elif args.action == "login":
+        login()
+    elif args.action in ("confirm", "rollback"):
+        request(args.action)
+    elif args.action in ("cancel", "remove-hook"):
+        with locked():
+            current = read(STATE / "current.json") if (STATE / "current.json").exists() else {}
+            if args.action == "remove-hook" and is_running(current):
+                raise RuntimeError("End the trial before removing its login hook")
+            cancel_ticket()
+            if args.action == "remove-hook" and (STATE / "login-profile-backup.json").exists():
+                backup = read(STATE / "login-profile-backup.json")
+                profile = Path(backup["path"])
+                if profile.exists():
+                    contents = remove_block(profile.read_text())
+                    if not backup["existed"] and not contents:
+                        profile.unlink()
+                    else:
+                        mode = profile.stat().st_mode & 0o777
+                        atomic(profile, contents)
+                        profile.chmod(mode)
+        print("Next login uses the normal stable entry. Current session unchanged.")
+    elif args.action == "status":
+        current = read(STATE / "current.json") if (STATE / "current.json").exists() else None
+        print(json.dumps({"armed": (STATE / "pending.json").exists(), "current": current,
+                          "running": bool(current and is_running(current))}, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        print("cornice session-trial: " + str(error), file=sys.stderr)
+        sys.exit(1)

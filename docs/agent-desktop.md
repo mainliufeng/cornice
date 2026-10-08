@@ -3,6 +3,9 @@
 修复分支：Cornice `codex/agent-desktop-recovery`，Hyprland `codex/cornice-agent-desktop`。
 当前修复只在特性分支，不安装、不切换日常登录入口、不修改用户的 Cornice 配置或服务。
 
+需要注销后试用时，可先准备[一次性登录试运行与自动回退](session-trial.md)。它保留稳定登录入口，
+只在显式 arm 后接管下一次 SDDM Hyprland 登录；启动失败、持续失联或确认超时会结束试运行。
+
 ## 不影响日常桌面的测试
 
 先构建特性版 Hyprland 与本工作树的 native 组件，再执行：
