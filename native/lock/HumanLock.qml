@@ -1,41 +1,39 @@
 import QtQuick
 Rectangle {
   id: root
-  color: "#131820"
-  readonly property bool busy: lockController.busy
-  function focusPassword() { input.forceActiveFocus() }
-  function authenticate() {
-    if (busy) return
-    const value = input.text; input.text = ""
-    lockController.authenticate(value)
+  color: content.background
+  function focusPassword() { content.focusPassword() }
+  Image {
+    anchors.fill: parent
+    source: lockController.backgroundSource
+    fillMode: Image.PreserveAspectCrop
+    cache: false
+  }
+  Rectangle {
+    id: wash
+    anchors.fill: parent
+    visible: lockController.backgroundSource !== ""
+    readonly property real scrim: lockController.appearance.scrim === undefined ? 1 : lockController.appearance.scrim
+    gradient: Gradient {
+      GradientStop { position: 0; color: Qt.rgba(0, 0, 0, .62 * wash.scrim) }
+      GradientStop { position: .45; color: Qt.rgba(0, 0, 0, .30 * wash.scrim) }
+      GradientStop { position: 1; color: Qt.rgba(0, 0, 0, .66 * wash.scrim) }
+    }
+  }
+  LockContent {
+    id: content
+    anchors.fill: parent
+    appearance: lockController.appearance
+    user: lockController.user
+    showUser: lockController.showUser
+    busy: lockController.busy
+    failed: !busy && lockController.message !== ""
+    message: busy ? label("checking", "正在验证…") : lockController.message
+    onSubmitted: value => lockController.authenticate(value)
+    onEdited: lockController.clearMessage()
   }
   Connections {
     target: lockController
-    function onAuthenticationChanged() { if (!lockController.busy) input.forceActiveFocus() }
+    function onAuthenticationChanged() { if (!lockController.busy) content.focusPassword() }
   }
-  Timer { interval: 1000; running: true; repeat: true; triggeredOnStart: true; onTriggered: clock.text = Qt.formatDateTime(new Date(), "hh:mm") }
-  Column {
-    width: Math.min(420, parent.width - 64)
-    anchors.centerIn: parent; spacing: 24
-    Text { id: clock; anchors.horizontalCenter: parent.horizontalCenter; color: "#f1f3f5"; font.pixelSize: 64 }
-    Text { visible: lockController.showUser; text: lockController.user; anchors.horizontalCenter: parent.horizontalCenter; color: "#a9b3c1"; font.pixelSize: 20 }
-    Rectangle {
-      width: parent.width; height: 56; radius: 12; color: "#242c38"; border.color: input.activeFocus ? "#89b4fa" : "#4c566a"
-      TextInput {
-        id: input; anchors.fill: parent; anchors.margins: 16
-        color: "#f1f3f5"; font.pixelSize: 20; echoMode: TextInput.Password
-        enabled: !root.busy; focus: true; selectByMouse: true
-        onAccepted: root.authenticate()
-      }
-      Text { visible: input.text.length === 0; text: "密码"; anchors.centerIn: parent; color: "#a9b3c1"; font.pixelSize: 18 }
-    }
-    Rectangle {
-      width: parent.width; height: 48; radius: 12; color: root.busy ? "#4c566a" : "#89b4fa"
-      Text { text: root.busy ? "正在验证…" : "解锁"; anchors.centerIn: parent; color: "#131820"; font.pixelSize: 18 }
-      MouseArea { anchors.fill: parent; enabled: !root.busy; onClicked: root.authenticate() }
-    }
-    Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: lockController.message; color: "#f1f3f5"; font.pixelSize: 16; wrapMode: Text.Wrap }
-    Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: lockController.scope === "human" ? "人的桌面已锁定 · 获准的 Agent 可继续运行" : "整个会话已锁定 · Agent 已暂停"; color: "#a9b3c1"; font.pixelSize: 14; wrapMode: Text.Wrap }
-  }
-  Component.onCompleted: input.forceActiveFocus()
 }

@@ -234,9 +234,12 @@ cat >"$XDG_CONFIG_HOME/cornice/config.json" <<JSON
 { "lock": { "pamService": "cornice-test", "pamDirectory": "$runtime/pam", "showUser": false },
   "background": { "dir": "$prefix/wallpapers" } }
 JSON
-timeout 30 cornice restart >/dev/null 2>&1
-sleep 2.5
-if cornice ping >/dev/null 2>&1; then pass "shell restarted with the test PAM service"; else fail "shell did not come back"; fi
+# This suite runs a copied config, not the installed config identity that
+# `cornice restart` manages. Restart only our owned shell in this private stack.
+kill "$shell_pid" 2>/dev/null || true
+wait "$shell_pid" 2>/dev/null || true
+rm -f "$runtime/cornice-${USER:-user}.sock"
+if start_shell; then pass "shell restarted with the test PAM service"; else fail "shell did not come back"; fi
 if wait_for_pam; then
   pass "test PAM service is readable (custom configDirectory honoured)"
   expect_eq "lock" "ok" "$(timeout 6 cornice ipc lock lock 2>/dev/null)"

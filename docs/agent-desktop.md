@@ -37,6 +37,13 @@ DRM card 设备、宿主 Wayland/X11 socket、systemd 与系统 D-Bus 均不可�
 锁屏套件中的 logind 是私有测试服务，不能触发真实休眠；物理合盖、热插拔和 DRM
 显示验证仍未覆盖，不能据此认为可以直接接管日常会话。
 
+原生锁屏与 Quickshell 锁屏共用 `shell/Commons/LockContent.qml`，保持 Cornice 的
+壁纸、时钟、主题、中文提示和密码框。原生安全表面使用软件渲染，壁纸在 CPU 上模糊，
+缓冲按输出缩放绘制；锁屏套件覆盖 3072×1920、2 倍缩放的实际画面。
+解锁与原有 Quickshell 一样只调用 PAM 的认证阶段，不重新执行登录账户阶段。
+`hyprlock` 等只定义 `auth` 的锁屏服务因此不会落入默认 `account` 拒绝规则；
+测试同时覆盖 auth-only 成功和认证失败保持锁定。真实用户密码仍需用户亲自验证。
+
 截图锁屏回归使用真实 Wayland 客户端，在同一连接上依次提交截图 copy 和锁屏请求，
 确保截图尚未处理时锁 epoch 已改变。断言旧帧收到 failed 且目标缓冲未被写入，
 不依赖再次截图触发渲染；随后恢复原生锁界面并验证锁内、解锁后的新截图。
@@ -55,7 +62,7 @@ DRM card 设备、宿主 Wayland/X11 socket、systemd 与系统 D-Bus 均不可�
 ## 构建与隔离测试
 
 原生组件依赖 CMake、Ninja、Qt 6 Core/Gui/Network/Quick/Qml/WebSockets/DBus、PAM、Wayland client、
-wayland-scanner、xkbcommon。测试另需 bubblewrap、Mutter、GTK 3/Pycairo 的 Python GI、grim、xmessage 及已构建的 fork。
+wayland-scanner、xkbcommon。测试另需 bubblewrap、Mutter、GTK 3/Pycairo 的 Python GI、Pillow、grim、xmessage 及已构建的 fork。
 兼容验证会运行系统 Google Chrome、kitty 和 Qt/Quickshell 客户端。
 
 ```bash

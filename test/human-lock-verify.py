@@ -2,6 +2,7 @@
 from desktop_harness import *
 from cdp_client import Cdp
 import urllib.request
+from PIL import Image
 
 try:
     initialize()
@@ -46,8 +47,20 @@ try:
     ok('dispatch hl.dsp.focus({window="title:^human-window$"})')
     prelock_frame = tool(binding, "capture")
     pam = BASE / "pam"; pam.mkdir()
-    (pam / "permit").write_text("auth required pam_permit.so\naccount required pam_permit.so\n")
-    locker = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"],
+    # Real lock services can be auth-only. A default account deny reproduced
+    # the live failure where the correct password passed auth then was rejected.
+    (pam / "permit").write_text("auth required pam_permit.so\n")
+    (pam / "other").write_text("auth required pam_deny.so\naccount required pam_deny.so\n")
+    (pam / "deny-worker").write_text("auth required pam_deny.so\naccount required pam_permit.so\n")
+    for service, expected in (("permit", 0), ("deny-worker", 1)):
+        result = subprocess.run([str(PRODUCT / "bin/cornice-human-lock"), "--pam-worker", service, str(pam)],
+            input=json.dumps({"password": "test-only"}), env=ENV, text=True, capture_output=True)
+        assert result.returncode == expected, (service, result.returncode, result.stderr)
+    record("auth-only lock PAM succeeds despite default account denial; rejected authentication still fails")
+    appearance = json.loads((PRODUCT / "themes/mono/theme.json").read_text())
+    appearance = appearance["colors"] | appearance["metrics"] | {
+        "backgroundSource": (PRODUCT / "wallpapers/default.png").as_uri(), "blur": 1, "language": "zh-CN"}
+    locker = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--appearance", json.dumps(appearance), "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"],
         env=ENV | {"WAYLAND_DEBUG": "client"}, stdin=subprocess.PIPE, stdout=open(BASE / "lock-events", "w"), stderr=open(BASE / "lock.log", "w"), start_new_session=True, text=True)
     PROCESSES.append(locker)
     try:
@@ -232,7 +245,7 @@ try:
     fixture.stdin.write('{"LidClosed":false}\n'); fixture.stdin.flush()
     config_dir = BASE / "config/cornice"; config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "config.json").write_text(json.dumps({
-        "agentDesktop": {"enabled": True}, "background": {"enabled": False},
+        "agentDesktop": {"enabled": True}, "language": "zh-CN", "background": {"dir": str(PRODUCT / "wallpapers")},
         "bar": {"layout": {"left": [{"id": "cn.agent-desktop"}], "center": [], "right": []}},
         "weather": {"intervalMinutes": 0},
         "idle": {"lock": 0, "screenOffAc": 0, "screenOffBattery": 0, "dimAc": 0, "dimBattery": 0, "lockScreenOff": 0,
@@ -247,12 +260,23 @@ try:
     shell("desktop", "observe", "continuing")
     wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["frame"].get("frameId"))
     cached = pathlib.Path(json.loads(shell("ipc", "desktopObserver", "status"))["frame"]["buffer"])
+    # Match the physical laptop's mode, entirely inside the isolated compositor.
+    ok('eval hl.monitor({output="human",mode="3072x1920",position="0x0",scale=2})')
+    wait(lambda: next(m for m in ctl("monitors", True) if m["name"] == "human")["scale"] == 2)
     shell("lock")
     wait(lambda: ctl("seat lock-state", True)["scope"] == "human" and ctl("seat lock-state", True)["secure"])
     assert not cli("state", "continuing")["paused"]
     wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["frame"] == {})
     wait(lambda: not cached.exists() or cached.stat().st_size == 0)
-    subprocess.run(["grim", "-o", "human", str(BASE / "cornice-native-lock.png")], env=ENV, check=True)
+    def visible_lock():
+        shot = BASE / "cornice-native-lock.png"
+        subprocess.run(["grim", "-o", "human", str(shot)], env=ENV, check=True)
+        with Image.open(shot) as image:
+            assert image.size == (3072, 1920), image.size
+            # secure means coverage, which initially can be a black failsafe;
+            # wait for actual presented Cornice content before accepting the UI.
+            return min(high for low, high in image.convert("RGB").getextrema()) > 100
+    wait(visible_lock)
     def native_owners():
         owners = []
         for proc in pathlib.Path('/proc').iterdir():
@@ -263,6 +287,17 @@ try:
             except (FileNotFoundError, PermissionError, ProcessLookupError): pass
         return owners
     owners = wait(native_owners); assert len(owners) == 1, owners
+    command = pathlib.Path('/proc', str(owners[0]), 'cmdline').read_bytes().split(b'\0')
+    native_appearance = json.loads(command[command.index(b'--appearance') + 1])
+    assert native_appearance['language'] == 'zh-CN'
+    assert native_appearance['backgroundSource'].endswith('/default.png'), native_appearance
+    assert native_appearance['fontSize'] == appearance['fontSize']
+    assert native_appearance['labels']['password'] == json.loads((PRODUCT / 'i18n/zh-CN.json').read_text())['lock.password']
+    # Save the real forwarded theme for review, and reject silent QML fallbacks.
+    (BASE / 'native-appearance.json').write_text(json.dumps(native_appearance, ensure_ascii=False, indent=2))
+    assert not any(error in (BASE / 'cornice-shell.log').read_text() for error in
+                   ('ReferenceError:', 'TypeError:', 'is not a type', 'Cannot assign'))
+    record("Cornice native lock reuses shared themed UI, real wallpaper and Chinese labels at laptop 2x scale")
     old_id = ctl("seat lock-state", True)["lockId"]
     os.kill(owners[0], signal.SIGKILL)
     wait(lambda: ctl("seat lock-state", True)["ownerConnected"] and ctl("seat lock-state", True)["lockId"] != old_id)
@@ -299,7 +334,8 @@ try:
     wait(lambda: ctl("seat state lost-output") == "seat not found")
     assert "seat not found" in cli("state", "lost-output", succeeds=False)
     tool(lost, "capture", succeeds=False)
-    assert human_state() == before_loss
+    after_loss = human_state()
+    assert after_loss == before_loss, {"before": before_loss, "after": after_loss}
     record("private home output loss revokes a seat viewing human WS without primary fallback")
     os.killpg(fixture.pid, signal.SIGTERM); fixture.wait()
     os.kill(int(system_bus[1]), signal.SIGTERM)

@@ -39,6 +39,7 @@ add_executable(cornice-human-lock ../lock/main.cpp cornice-human-lock-v1.c corni
 target_include_directories(cornice-human-lock PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(cornice-human-lock PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Qml PkgConfig::WAYLAND PkgConfig::XKB PkgConfig::PAM)
 qt_add_resources(cornice-human-lock lock_ui PREFIX /cornice/lock BASE ../lock FILES ../lock/HumanLock.qml)
+qt_add_resources(cornice-human-lock lock_content PREFIX /cornice/lock BASE ../../shell/Commons FILES ../../shell/Commons/LockContent.qml)
 install(TARGETS cornice-human-lock RUNTIME DESTINATION native/bin)
 
 add_executable(cornice-session-guard ../session/main.cpp cornice-human-lock-v1.c cornice-human-lock-v1.h)

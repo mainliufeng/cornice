@@ -1,3 +1,4 @@
+#include "Background.hpp"
 #include "cornice-human-lock-v1.h"
 #include "ext-session-lock-v1.h"
 #include <QCommandLineParser>
@@ -41,7 +42,7 @@ struct Output {
   ext_session_lock_surface_v1 *fullSurface = nullptr;
   bool roleKnown = false, privateOutput = false, configured = false,
        dirty = true;
-  int width = 0, height = 0;
+  int width = 0, height = 0, scale = 1;
   std::unique_ptr<QQuickRenderControl> control;
   std::unique_ptr<QQuickWindow> window;
   std::unique_ptr<QQuickItem> item;
@@ -49,6 +50,9 @@ struct Output {
 };
 class HumanLock : public QObject {
   Q_OBJECT
+  Q_PROPERTY(QVariantMap appearance READ appearance NOTIFY appearanceChanged)
+  Q_PROPERTY(
+      QString backgroundSource READ backgroundSource NOTIFY appearanceChanged)
   Q_PROPERTY(QString pamService MEMBER pamService CONSTANT)
   Q_PROPERTY(QString pamDirectory MEMBER pamDirectory CONSTANT)
   Q_PROPERTY(QString user MEMBER user CONSTANT)
@@ -57,6 +61,28 @@ class HumanLock : public QObject {
   Q_PROPERTY(bool busy READ busy NOTIFY authenticationChanged)
   Q_PROPERTY(QString message READ message NOTIFY authenticationChanged)
 public:
+  QVariantMap m_appearance;
+  LockBackground *background = nullptr; // owned by QQmlEngine
+  int backgroundRevision = 0;
+  QVariantMap appearance() const { return m_appearance; }
+  QString backgroundSource() const {
+    return background && !background->image.isNull()
+               ? QString("image://lock-background/%1").arg(backgroundRevision)
+               : QString{};
+  }
+  void setAppearance(const QJsonObject &value) {
+    m_appearance = value.toVariantMap();
+    background->load(value.value("backgroundSource").toString(),
+                     value.value("blur").toDouble(1));
+    ++backgroundRevision;
+    emit appearanceChanged();
+  }
+  Q_INVOKABLE void clearMessage() {
+    if (!m_busy && !m_message.isEmpty()) {
+      m_message.clear();
+      emit authenticationChanged();
+    }
+  }
   QString pamService, pamDirectory, user;
   wl_display *display = nullptr;
   wl_compositor *compositor = nullptr;
@@ -121,9 +147,12 @@ public:
   }
 signals:
   void authenticationChanged();
+  void appearanceChanged();
 
 public:
   HumanLock() {
+    background = new LockBackground();
+    engine.addImageProvider("lock-background", background);
     xkb = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     auto locale =
         qEnvironmentVariable(
@@ -345,10 +374,15 @@ public:
     }
     o->window->setGeometry(0, 0, width, height);
     o->item->setSize(QSizeF(width, height));
-    o->image = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
+    o->image = QImage(width * o->scale, height * o->scale,
+                      QImage::Format_ARGB32_Premultiplied);
+    o->image.setDevicePixelRatio(o->scale);
+    wl_surface_set_buffer_scale(o->surface, o->scale);
     o->image.fill(QColor("#131820"));
     o->window->setColor(QColor("#131820"));
-    o->window->setRenderTarget(QQuickRenderTarget::fromPaintDevice(&o->image));
+    auto target = QQuickRenderTarget::fromPaintDevice(&o->image);
+    target.setDevicePixelRatio(o->scale);
+    o->window->setRenderTarget(target);
     QMetaObject::invokeMethod(o->item.get(), "focusPassword");
     o->dirty = true;
   }
@@ -377,9 +411,9 @@ public:
     memcpy(data, o->image.constBits(), length);
     munmap(data, length);
     auto pool = wl_shm_create_pool(shm, fd, length);
-    auto buffer = wl_shm_pool_create_buffer(pool, 0, o->width, o->height,
-                                            o->image.bytesPerLine(),
-                                            WL_SHM_FORMAT_ARGB8888);
+    auto buffer = wl_shm_pool_create_buffer(
+        pool, 0, o->image.width(), o->image.height(), o->image.bytesPerLine(),
+        WL_SHM_FORMAT_ARGB8888);
     static const wl_buffer_listener listener{
         [](void *, wl_buffer *b) { wl_buffer_destroy(b); }};
     wl_buffer_add_listener(buffer, &listener, nullptr);
@@ -435,6 +469,29 @@ public:
             o->id = id;
             o->output = static_cast<wl_output *>(wl_registry_bind(
                 registry, id, &wl_output_interface, std::min(version, 4u)));
+            static const wl_output_listener outputListener{
+                [](void *, wl_output *, int32_t, int32_t, int32_t, int32_t,
+                   int32_t, const char *, const char *, int32_t) {},
+                [](void *, wl_output *, uint32_t, int32_t, int32_t, int32_t) {},
+                [](void *, wl_output *) {},
+                [](void *data, wl_output *, int32_t scale) {
+                  auto *o = static_cast<Output *>(data);
+                  o->scale = std::max(1, scale);
+                  if (o->configured) {
+                    o->image = QImage(o->width * o->scale, o->height * o->scale,
+                                      QImage::Format_ARGB32_Premultiplied);
+                    o->image.setDevicePixelRatio(o->scale);
+                    wl_surface_set_buffer_scale(o->surface, o->scale);
+                    auto target =
+                        QQuickRenderTarget::fromPaintDevice(&o->image);
+                    target.setDevicePixelRatio(o->scale);
+                    o->window->setRenderTarget(target);
+                    o->dirty = true;
+                  }
+                },
+                [](void *, wl_output *, const char *) {},
+                [](void *, wl_output *, const char *) {}};
+            wl_output_add_listener(o->output, &outputListener, o.get());
             self->outputs[id] = std::move(o);
             if (self->manager && self->ownsLock())
               cornice_human_lock_manager_v1_get_output_role(
@@ -667,6 +724,11 @@ public:
         input.remove(0, line.size() + 1);
         if (line == "emergency-unlock" && emergencyAllowed)
           unlock();
+        else if (line.startsWith("appearance ")) {
+          const auto value = QJsonDocument::fromJson(line.mid(11));
+          if (value.isObject())
+            setAppearance(value.object());
+        }
       }
     });
     wl_display_flush(display);
@@ -722,10 +784,17 @@ int main(int argc, char **argv) {
     pam_handle_t *handle = nullptr;
     int result =
         pam_start_confdir(argv[2], account->pw_name, &conv, argv[3], &handle);
-    if (result == PAM_SUCCESS)
+    const char *phase = "start";
+    if (result == PAM_SUCCESS) {
+      phase = "authenticate";
       result = pam_authenticate(handle, 0);
-    if (result == PAM_SUCCESS)
-      result = pam_acct_mgmt(handle, 0);
+    }
+    // Unlock an existing session using the same auth-only contract as
+    // Quickshell. Lock services such as hyprlock need not define an account
+    // stack; calling pam_acct_mgmt then falls back to other and denies access.
+    if (result != PAM_SUCCESS)
+      fprintf(stderr, "PAM %s failed for service %s: %s (%d)\n", phase, argv[2],
+              pam_strerror(handle, result), result);
     secret.password.fill(0);
     if (handle)
       pam_end(handle, result);
@@ -739,12 +808,16 @@ int main(int argc, char **argv) {
   parser.addOption({"pam-service", "PAM service", "service", "hyprlock"});
   parser.addOption(
       {"pam-directory", "PAM config directory", "directory", "/etc/pam.d"});
+  parser.addOption(
+      {"appearance", "Cornice theme and background JSON", "json", "{}"});
   parser.addOption({"hide-user", "Hide the account name on the lock screen"});
   parser.addOption({"scope", "Lock scope: human or session", "scope", "human"});
   parser.addOption(
       {"allow-emergency", "Allow the explicit owner recovery command"});
   parser.process(application);
   HumanLock lock;
+  lock.setAppearance(
+      QJsonDocument::fromJson(parser.value("appearance").toUtf8()).object());
   lock.pamService = parser.value("pam-service");
   lock.pamDirectory = parser.value("pam-directory");
   lock.user = getpwuid(getuid())

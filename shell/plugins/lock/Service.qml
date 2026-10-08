@@ -224,220 +224,20 @@ Item {
           color: Color.background
         }
 
-        SystemClock {
-          id: surfaceClock
-          precision: SystemClock.Seconds
-        }
-
-        // A soft card behind the content: a busy wallpaper should not decide
-        // whether the password prompt is readable.
-        Rectangle {
-          anchors.horizontalCenter: content.horizontalCenter
-          anchors.verticalCenter: content.verticalCenter
-          width: Math.min(parent.width - Style.space(4), content.width + Style.space(8))
-          height: content.height + Style.space(8) * content.density
-          color: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 0.72)
-          border.width: 1
-          border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.10)
-        }
-
-        Column {
-          id: content
-
-          width: Math.min(480, parent.width - Style.space(12))
-          readonly property real density: Math.min(1, parent.height / 680)
-          anchors.centerIn: parent
-          anchors.verticalCenterOffset: -Math.round(parent.height * 0.05)
-          spacing: Style.space(1.2) * density
-
-          // ---- clock ---------------------------------------------------------
-          Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Style.space(0.7)
-
-            Text {
-              id: lockTime
-              text: I18n.dateTime(surfaceClock.date, "HH:mm")
-              color: Color.foreground
-              font.family: Style.fontFamily
-              font.pixelSize: Math.round(Math.min(Style.fontSize * 8 * content.density, content.width / 3.3))
-              font.bold: true
-              font.letterSpacing: -2
-            }
-
-            Text {
-              anchors.baseline: lockTime.baseline
-              text: Qt.formatDateTime(surfaceClock.date, "ss")
-              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.55)
-              font.family: Style.fontFamily
-              font.pixelSize: Math.max(Style.fontSize, Style.fontSize * 1.8 * content.density)
-            }
+        LockContent {
+          anchors.fill: parent
+          appearance: root.lockAppearance()
+          user: root.user
+          showUser: root.showUser
+          busy: root.state === "authenticating" || pam.active
+          failed: root.state === "failed"
+          acceptingInput: root.acceptingInput
+          message: root.message
+          onEdited: text => {
+            root.password = text
+            if (root.state === "failed") { root.state = "locked"; root.message = "" }
           }
-
-          Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: I18n.dateTime(surfaceClock.date, I18n.t("lock.dateFormat"))
-            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.65)
-            font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize + 2
-            font.letterSpacing: 1
-          }
-
-          Item { width: 1; height: Style.space(2.6) * content.density }
-
-          // ---- who is unlocking ----------------------------------------------
-          Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Style.space(0.5)
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: "\uf023"
-              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.55)
-              font.family: Style.iconFamily
-              font.pixelSize: Style.fontSize
-            }
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.showUser ? (Quickshell.env("USER") || "") : I18n.t("lock.authRequired")
-              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.75)
-              font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize + 2
-              font.letterSpacing: 1
-            }
-          }
-
-          Item { width: 1; height: Style.space(0.4) }
-
-          // ---- password field ------------------------------------------------
-          Item {
-            id: field
-
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: content.width - Style.space(4)
-            height: Math.max(Style.space(5.5), Style.space(7.5) * content.density)
-
-            Rectangle {
-              anchors.fill: parent
-              radius: Style.radius
-              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b,
-                             input.activeFocus ? 0.10 : 0.06)
-
-              Behavior on color {
-                ColorAnimation { duration: 120 }
-              }
-            }
-
-            // The underline carries the state: accent = ready, muted = busy,
-            // urgent = failed.
-            Rectangle {
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.bottom: parent.bottom
-              height: 2
-              color: root.state === "failed" ? Color.urgent
-                   : (root.state === "authenticating" || pam.active) ? Color.muted
-                   : Color.accent
-            }
-
-            Text {
-              id: lead
-
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(1.2)
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.state === "failed" ? "\uf00d" : "\uf023"
-              color: root.state === "failed" ? Color.urgent : Color.muted
-              font.family: Style.iconFamily
-              font.pixelSize: Style.fontSize * 1.1
-            }
-
-            TextInput {
-              id: input
-
-              anchors.left: lead.right
-              anchors.leftMargin: Style.space(0.9)
-              anchors.right: parent.right
-              anchors.rightMargin: Style.space(1.2)
-              anchors.top: parent.top
-              anchors.bottom: parent.bottom
-              verticalAlignment: TextInput.AlignVCenter
-              horizontalAlignment: TextInput.AlignLeft
-              echoMode: TextInput.Password
-              passwordCharacter: "\u25cf"
-              color: Color.foreground
-              selectionColor: Color.accent
-              selectedTextColor: Color.background
-              font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize * 1.3
-              focus: true
-              clip: true
-              // Enabled unless an attempt is really in flight: tying this to the
-              // state alone is what made the prompt untypable.
-              enabled: root.acceptingInput
-
-              Component.onCompleted: forceActiveFocus()
-
-              onTextChanged: {
-                root.password = text
-                if (root.state === "failed") {
-                  root.state = "locked"
-                  root.message = ""
-                }
-              }
-
-              Keys.onPressed: event => {
-                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                  root.authenticate()
-                  event.accepted = true
-                } else if (event.key === Qt.Key_Escape) {
-                  input.text = ""
-                  root.password = ""
-                  event.accepted = true
-                }
-              }
-            }
-
-            Text {
-              anchors.left: lead.right
-              anchors.leftMargin: Style.space(0.9)
-              anchors.verticalCenter: parent.verticalCenter
-              visible: input.text === ""
-              text: (root.state === "authenticating" || pam.active) ? I18n.t("lock.checking") : I18n.t("lock.password")
-              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.45)
-              font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize * 1.15
-            }
-          }
-
-          // Fixed height so a failure message does not move the field.
-          Item {
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: content.width - Style.space(4)
-            height: Style.space(3.5)
-
-            Text {
-              anchors.centerIn: parent
-              width: parent.width
-              horizontalAlignment: Text.AlignHCenter
-              text: root.message === "Authentication failed" ? I18n.t("lock.rejected")
-                : root.message === "Too many attempts" ? I18n.t("lock.tooMany") : root.message
-              color: root.state === "failed" ? Color.urgent : Color.muted
-              font.family: Style.fontFamily
-              font.pixelSize: Style.fontSize + 2
-              elide: Text.ElideRight
-            }
-          }
-
-          Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: I18n.t("lock.hint")
-            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.60)
-            font.family: Style.fontFamily
-            font.pixelSize: Style.fontSize
-            font.letterSpacing: 1
-          }
+          onSubmitted: value => { root.password = value; root.authenticate() }
         }
 
         }
@@ -578,9 +378,33 @@ Item {
     }
   }
 
+  function lockAppearance() {
+    return {
+      background: String(Color.background), foreground: String(Color.foreground),
+      accent: String(Color.accent), urgent: String(Color.urgent), muted: String(Color.muted),
+      fontFamily: Style.fontFamily, iconFamily: Style.iconFamily,
+      fontSize: Style.fontSize, gap: Style.gap, radius: Style.radius,
+      language: I18n.language, backgroundSource: backgroundSource,
+      blur: blurAmount, scrim: scrimAmount,
+      labels: { authRequired: I18n.t("lock.authRequired"), password: I18n.t("lock.password"),
+        checking: I18n.t("lock.checking"), rejected: I18n.t("lock.rejected"),
+        tooMany: I18n.t("lock.tooMany"), hint: I18n.t("lock.hint"), dateFormat: I18n.t("lock.dateFormat") }
+    }
+  }
+
+  // A screenshot may finish after the secure surface has already been mapped.
+  // Update its appearance without delaying protection or recreating the lock.
+  onShotRevisionChanged: {
+    if (nativeOwned && locked) {
+      const provider = scope === "human" ? humanProvider : fullProvider
+      if (provider.running) provider.write("appearance " + JSON.stringify(lockAppearance()) + "\n")
+    }
+  }
+
   function startHumanProvider() {
     let args = [prefix + "/bin/cornice-human-lock", "--pam-service", pamService,
-      "--pam-directory", pamDirectory === "" ? "/etc/pam.d" : pamDirectory, "--scope", scope]
+      "--pam-directory", pamDirectory === "" ? "/etc/pam.d" : pamDirectory, "--scope", scope,
+      "--appearance", JSON.stringify(lockAppearance())]
     if (allowEmergency) args.push("--allow-emergency")
     if (!showUser) args.push("--hide-user")
     providerUnlockReceived = false
