@@ -198,8 +198,7 @@ def arm(args):
         atomic(profile, remove_block(contents) + hook)
         profile.chmod(mode)
         # Durable, one-use ticket. Login consumes it before launching any candidate code.
-        atomic(STATE / "pending.json", {"release": str(release), "seconds": args.seconds,
-                                        "startupSeconds": args.startup_seconds, "armedAt": time.time()})
+        atomic(STATE / "pending.json", {"release": str(release), "startupSeconds": args.startup_seconds, "armedAt": time.time()})
         print("Armed for ONE SDDM Hyprland login. Current session unchanged.")
 
 
@@ -394,14 +393,15 @@ class Trial:
                 time.sleep(.2)
         else:
             raise RuntimeError("Cornice/Agent desktops failed startup health checks")
-        self.update("ready", confirmSeconds=self.ticket["seconds"])
+        self.update("ready", confirmationRequired=False, healthFailures=0, lastHealthyAt=time.time())
         # These are the user's real autostart commands, only after the desktop is ready.
         for index, command in enumerate(read(self.release / "autostart.json")):
             self.start(["/bin/sh", "-c", command], "autostart-" + str(index))
-        notice = (f"试运行桌面：请在 {self.ticket['seconds']} 秒内按 Super+Ctrl+Alt+Enter 确认。"
+        notice = ("试运行桌面：启动检查已通过，后台持续检查；无需确认，不会因超时退出。"
                   "有问题按 Super+Ctrl+Alt+Backspace 回退。下一次登录始终使用稳定版。")
         self.start(["notify-send", "Cornice 试运行", notice, "--expire-time=0"], "notice")
-        deadline = time.monotonic() + self.ticket["seconds"]
+        # Healthy sessions have no confirmation deadline, including legacy tickets
+        # containing a seconds field. Only detected failures or rollback end them.
         failures = 0
         while True:
             self.check_request()
@@ -410,13 +410,14 @@ class Trial:
                 return
             if (self.directory / "confirm").exists() and self.info["status"] != "confirmed":
                 self.update("confirmed")
-            if self.info["status"] != "confirmed" and time.monotonic() >= deadline:
-                raise RuntimeError("Confirmation deadline expired")
             try:
                 self.health()
+                if failures or time.time() - self.info["lastHealthyAt"] >= 5:
+                    self.update(self.info["status"], healthFailures=0, lastHealthError=None, lastHealthyAt=time.time())
                 failures = 0
             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
                 failures += 1
+                self.update(self.info["status"], healthFailures=failures, lastHealthError=str(error))
                 if failures >= 3:
                     raise RuntimeError("Desktop health failed three times: " + str(error)) from error
             time.sleep(.5)
@@ -519,12 +520,12 @@ def main():
     preparation.add_argument("--config", required=True)
     preparation.add_argument("--autostart")
     arming = sub.add_parser("arm", help="Enable exactly one future SDDM Hyprland login")
-    arming.add_argument("--seconds", type=int, default=180)
+    arming.add_argument("--seconds", type=int, help="Deprecated and ignored: healthy sessions have no confirmation deadline")
     arming.add_argument("--startup-seconds", type=int, default=60)
     sub.add_parser("status")
     sub.add_parser("cancel", help="Cancel the next login ticket; does not terminate any desktop")
     sub.add_parser("remove-hook", help="Cancel and remove only the managed login snippet, keeping other edits")
-    sub.add_parser("confirm", help="Keep this trial running until logout; health watchdog remains active")
+    sub.add_parser("confirm", help="Optional acknowledgement only; healthy sessions already stay running")
     sub.add_parser("rollback", help="End only the running trial; next login uses the stable version")
     sub.add_parser("login", help=argparse.SUPPRESS)
     detector = sub.add_parser("is-login", help=argparse.SUPPRESS)
@@ -533,8 +534,8 @@ def main():
     if args.action == "prepare":
         prepare(args)
     elif args.action == "arm":
-        if not 5 <= args.seconds <= 3600 or not 5 <= args.startup_seconds <= 300:
-            raise RuntimeError("Confirmation must be 5..3600 seconds; startup 5..300 seconds")
+        if not 5 <= args.startup_seconds <= 300:
+            raise RuntimeError("Startup must be 5..300 seconds")
         arm(args)
     elif args.action == "is-login":
         return 0 if login_matches(args.pid) else 1

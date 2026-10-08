@@ -131,14 +131,32 @@ hl.define_submap("trial-test", function() hl.bind("escape", hl.dsp.submap("reset
     record("after rollback, the next SDDM login uses the unchanged normal entry without a loop")
     trial("arm", "--seconds", "5", "--startup-seconds", "30")
     process = login_session(); ready(process)
-    ended(process, "Confirmation deadline expired")
-    record("unconfirmed real desktop automatically rolls back and logs out at its deadline")
+    assert status()["current"]["confirmationRequired"] is False
+    # The obsolete five-second option must not reintroduce a deadline. Continue
+    # exercising the actual compositor after that former deadline has elapsed.
+    until = time.monotonic() + 8
+    while time.monotonic() < until:
+        current = status()
+        assert current["running"] and current["current"]["status"] == "ready", current
+        assert current["current"]["healthFailures"] == 0, current
+        assert human_state() == BASELINE and SENTINEL.poll() is None
+        time.sleep(.5)
+    trial("rollback"); ended(process, "Manual rollback")
+    record("healthy unconfirmed desktop stays running beyond obsolete --seconds deadline; manual rollback remains available")
     trial("arm", "--seconds", "60", "--startup-seconds", "30")
     process = login_session(); info = ready(process)
-    trial("confirm")
+    # One transient failure must be visible and recover without logging out.
+    os.kill(info["shellPid"], signal.SIGSTOP)
+    try:
+        wait(lambda: status()["current"].get("healthFailures") == 1, 10)
+    finally:
+        os.kill(info["shellPid"], signal.SIGCONT)
+    wait(lambda: status()["current"].get("healthFailures") == 0, 10)
+    assert status()["running"] and status()["current"]["status"] == "ready"
+    record("transient Cornice unresponsiveness is reported then clears without logout")
     os.kill(info["shellPid"], signal.SIGKILL)
     ended(process, "health failed")
-    record("Cornice crash after confirmation is detected and automatically logs out to stable selection")
+    record("Cornice crash without confirmation is detected and automatically logs out to stable selection")
     trial("arm", "--seconds", "60", "--startup-seconds", "30")
     process = login_session(); info = ready(process)
     os.kill(info["compositorPid"], signal.SIGSTOP)
