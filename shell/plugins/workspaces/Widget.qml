@@ -24,21 +24,13 @@ Item {
   readonly property var focusedId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 1
 
   readonly property var slots: {
-    const list = workspaces || []
-    const focused = focusedId
-    let highest = Math.max(minCount, focused)
-    for (const workspace of list) if (workspace.id > highest) highest = workspace.id
-
     const out = []
-    for (let id = 1; id <= highest; id++) {
-      let occupied = false
-      for (const workspace of list) if (workspace.id === id) occupied = true
-      out.push({
-        id: id,
-        label: String(id),
-        occupied: occupied,
-        active: id === focused
-      })
+    for (let id = 1; id <= 10; ++id) {
+      const scoped = DesktopSession.selected !== ""
+      const name = "cornice-agent-" + DesktopSession.selected + "-ws-" + id
+      const current = (workspaces || []).find(ws => scoped ? ws.name === name : ws.id === id)
+      out.push({id: id, label: String(id), occupied: !!current && current.windows > 0,
+        active: scoped ? DesktopSession.state.workspaceName === name : id === focusedId})
     }
     return out
   }
@@ -125,10 +117,10 @@ Item {
           hoverEnabled: true
           onEntered: slot.hovered = true
           onExited: slot.hovered = false
-          onClicked: CompositorAdapter.workspace(slot.modelData.id)
+          onClicked: DesktopSession.workspace(slot.modelData.id)
           onWheel: wheel => {
             const target = slot.modelData.id + (wheel.angleDelta.y > 0 ? -1 : 1)
-            if (target >= 1) Hyprland.dispatch("workspace " + target)
+            if (target >= 1 && target <= 10) DesktopSession.workspace(target)
           }
         }
       }

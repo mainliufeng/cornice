@@ -322,7 +322,7 @@ FloatingWindow {
     wait(lambda: all(d["paused"] == (d["name"] != "agent1") for d in json.loads(shell("ipc", "desktop", "status"))["desktops"]))
     for desired in (True, False):
         control = next(row for row in json.loads(shell("ipc", "desktopPanel", "controls")) if row["name"] == "agent1")
-        layers = ctl("layers", True)["human"]["levels"]["3"]
+        layers = ctl("layers", True)["human"]["levels"]["2"]
         layer = next(item for item in layers if item["namespace"] == "cornice-panel")
         for event in (f"motion {int(layer['x'] + control['x'] + control['width']/2)} {int(layer['y'] + control['y'] + control['height']/2)}", "button 272 1", "button 272 0"):
             human_input.stdin.write(event + "\n"); human_input.stdin.flush()

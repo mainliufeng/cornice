@@ -2,6 +2,7 @@
 #include <QBuffer>
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -13,7 +14,9 @@
 #include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QUuid>
+#include <signal.h>
 #include <stdexcept>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -68,7 +71,7 @@ Broker::Broker(QString instance)
     const auto caps = json(compositor("seat capabilities", true)).object();
     const auto features = caps["features"].toArray();
     for (const QString name : {"seat-input", "seat-identity", "atomic-snapshot", "readonly-workspace", "argb-frame",
-                               "input-pause", "composed-seat-input"})
+                               "input-pause", "composed-seat-input", "seat-shell-v1"})
         if (!features.contains(name))
             fail("Required compositor capability missing: " + name);
     if (caps["protocol"].toInt() != 1)
@@ -90,8 +93,9 @@ Broker::Broker(QString instance)
                                                      {}});
                 if (it.value().isObject())
                     m_desktops.at(it.key()).privateOutput = it.value().toObject()["privateOutput"].toString();
-                pause(it.key()); // Crash recovery revokes survivors; no automatic write
-                                 // restoration.
+                // Recovery revokes survivors; never restore input automatically.
+                pause(it.key());
+                startShell(it.key());
             } catch (...) {
             }
         }
@@ -111,6 +115,7 @@ Broker::Broker(QString instance)
         bool invalidateFrames = false;
         for (auto &[name, desktop] : m_desktops) {
             try {
+                startShell(name);
                 const auto actual = state(name);
                 if (!actual["available"].toBool())
                     invalidateFrames = true;
@@ -191,7 +196,51 @@ QJsonObject Broker::state(const QString &name) {
     const bool human = m_humanOwner && m_humanBinding.name == name;
     result["controlMode"] = human ? "human" : result["paused"].toBool() ? "paused" : "agent";
     result["agentPaused"] = human || result["paused"].toBool();
+    QJsonArray workspaceSlots;
+    const auto workspace = result["workspace"].toString().remove("name:");
+    for (int i = 1; i <= 10; ++i) {
+        const auto value = "cornice-agent-" + name + "-ws-" + QString::number(i);
+        workspaceSlots.append(QJsonObject{{"id", i}, {"name", "name:" + value}, {"active", workspace == value}});
+    }
+    result["workspaceName"] = workspace;
+    result["workspaceSlots"] = workspaceSlots;
     return result;
+}
+void Broker::startShell(const QString &name) {
+    auto &desktop = m_desktops.at(name);
+    if (QDateTime::currentMSecsSinceEpoch() < desktop.shellRestartAt || desktop.privateOutput.isEmpty() ||
+        (desktop.shell && desktop.shell->state() != QProcess::NotRunning))
+        return;
+    const auto prefix = qEnvironmentVariable("CORNICE_PATH");
+    if (prefix.isEmpty() || !QFileInfo::exists(prefix + "/shell/shell.qml"))
+        return;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.remove("WAYLAND_SOCKET");
+    environment.remove("DISPLAY");
+    environment.insert("WAYLAND_DISPLAY", state(name)["display"].toString());
+    environment.insert("CORNICE_DESKTOP_NAME", name);
+    environment.insert("CORNICE_DESKTOP_OUTPUT", desktop.privateOutput);
+    environment.insert(
+        "CORNICE_SHELL_SOCKET",
+        qEnvironmentVariable("XDG_RUNTIME_DIR") + "/cs-" +
+            QString::fromLatin1(
+                QCryptographicHash::hash(m_instance.toUtf8(), QCryptographicHash::Sha256).toHex().left(8)) +
+            "-" + name + ".sock");
+    environment.insert("QS_DISABLE_FILE_WATCHER", "1");
+    desktop.shellRestartAt = QDateTime::currentMSecsSinceEpoch() + 5000;
+    desktop.shell = std::make_unique<QProcess>();
+    const auto parentPid = getpid();
+    desktop.shell->setChildProcessModifier([parentPid] {
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
+        if (getppid() != parentPid)
+            _exit(1);
+    });
+    desktop.shell->setProcessEnvironment(environment);
+    desktop.shell->setProgram(prefix + "/bin/cornice-qs");
+    desktop.shell->setArguments({"-p", prefix + "/shell"});
+    desktop.shell->setStandardOutputFile(m_directory + "/shell-" + name + ".log", QIODevice::Append);
+    desktop.shell->setStandardErrorFile(m_directory + "/shell-" + name + ".log", QIODevice::Append);
+    desktop.shell->start();
 }
 Broker::Desktop &Broker::managed(const QString &name) {
     auto it = m_desktops.find(name);
@@ -453,7 +502,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     if (method == "create") {
         if (m_desktops.contains(name))
             fail("Desktop already managed");
-        const auto workspace = params["workspace"].toString("name:cornice-agent-" + name);
+        const auto workspace = params["workspace"].toString("name:cornice-agent-" + name + "-ws-1");
         atom(workspace);
         auto output = params["output"].toString();
         const auto geometry = params["virtual-output"].toString(output.isEmpty() ? "1920x1080" : "");
@@ -500,6 +549,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                                 true));
             }
             save();
+            startShell(name);
         } catch (...) {
             compositor("seat remove " + name);
             m_desktops.erase(name);
@@ -510,6 +560,32 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         return state(name);
     }
     auto &desktop = managed(name);
+    if (method == "stop-job") {
+        const auto current = state(name);
+        if (current["seatId"] == params["seatId"] && current["generation"] == params["generation"] &&
+            current["controlMode"].toString() == "agent")
+            pause(name);
+        return state(name);
+    }
+    if (method == "view-focus") {
+        const auto address = params["address"].toString();
+        if (!QRegularExpression("^0x[0-9a-fA-F]+$").match(address).hasMatch())
+            fail("Invalid window address");
+        const auto reply = compositor("seat focus " + name + " address:" + address);
+        if (reply != "ok")
+            fail(QString::fromUtf8(reply));
+        return state(name);
+    }
+    if (method == "view-workspace") {
+        const auto slot = params["slot"].toInt();
+        if (slot < 1 || slot > 10 || state(name)["humanLocked"].toBool())
+            fail("Expected workspace 1–10 in unlocked session");
+        const auto reply =
+            compositor("seat view-workspace " + name + " name:cornice-agent-" + name + "-ws-" + QString::number(slot));
+        if (reply != "ok")
+            fail(QString::fromUtf8(reply));
+        return state(name);
+    }
     if (method == "state" || method == "desktop.state")
         return state(name);
     if (method == "pause") {
@@ -668,7 +744,8 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             environment.remove("DISPLAY");
             environment.insert("WAYLAND_DISPLAY", actual["display"].toString());
             environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
-            const auto profile = m_directory + "/profiles/" + name + "/" + desktop.id;
+            const auto profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
+                                 "/cornice/desktops/" + name + "/chrome";
             QDir().mkpath(profile);
             desktop.browser = std::make_unique<BrowserSession>(
                 params["executable"].toString(QStandardPaths::findExecutable("google-chrome-stable").isEmpty()
@@ -679,7 +756,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                 environment, m_directory + "/browser-" + name + ".log", [this, name](const QString &token) {
                     if (!m_bindings.contains(token))
                         return false;
-                    const auto& credential = m_bindings[token];
+                    const auto &credential = m_bindings[token];
                     if (credential.name != name)
                         return false;
                     const auto current = state(name);
@@ -724,7 +801,8 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                     arg.startsWith("--profile="))
                     fail("Browser profile is managed per desktop; omit profile overrides");
             }
-            const auto profile = m_directory + "/profiles/" + name + "/" + desktop.id;
+            const auto profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
+                                 "/cornice/desktops/" + name + "/chrome";
             QDir().mkpath(profile);
             if (chromium)
                 args.insert(1, "--user-data-dir=" + profile);

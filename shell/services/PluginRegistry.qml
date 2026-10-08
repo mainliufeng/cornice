@@ -41,7 +41,7 @@ Item {
   }
 
   function services() {
-    return forKind("service")
+    return forKind("service").filter(plugin => !DesktopSession.agentShell || ["cn.lock", "cn.idle", "cn.notifications", "cn.polkit"].indexOf(plugin.id) === -1)
   }
 
   // Panels/overlays/menus that ask to stay mounted between summons.

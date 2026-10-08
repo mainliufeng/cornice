@@ -12,6 +12,7 @@ Item {
   readonly property string error: view.error
   readonly property bool humanControl: view.humanControl
   signal returned()
+  signal promptRequested()
   function takeControl(enabled) { view.takeControl(enabled) }
   function fit(width, height, scale) { view.fit(width, height, scale) }
   WorkspaceView {
@@ -20,6 +21,13 @@ Item {
     desktop: root.desktop; workspace: root.workspace
     active: root.visible && root.service && root.service.available
     Keys.onPressed: event => {
+      if ((event.modifiers & Qt.MetaModifier) && event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
+        DesktopSession.workspace(event.key === Qt.Key_0 ? 10 : event.key - Qt.Key_0)
+        event.accepted = true; return
+      }
+      if (event.key === Qt.Key_A && (event.modifiers & Qt.MetaModifier)) {
+        root.promptRequested(); event.accepted = true; return
+      }
       if (event.key === Qt.Key_Escape && !view.humanControl) {
         root.returned(); event.accepted = true
       }

@@ -35,6 +35,9 @@ Item {
     if (service) service.selectedDesktop = ""
     dismissed()
   }
+  function takeControl(enabled) { if (frame.item) frame.item.takeControl(enabled) }
+  onServiceChanged: if (service && !DesktopSession.agentShell) service.observer = root
+  Component.onCompleted: if (service && !DesktopSession.agentShell) service.observer = root
   function fit() {
     if (!frame.item || !window.screen || humanControl || selectedWorkspace !== "current") return
     const scale = window.screen.devicePixelRatio
@@ -48,33 +51,11 @@ Item {
     anchors { top: true; bottom: true; left: true; right: true }
     exclusionMode: ExclusionMode.Ignore
     focusable: true
-    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.namespace: "cornice-desktop"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
-    Rectangle {
-      id: toolbar; anchors { left: parent.left; right: parent.right; top: parent.top }
-      height: Style.space(7.5); color: Color.panel
-      DesktopSwitcher { id: switches; anchors.left: parent.left; anchors.leftMargin: Style.space(1); anchors.verticalCenter: parent.verticalCenter; compact: false; service: root.service }
-      Row {
-        anchors.right: parent.right; anchors.rightMargin: Style.space(1); anchors.verticalCenter: parent.verticalCenter; spacing: Style.space(1)
-        Text {
-          text: root.humanControl ? "你正在操作 · Ctrl+Alt+Esc 结束" : "只看 · " + (root.service ? root.service.stateLabel(root.desktopState) : "连接中")
-          color: root.humanControl ? Color.accent : Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize; anchors.verticalCenter: parent.verticalCenter
-        }
-        PanelButton {
-          id: run; label: root.desktopState.agentPaused !== false ? "运行 Agent" : "暂停 Agent"
-          enabled: !!root.service && !root.service.busy && !root.humanControl && !!root.desktopState.available
-          onClicked: root.service.operate([root.desktopState.agentPaused !== false ? "resume" : "pause", root.desktopName])
-        }
-        PanelButton {
-          id: takeover; label: root.humanControl ? "结束接管" : "接管"; filled: root.humanControl
-          enabled: !!frame.item && !!frame.item.metadata.frameId && root.selectedWorkspace === "current" && !!root.desktopState.available
-          onClicked: frame.item.takeControl(!root.humanControl)
-        }
-      }
-    }
     Loader {
-      id: frame; anchors { top: toolbar.bottom; bottom: parent.bottom; left: parent.left; right: parent.right }
+      id: frame; anchors { top: parent.top; bottom: parent.bottom; left: parent.left; right: parent.right }
       active: root.isOpen && root.service && root.service.available
       source: active ? "NativeView.qml" : ""
       onLoaded: { item.service = root.service; item.desktop = root.desktopName; item.workspace = root.selectedWorkspace; fitTimer.restart() }
@@ -82,6 +63,7 @@ Item {
     Connections {
       target: frame.item
       function onReturned() { root.close() }
+      function onPromptRequested() { if (root.service) root.service.prompt(root.desktopName) }
     }
     Text {
       anchors.centerIn: parent
@@ -99,13 +81,14 @@ Item {
     target: "desktopObserver"
     function status(): string { return JSON.stringify({open: root.isOpen, fullscreen: true, name: root.desktopName, workspace: root.selectedWorkspace, readonly: !root.humanControl, humanControl: root.humanControl, paintedFrames: frame.item ? frame.item.paintedFrames : 0, lastPaintMs: frame.item ? frame.item.lastPaintMs : 0, frame: frame.item ? frame.item.metadata : ({}), error: frame.item ? frame.item.error : ""}) }
     function controls(): string {
-      const rows = switches.controls().map(item => Object.assign({}, item, {x: item.x + switches.x, y: switches.y}))
-      for (const [name, item] of [["takeover", takeover], ["run", run]]) {
-        const point = item.mapToItem(window.contentItem, 0, 0)
-        rows.push({name: name, x: point.x, y: point.y, width: item.width, height: item.height, enabled: item.enabled, label: item.label})
-      }
-      return JSON.stringify(rows)
+      const reply = IpcRegistry.dispatch("bar", "geometry", [])
+      if (!reply.ok) return "[]"
+      const widgets = JSON.parse(reply.result)
+      const out = []
+      for (const widget of widgets) if (widget.id === "cn.agent-desktop") out.push(...widget.controls || [])
+      return JSON.stringify(out)
     }
+    function takeover(enabled: string): string { root.takeControl(enabled === "true"); return "requested" }
     function browse(workspace: string): string { if (root.humanControl) return "end-takeover-first"; root.selectedWorkspace = workspace; return "ok" }
     function follow(): string { root.selectedWorkspace = "current"; return "ok" }
   }

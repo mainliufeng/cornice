@@ -89,13 +89,19 @@ def record(name):
     print("PASS", name, flush=True)
 
 def rpc(connection, method, params):
-    connection.sendall((json.dumps({"id": str(time.monotonic_ns()), "method": method, "params": params}) + "\n").encode())
+    identity = str(time.monotonic_ns())
+    connection.sendall((json.dumps({"id": identity, "method": method, "params": params}) + "\n").encode())
     data = b""
-    while b"\n" not in data:
-        data += connection.recv(65536)
-    reply = json.loads(data)
-    assert reply["ok"], reply
-    return reply["result"]
+    while True:
+        while b"\n" not in data:
+            chunk = connection.recv(65536)
+            if not chunk: raise RuntimeError("Desktop socket closed")
+            data += chunk
+        line, data = data.split(b"\n", 1)
+        reply = json.loads(line)
+        if reply.get("id") != identity: continue
+        assert reply["ok"], reply
+        return reply["result"]
 
 def shell(*args):
     return subprocess.check_output([str(PRODUCT / "bin/cornice"), *map(str, args)], env=ENV, text=True, timeout=8, stderr=subprocess.PIPE).strip()

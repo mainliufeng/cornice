@@ -103,10 +103,15 @@ int main(int argc, char **argv) {
             if (command == "create") {
                 while (!args.isEmpty()) {
                     const auto flag = take(args);
-                    if (flag != "--workspace" && flag != "--output" && flag != "--virtual-output" && flag != "--human-lock-policy")
+                    if (flag != "--workspace" && flag != "--output" && flag != "--virtual-output" &&
+                        flag != "--human-lock-policy")
                         throw std::runtime_error("Expected --workspace or --output");
                     params[flag.mid(2)] = take(args);
                 }
+            } else if (command == "view-focus") {
+                params["address"] = take(args);
+            } else if (command == "view-workspace") {
+                params["slot"] = take(args).toInt();
             } else if (command == "lock-policy") {
                 params["policy"] = take(args);
             } else if (command == "launch") {

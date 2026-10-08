@@ -17,22 +17,26 @@ def click(x, y):
 
 
 def control(name):
+    menus = json.loads(shell('ipc','desktopObserver','controls'))
+    icon = next(item for item in menus if item['name'] == ('status' if name in ('run','takeover','prompt','cancel') else 'switch'))
+    send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']/2)}")
     def ready():
-        row = next(item for item in json.loads(shell('ipc', 'desktopObserver', 'controls')) if item['name'] == name)
-        if not row.get('enabled', True): return None
+        row = next((item for item in json.loads(shell('ipc', 'desktopObserver', 'controls')) if item['name'] == name), None)
+        if not row or not row.get('enabled', True): return None
         if name == 'run':
             expected = '运行 Agent' if cli('state', status()['name'])['paused'] else '暂停 Agent'
             if row['label'] != expected: return None
         return row
     row = wait(ready)
+    wait(lambda: any(item['namespace'] == 'cornice-desktop-menu' for item in ctl('layers',True)['human']['levels']['3']))
+    time.sleep(.1)
     click(row['x'] + row['width'] / 2, row['y'] + row['height'] / 2)
-
 
 def entry(name, field="entry"):
     state = cli('state', name)
     client = next(c for c in ctl('clients', True) if c['title'] == name + '-window')
     geometry = json.loads((BASE / (name + '.geometry')).read_text())[field]
-    layer = next(item for item in ctl('layers', True)['human']['levels']['3'] if item['namespace'] == 'cornice-desktop')
+    layer = next(item for item in ctl('layers', True)['human']['levels']['2'] if item['namespace'] == 'cornice-desktop')
     # Private output has exactly the view's physical size and output scale.
     logical = state['logicalSize']
     toolbar = layer['h'] - logical[1]
@@ -94,14 +98,21 @@ try:
     wait(lambda: json.loads(shell('ipc', 'desktop', 'status'))['available'])
     # Use the actual bar button, then the fullscreen toolbar for every switch.
     layer = wait(lambda: next((item for item in ctl('layers', True)['human']['levels']['2'] if item['namespace'] == 'cornice-bar'), None))
-    # This fixed test theme places the agent1 button after the human button.
-    # Click it inside the actual widget rectangle, without an observe RPC.
     widget = next(item for item in json.loads(shell('ipc', 'bar', 'geometry')) if item['id'] == 'cn.agent-desktop')
-    click(widget['x'] + 85, widget['y'] + widget['height'] / 2)
+    icon = next(item for item in widget['controls'] if item['name'] == 'switch')
+    send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']/2)}")
+    def bar_agent():
+        widget = next(item for item in json.loads(shell('ipc','bar','geometry')) if item['id'] == 'cn.agent-desktop')
+        return next((item for item in widget['controls'] if item['name'] == 'agent1'),None)
+    row = wait(bar_agent)
+    wait(lambda: any(item['namespace'] == 'cornice-desktop-menu' for item in ctl('layers',True)['human']['levels']['3']))
+    time.sleep(.15)
+    subprocess.run(['grim','-o','human',str(BASE/'hover-menu.png')],env=ENV,check=True)
+    click(row['x']+row['width']/2,row['y']+row['height']/2)
     wait(lambda: status()['open'] and status()['name'] == 'agent1')
     view = wait(lambda: status() if status()['frame'].get('scale') == 2 else None)
     ok('dismissnotify -1')
-    layer = next(item for item in ctl('layers', True)['human']['levels']['3'] if item['namespace'] == 'cornice-desktop')
+    layer = next(item for item in ctl('layers', True)['human']['levels']['2'] if item['namespace'] == 'cornice-desktop')
     assert [layer[k] for k in ('x', 'y', 'w', 'h')] == [0, 0, 1280, 800], layer
     assert view['readonly'] and view['fullscreen'] and view['frame']['pixelSize'][0] == 2560
     assert cli('state', 'agent3') == agent3
@@ -142,7 +153,7 @@ try:
     state = cli('state', 'agent1')
     client = next(c for c in ctl('clients', True) if c['title'] == 'agent1-window')
     geometry = json.loads((BASE / 'agent1.geometry').read_text())['entry']
-    y = 60 + client['at'][1] - state['position'][1] + geometry[1] + geometry[3] / 2
+    y = client['at'][1] - state['position'][1] + geometry[1] + geometry[3] / 2
     x = client['at'][0] - state['position'][0] + geometry[0]
     for event in (f'motion {round(x + 10)} {round(y)}', 'button 272 1', f'motion {round(x + 300)} {round(y)}', 'button 272 0'):
         send(event)
@@ -200,7 +211,16 @@ try:
     assert cli('state', 'agent3') == agent3
     record('human button returns to the original human window/workspace; another running Agent remains unchanged')
     widget = next(item for item in json.loads(shell('ipc', 'bar', 'geometry')) if item['id'] == 'cn.agent-desktop')
-    click(widget['x'] + 85, widget['y'] + widget['height'] / 2)
+    icon = next(item for item in widget['controls'] if item['name'] == 'switch')
+    send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']/2)}")
+    def bar_agent():
+        widget = next(item for item in json.loads(shell('ipc','bar','geometry')) if item['id'] == 'cn.agent-desktop')
+        return next((item for item in widget['controls'] if item['name'] == 'agent1'),None)
+    row = wait(bar_agent)
+    wait(lambda: any(item['namespace'] == 'cornice-desktop-menu' for item in ctl('layers',True)['human']['levels']['3']))
+    time.sleep(.15)
+    subprocess.run(['grim','-o','human',str(BASE/'hover-menu.png')],env=ENV,check=True)
+    click(row['x']+row['width']/2,row['y']+row['height']/2)
     wait(lambda: status()['open'] and status()['frame'].get('frameId'))
     send('key 1 1'); send('key 1 0'); wait(lambda: not status()['open'])
     record('Escape returns from read-only view without sending Escape to the Agent application')

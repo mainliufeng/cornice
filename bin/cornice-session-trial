@@ -110,6 +110,7 @@ def prepare(args):
             native_bin.mkdir(parents=True)
             for name in ("cornice-desktop-runtime", "cornice-human-lock", "cornice-session-guard"):
                 shutil.copy2(build / name, native_bin / name)
+            shutil.copytree(source / "native/agent", product / "native/agent")
             module = product / "native/qml/Cornice/Desktop"
             shutil.copytree(build / "qml/Cornice/Desktop", module)
             shutil.copy2(build / "libcornice_desktop_qml.so", module / "libcornice_desktop_qml.so")
@@ -286,7 +287,7 @@ class Trial:
         self.directory.mkdir(parents=True, mode=0o700)
         self.children = []
         self.sockets = []
-        self.seat_names = ["agent" + str(index + 1) + "-" + uuid.uuid4().hex[:8] for index in range(3)]
+        self.seat_names = ["agent" + str(index + 1) for index in range(3)]
         self.environment = os.environ.copy()
         for key in ("HYPRLAND_INSTANCE_SIGNATURE", "DISPLAY", "WAYLAND_SOCKET", "CORNICE_LAUNCH_LOCKED"):
             self.environment.pop(key, None)
@@ -340,6 +341,12 @@ class Trial:
         desktops = json.loads(self.command("desktop", "list"))["desktops"]
         if {d["name"] for d in desktops} != set(self.seat_names):
             raise RuntimeError("Agent desktops are missing")
+        for desktop in desktops:
+            if len(desktop.get("workspaceSlots", [])) != 10:
+                raise RuntimeError("Agent workspace slots are missing")
+            if not any(layer.get("namespace") == "cornice-bar"
+                       for level in layers.get(desktop["output"], {}).get("levels", {}).values() for layer in level):
+                raise RuntimeError("Agent Cornice bar is missing: " + desktop["name"])
 
     def execute(self):
         self.update("starting")

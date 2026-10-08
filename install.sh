@@ -139,6 +139,8 @@ if ((copy)); then
   for dir in bin shell i18n themes wallpapers config docs; do
     [[ -d $repo/$dir ]] && cp -r "$repo/$dir" "$staging/"
   done
+  mkdir -p "$staging/native"
+  cp -r "$repo/native/agent" "$staging/native/"
   if ((desktop)); then cmake --install "$repo/native/build" --prefix "$staging"; fi
   find "$staging" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
   chmod +x "$staging"/bin/* 2>/dev/null || true

@@ -1,20 +1,27 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import qs.Commons
+import "."
 
 Item {
   id: root
   property var host: null
   property var plugin: null
   readonly property var options: host && host.config ? host.config.agentDesktop || ({}) : ({})
-  readonly property bool enabled: options.enabled === true
+  readonly property bool enabled: DesktopSession.agentShell || options.enabled === true
   readonly property string prefix: Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
   readonly property string instance: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || ""
   readonly property string socketPath: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/cornice/" + instance + "/desktop.sock"
-  property string selectedDesktop: ""
+  property string selectedDesktop: DesktopSession.name
+  property var observer: null
+  Component.onCompleted: DesktopSession.service = root
   function show(name) {
     if (!host) return "unavailable"
+    if (DesktopSession.agentShell) {
+      Quickshell.execDetached([prefix + "/bin/cornice-agent-view", name]); return "requested"
+    }
     host.hide("cn.agent-desktop")
     if (!name) return host.hide("cn.desktop-observer")
     if (!available || !desktops.some(item => item.name === name)) return "desktop-unavailable"
@@ -26,6 +33,26 @@ Item {
   }
   function stateLabel(desktop) {
     return desktop.error || !desktop.available ? "不可用" : desktop.controlMode === "human" ? "接管中" : desktop.paused ? "已暂停" : "运行中"
+  }
+  property var tasks: ({})
+  property var modelConfig: ({})
+  function prompt(name) { taskPrompt.open(name) }
+  function cancelTask(name) { Quickshell.execDetached([prefix + "/bin/cornice-agent-runtime", "cancel", name]) }
+  DesktopTaskPrompt {id:taskPrompt;service:root}
+  Process {
+    id: modelStatus; command:[root.prefix + "/bin/cornice-agent-runtime", "config-status"];running:root.enabled
+    stdout:StdioCollector {onStreamFinished: {try {root.modelConfig = JSON.parse(text)} catch(e) {}}}
+  }
+  Timer {interval:1000;repeat:true;running:root.enabled;triggeredOnStart:true;onTriggered:if (!taskStatus.running) taskStatus.running = true}
+  Process {
+    id:taskStatus;command:[root.prefix + "/bin/cornice-agent-runtime", "status-all"]
+    stdout:StdioCollector {onStreamFinished:{try {root.tasks = JSON.parse(text)} catch(e) {}}}
+  }
+  Connections {
+    target:Hyprland
+    function onRawEvent(event) {
+      if (event.name === "seatshortcut" && event.data === DesktopSession.name + ",prompt") root.prompt(DesktopSession.name)
+    }
   }
   property bool available: false
   property var desktops: []
@@ -47,7 +74,7 @@ Item {
     action.running = true
   }
   function bootstrap() {
-    const list = options.desktops || []
+    const list = DesktopSession.agentShell ? [] : options.desktops || []
     const done = Util.shallow(bootstrapped)
     for (const desktop of list) {
       const definition = JSON.stringify(desktop)
@@ -96,8 +123,9 @@ Item {
     target: "desktop"
     function status(): string {
       return JSON.stringify({enabled: root.enabled, available: root.available, desktops: root.desktops,
-        selected: root.selectedDesktop, error: root.error, socket: root.socketPath, busy: root.busy})
+        selected: root.selectedDesktop, prompt: {open:taskPrompt.opened,name:taskPrompt.name}, tasks: root.tasks, model: root.modelConfig, error: root.error, socket: root.socketPath, busy: root.busy})
     }
+    function prompt(name: string): string { root.prompt(name); return "opened" }
     function observe(name: string): string {
       if (!root.available) return "desktop-unavailable"
       return root.show(name)

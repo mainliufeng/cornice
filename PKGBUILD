@@ -57,6 +57,8 @@ package() {
   find "$pkgdir/usr/share/cornice" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
   find "$pkgdir/usr/share/cornice" -name '*.qmlc' -delete 2>/dev/null || true
 
+  install -dm755 "$pkgdir/usr/share/cornice/native"
+  cp -r "$startdir/native/agent" "$pkgdir/usr/share/cornice/native/"
   install -dm755 "$pkgdir/usr/bin"
   local f name
   for f in "$pkgdir"/usr/share/cornice/bin/cornice*; do

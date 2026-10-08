@@ -9,19 +9,31 @@ export CORNICE_TEST_HYPRLAND=${CORNICE_TEST_HYPRLAND:-$CORNICE_TEST_HYPRLAND_SOU
 [[ -x $CORNICE_TEST_HYPRLAND ]] || { echo 'Built fork missing' >&2; exit 1; }
 suite=${1:-desktop-recovery-verify.py}
 case "$suite" in
-  desktop-switcher-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py) ;;
+  agent-model-verify.py|agent-product-verify.py|desktop-switcher-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py) ;;
   *) echo 'Unknown isolated suite' >&2; exit 2 ;;
 esac
+product_mount=()
+if [[ -n ${CORNICE_TEST_PRODUCT:-} ]]; then
+  product_mount=(--ro-bind "$CORNICE_TEST_PRODUCT" "$CORNICE_TEST_PRODUCT")
+fi
+network=()
+if [[ $suite == agent-model-verify.py ]]; then
+  # Only this explicit real-provider suite shares networking; input, DRM card,
+  # compositor, bus, PID, HOME and configuration isolation stay intact.
+  : "${CORNICE_TEST_MODEL_CONFIG:?Private real model config required}"
+  export CORNICE_AGENT_CONFIG=$CORNICE_TEST_MODEL_CONFIG
+  network=(--share-net)
+fi
 artifacts=$(mktemp -d /tmp/cornice-agent-test.XXXXXX)
 mkdir -m700 "$artifacts/home"
 echo "Isolated artifacts: $artifacts"
 # No host /dev/input, DRM card nodes, X11/Wayland sockets, systemd or system D-Bus.
 # Separate PID/network namespaces also isolate abstract sockets and cleanup.
 # Child processes cannot write to the real HOME, even through a legacy path.
-exec nice -n 15 bwrap --unshare-all --die-with-parent --new-session \
+exec nice -n 15 bwrap --unshare-all "${network[@]}" --die-with-parent --new-session \
   --ro-bind / / --dev /dev --proc /proc --tmpfs /run --tmpfs /tmp \
   --dir /dev/dri --dev-bind /dev/dri/renderD128 /dev/dri/renderD128 \
-  --bind "$artifacts" /tmp/t \
+  --bind "$artifacts" /tmp/t "${product_mount[@]}" \
   --setenv HOME /tmp/t/home --setenv TMPDIR /tmp/t \
   --setenv XDG_RUNTIME_DIR /tmp/t \
   --unsetenv LIBGL_ALWAYS_SOFTWARE --unsetenv GALLIUM_DRIVER \

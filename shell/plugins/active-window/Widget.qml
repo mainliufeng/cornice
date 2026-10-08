@@ -22,18 +22,18 @@ Item {
 
   property var snapshot: []
   property var windowOrder: []
-  readonly property int workspaceId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+  readonly property int workspaceId: DesktopSession.selected ? ((snapshot.find(window => window.workspace && (window.workspace.name === DesktopSession.state.workspaceName || window.workspace.name === "name:" + DesktopSession.state.workspaceName)) || {}).workspace || {}).id || -1 : Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
   readonly property var windows: {
     const list = snapshot.filter(window => window.workspace && window.workspace.id === workspaceId)
     list.sort((a, b) => windowOrder.indexOf(a.address) - windowOrder.indexOf(b.address))
     return list
   }
-  readonly property string focusedAddress: Hyprland.activeToplevel
+  readonly property string focusedAddress: DesktopSession.selected ? ((windows.find(window => window.title === DesktopSession.state.window) || {}).address || "") : Hyprland.activeToplevel
     ? "0x" + Hyprland.activeToplevel.address.replace(/^0x/, "")
     : ((snapshot.find(window => window.focusHistoryID === 0) || {}).address || "")
   readonly property var focusedWindow: windows.find(window => window.address === focusedAddress) || null
   readonly property string title: focusedWindow
-    ? (Hyprland.activeToplevel ? Hyprland.activeToplevel.title : focusedWindow.title) : ""
+    ? (!DesktopSession.selected && Hyprland.activeToplevel ? Hyprland.activeToplevel.title : focusedWindow.title) : ""
   // Reserve a More button before filling slots; the title uses what's left.
   readonly property real moreWidth: Math.min(slotWidth + Style.space(1), budget)
   readonly property bool needsOverflow: windows.length > maxIcons || windows.length * slotWidth > budget
@@ -82,7 +82,9 @@ Item {
     id: focusTimer
     interval: 60
     onTriggered: {
-      if (root.windows.some(window => window.address === root.pendingFocus))
+      if (DesktopSession.selected) {
+        Quickshell.execDetached([(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice") + "/bin/cornice-desktop", "view-focus", DesktopSession.selected, root.pendingFocus])
+      } else if (root.windows.some(window => window.address === root.pendingFocus))
         Quickshell.execDetached([(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice")
           + "/bin/cornice-focus-window", root.pendingFocus, String(root.workspaceId)])
       root.pendingFocus = ""

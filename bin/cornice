@@ -88,6 +88,7 @@ require_shell() {
 
 # Request framing for the shell's own socket, matching services/IpcServer.qml.
 socket_path() {
+  if [[ -n ${CORNICE_SHELL_SOCKET:-} ]]; then printf '%s\n' "$CORNICE_SHELL_SOCKET"; return; fi
   # A TTY (where the emergency unlock is used from) has no XDG_RUNTIME_DIR, so
   # fall back to the user's own runtime dir before /tmp.
   local dir="${XDG_RUNTIME_DIR:-}"
@@ -130,6 +131,7 @@ call() {
   ((status == 0)) && return 0
   ((status == 1)) && return 1
 
+  [[ -n ${CORNICE_SHELL_SOCKET:-} ]] && return "$status"
   require_shell
   timeout "$ipc_timeout" "$qs" ipc -p "$config_dir" call "$@"
 }

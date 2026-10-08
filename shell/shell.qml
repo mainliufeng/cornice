@@ -20,7 +20,7 @@ ShellRoot {
   readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"
   readonly property string userName: Quickshell.env("USER") || "user"
   // Keep this identical to the path bin/cornice computes.
-  readonly property string socketPath: runtimeDir + "/cornice-" + userName + ".sock"
+  readonly property string socketPath: Quickshell.env("CORNICE_SHELL_SOCKET") || runtimeDir + "/cornice-" + userName + ".sock"
 
   // Quickshell.env() returns null for an unset variable (not undefined), so test
   // truthiness: the old check accepted null and turned the config path into

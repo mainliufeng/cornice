@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+unset CORNICE_SHELL_SOCKET CORNICE_DESKTOP_NAME CORNICE_DESKTOP_OUTPUT
+exec "${CORNICE_PATH:?}/bin/cornice" ipc desktop observe "${1:-}"

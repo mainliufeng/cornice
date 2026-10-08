@@ -25,6 +25,8 @@ Item {
       if (typeof entry === "string") out.push({ id: entry })
       else if (entry && entry.id) out.push(entry)
     }
+    if (section === "left" && DesktopSession.agentShell && !out.some(entry => entry.id === "cn.workspaces")) out.unshift({id:"cn.workspaces"})
+    if (section === "left" && DesktopSession.agentShell && !out.some(entry => entry.id === "cn.agent-desktop")) out.push({id:"cn.agent-desktop"})
     return out
   }
 
@@ -55,7 +57,7 @@ Item {
   }
 
   Variants {
-    model: Quickshell.screens
+    model: Quickshell.screens.filter(screen => !DesktopSession.agentShell || screen.name === DesktopSession.output)
 
     delegate: PanelWindow {
       id: surface
@@ -75,49 +77,18 @@ Item {
         right: true
       }
 
-      WlrLayershell.layer: WlrLayer.Top
+      WlrLayershell.layer: !DesktopSession.agentShell && DesktopSession.service && DesktopSession.service.observer && DesktopSession.service.observer.isOpen ? WlrLayer.Overlay : WlrLayer.Top
       WlrLayershell.namespace: "cornice-bar"
 
       // Nothing on the bar takes keyboard focus; it is a status surface.
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
-      BarSection {
-        id: leftSection
-        anchors.left: parent.left
-        Component.onCompleted: bar.registerGeometry(surface, leftSection)
-        anchors.leftMargin: Style.padding
-        anchors.verticalCenter: parent.verticalCenter
-        host: bar.host
-        registry: bar.registry
-        entries: bar.leftEntries
-        section: "left"
-        // Cap the *maximum* width instead of setting a fixed one: a fixed width
-        // would leave the widgets sitting at the section's left edge (the right
-        // section then looks like it is floating in the middle).
-        maxWidth: Math.max(0, Math.round((parent.width - centerSection.width) / 2 - Style.padding * 2))
-      }
-
-      BarSection {
-        id: centerSection
-        anchors.centerIn: parent
-        Component.onCompleted: bar.registerGeometry(surface, centerSection)
-        host: bar.host
-        registry: bar.registry
-        entries: bar.centerEntries
-        section: "center"
-      }
-
-      BarSection {
-        id: rightSection
-        anchors.right: parent.right
-        Component.onCompleted: bar.registerGeometry(surface, rightSection)
-        anchors.rightMargin: Style.padding
-        anchors.verticalCenter: parent.verticalCenter
-        host: bar.host
-        registry: bar.registry
-        entries: bar.rightEntries
-        section: "right"
-        maxWidth: Math.max(0, Math.round((parent.width - centerSection.width) / 2 - Style.padding * 2))
+      DesktopBar {
+        anchors.fill: parent
+        host: bar.host; registry: bar.registry
+        color: "transparent"
+        leftEntries: bar.leftEntries; centerEntries: bar.centerEntries; rightEntries: bar.rightEntries
+        Component.onCompleted: { for (const section of sections) bar.registerGeometry(surface, section) }
       }
 
       // Diagnostics beat a silently empty bar.
@@ -152,6 +123,7 @@ Item {
             height: child.height,
             width: Math.round(child.width),
             text: bar.textGeometry(child.item, part.surface),
+            controls: child.item && typeof child.item.controls === "function" ? child.item.controls() : [],
             section: part.section.section
           })
         }

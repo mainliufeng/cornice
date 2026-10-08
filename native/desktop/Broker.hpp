@@ -8,6 +8,7 @@
 #include <QLocalSocket>
 #include <QMap>
 #include <QObject>
+#include <QProcess>
 #include <QTimer>
 #include <map>
 #include <memory>
@@ -28,6 +29,8 @@ class Broker : public QObject {
         QString captureGrant, privateOutput;
         std::unique_ptr<SeatDriver> driver;
         std::unique_ptr<BrowserSession> browser;
+        std::unique_ptr<QProcess> shell;
+        qint64 shellRestartAt = 0;
     };
     struct Binding {
         QString name, id, generation;
@@ -42,6 +45,7 @@ class Broker : public QObject {
                         const QString &format, bool agent = false);
     Desktop &managed(const QString &name);
     void save();
+    void startShell(const QString &name);
     void pause(const QString &name);
     void endTakeover(const QString &reason);
     void resume(const QString &name, QLocalSocket *owner, bool agent);
