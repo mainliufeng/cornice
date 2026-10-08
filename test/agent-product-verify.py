@@ -3,7 +3,7 @@ from desktop_harness import *
 import hashlib
 
 try:
-    initialize()
+    broker = initialize()
     human = human_state()
     for name in ('agent1','agent2'):
         cli('create',name,'--virtual-output','1280x800')
@@ -71,5 +71,20 @@ try:
     wait(lambda: (BASE/'agent1.txt').read_text() == 'agent before human edit agent after')
     assert human_state() == human
     record('takeover edits a real GTK app, release pauses, explicit resume creates fresh binding and continues')
+    broker.kill(); broker.wait(timeout=5)
+    restarted = start([str(PRODUCT/'bin/cornice-desktopd')],'desktopd-restart')
+    wait(desktop_ready)
+    wait(lambda: agent_shell('agent1','ping') == 'pong 0.2.5')
+    wait(lambda: len(json.loads(agent_shell('agent1','ipc','bar','geometry'))) > 3)
+    for name in ('agent1','agent2'):
+        state = cli('state',name)
+        assert state['paused']
+        bars = [layer for level in ctl('layers',True)[state['output']]['levels'].values()
+                for layer in level if layer['namespace'] == 'cornice-bar']
+        assert len(bars) == 1, bars
+    assert (BASE/'agent1.txt').read_text() == 'agent before human edit agent after'
+    assert human_state() == human
+    record('broker SIGKILL retires its shell children; restart restores exactly one bar per desktop and keeps input paused')
+
 finally:
     cleanup()
