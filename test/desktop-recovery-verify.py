@@ -94,6 +94,19 @@ try:
     assert human_state() == baseline
     (BASE / "agent-desktop.png").write_bytes(base64.b64decode(tool(binding, "capture")["pngBase64"]))
     record("real Agent GTK input and frame capture leave human cursor, focus and workspace unchanged")
+    private_workspace = cli("state", "private0")["workspace"]
+    tool(binding, "workspace", {"workspace": "1"})
+    xwindow = next(c for c in ctl("clients", True) if c.get("xwayland"))
+    frame = tool(binding, "capture")
+    tool(binding, "input", {"action": "move", "x": xwindow["at"][0] + xwindow["size"][0] / 2,
+                            "y": xwindow["at"][1] + xwindow["size"][1] / 2, "frameId": frame["frameId"]})
+    # The Wayland-only hit tester asserts on X11. The unsupported window
+    # must be rejected before reaching it, including during workspace entry.
+    alive(xclient, "human X11"); alive(gtk, "human GTK")
+    assert human_state() == baseline
+    assert "pong" in shell("ping")
+    tool(binding, "workspace", {"workspace": private_workspace})
+    record("Agent enters a shared workspace and crosses a real X11 window without crashing or moving human focus")
     for index in range(3):
         cli("remove", "private" + str(index))
         registry_roundtrip(watcher, log); registry_roundtrip(late, late_log)

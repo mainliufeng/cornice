@@ -36,7 +36,39 @@
 测试结束后嵌套进程均退出；日常 Hyprland 与 Cornice 仍是测试前的同一进程。
 保留原有非本任务文件，没有将其纳入提交。
 
+## 视频复验与追加修复
+
+录制时发现此前套件未覆盖的路径：Agent 从私有输出切到包含 X11 窗口的人的
+工作区，重定位后的指针命中 X11，随后调用只接受 Wayland 窗口的 surface 查询，
+触发 `Cannot call windowSurfaceAt on an X11 window!` 断言。已在查询前过滤 X11；
+新增回归明确将 Agent 光标移动到真实 X11 窗口内部，核对应用存活和人的状态不变。
+这保证安全忽略，不新增 Agent 对 X11 的输入支持。
+
+连续录屏还发现跨锁 epoch 的待处理截图被移出队列，但协议仍持有 frame，客户端
+收不到失败通知而等待。现在明确通知失败，不输出作废帧；客户端可以重新截图。
+中间实现曾误用 weak-to-unique 的 `lock()`，隔离测试立即触发断言，已改为该对象
+现有的 weak 访问方式；失败构建未安装。最终 Hyprland 修复提交为 `51fd1a9`。
+
+追加修复后重新执行的套件与录制均正常退出：
+
+| 场景 | 结果 | 宿主证据 |
+| --- | --- | --- |
+| 恢复回归，含 X11 命中及真实 bootstrap | 10 项 PASS | `/tmp/cornice-agent-test.1qsoPg/ad-oufhiani/` |
+| 桌面、observer 与应用回归 | 20 项 PASS | `/tmp/cornice-agent-test.5gROvD/ad-bgyqb8mt/` |
+| 原生锁屏及生命周期回归 | 15 项 PASS | `/tmp/cornice-agent-test.53KHqi/ad-h21sf7hy/` |
+| 实际演示录制 | 7 项断言 PASS，56.125 秒，449 帧，8 fps，无录制错误 | `/tmp/cornice-agent-test.5KUDZX/ad-ee6rfyxp/` |
+
+视频：`/home/liufeng/Videos/cornice-agent-desktop-2026-10-08.mp4`。
+可保留证据在同目录的 `cornice-agent-desktop-2026-10-08-evidence/`，含三个套件的
+完整 PASS 日志、演示日志、章节时间与录制统计。视频实际解码完成无错误，已目视
+检查编码后共享窗口、人锁继续运行及全锁撤权画面。
+
+这是脚本驱动的真实嵌套会话，使用真实工具输入和 PAM worker，但 PAM 配置为
+测试 permit。没有把模型执行器集成或真实账号密码认证作为已通过项。
+
 ## 验证边界
 
 本次证明上述问题在隔离嵌套会话中已修复。未执行物理合盖、真实休眠、DRM 热插拔
 或日常登录接管；这些尚不能视为通过。测试结果不构成切换当前桌面的授权。
+运行中的 GTK 3 不一定绑定后新增 seat，Chrome 不保证同窗口多 seat 输入，Agent
+尚不支持 X11 输入。客户端边界详见 [使用说明](agent-desktop.md)。

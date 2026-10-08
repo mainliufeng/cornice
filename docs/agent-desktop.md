@@ -33,6 +33,17 @@ DRM card 设备、宿主 Wayland/X11 socket、systemd 与系统 D-Bus 均不可�
 锁屏套件中的 logind 是私有测试服务，不能触发真实休眠；物理合盖、热插拔和 DRM
 显示验证仍未覆盖，不能据此认为可以直接接管日常会话。
 
+录制同一隔离环境的真实演示（另需 ffmpeg、Python Pillow 与 Noto CJK 字体）：
+
+```sh
+./test/isolated-desktop-test.sh desktop-demo-record.py
+```
+
+入口打印的证据目录内包含 `ad-*/demo.mp4`、`timeline.json` 和 `recording.json`。
+视频左侧是人的测试输出实时截图，右侧是 Agent 工具实际返回的授权截图；完整锁屏
+或暂停后右侧清空，不展示旧帧。演示使用自动输入、真实应用与测试 PAM，不能当作
+模型执行器接入或真实账号认证的证明。脚本同时断言输入效果、焦点隔离与锁屏撤权。
+
 ## 构建与隔离测试
 
 原生组件依赖 CMake、Ninja、Qt 6 Core/Gui/Network/Quick/Qml/WebSockets/DBus、PAM、Wayland client、
@@ -91,6 +102,8 @@ fork 在 agent socket 上优先公布目标 seat，因此通过 `desktop launch`
 操作已单独测试；IME context 的多 seat 兼容仍取决于客户端。
 浏览器启动自动使用该 desktop 生命周期的专用 profile；不复用人的日常 profile。
 通用应用若通过 DBus/进程单例复用旧窗口，仍需显式使用它自己的新实例参数。
+Xwayland 应用可由人的 seat 使用，但当前 Agent seat 不支持向 X11 窗口输入；
+切到含 X11 的工作区或光标经过 X11 窗口必须安全忽略，不能使合成器崩溃。
 
 ## 给 agent 绑定工具
 

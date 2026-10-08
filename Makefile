@@ -14,7 +14,7 @@ help: ## show this help
 
 check: ## syntax-check every script
 	@set -e; for f in bin/cornice* test/*.sh install.sh; do bash -n "$$f"; done
-	@python3 -c "import ast,sys;[ast.parse(open(f).read()) for f in ['test/fake-mpris-player.py','test/inject-click.py','test/agent-desktop-client.py','test/agent-desktop-verify.py','test/desktop-recovery-verify.py','test/desktop_harness.py','test/human-lock-verify.py','test/cdp_client.py','test/logind-fixture.py']]"
+	@python3 -c "import ast,sys;[ast.parse(open(f).read()) for f in ['test/fake-mpris-player.py','test/inject-click.py','test/agent-desktop-client.py','test/agent-desktop-verify.py','test/desktop-recovery-verify.py','test/desktop-demo-record.py','test/desktop_harness.py','test/human-lock-verify.py','test/cdp_client.py','test/logind-fixture.py']]"
 	@echo "syntax ok"
 
 desktop-build: ## build optional native seat service and read-only viewer
