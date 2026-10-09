@@ -43,7 +43,7 @@ Item {
     id: popup
     screen: root.QsWindow.window ? root.QsWindow.window.screen : null
     visible: root.opened
-    implicitWidth: Style.space(29); implicitHeight: column.implicitHeight + root.bridgeHeight
+    implicitWidth: Style.space(38); implicitHeight: column.implicitHeight + root.bridgeHeight
     exclusionMode: ExclusionMode.Ignore; color: "transparent"; focusable: false
     anchors { top: true; left: true }
     margins.top: Style.barHeight - root.bridgeHeight
