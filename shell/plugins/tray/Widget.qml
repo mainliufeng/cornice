@@ -120,6 +120,7 @@ Item {
         MouseArea {
           anchors.fill: parent
           acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+          enabled: !DesktopSession.readOnly
 
           onClicked: mouse => {
             const item = entry.modelData
@@ -146,8 +147,14 @@ Item {
     }
   }
 
+  Connections {
+    target: DesktopSession
+    function onReadOnlyChanged() { if (DesktopSession.readOnly) root.closeMenu() }
+  }
+
   // Second click on the same item toggles its menu closed.
   function showMenu(item, anchorItem) {
+    if (DesktopSession.readOnly) return
     if (openItem === item) {
       closeMenu()
       return
