@@ -127,7 +127,25 @@ PanelFrame {
   }
 
   function launch(entry, forceTerminal) {
-    const command = "PATH=\"$HOME/.local/bin:$PATH\" " + sanitizedCommand(entry)
+    let executable = sanitizedCommand(entry)
+    if (!executable) return
+    if (DesktopSession.agentShell) {
+      // Browsers otherwise forward to the human's existing singleton process,
+      // even when started through the agent's own Wayland socket.
+      const match = executable.match(/^("[^"\n]+"|'[^'\n]+'|[^\s]+)([\s\S]*)$/)
+      const program = match ? match[1].replace(/^["']|["']$/g, "").split("/").pop() : ""
+      const chromium = /^(google-chrome(?:-stable|-beta|-unstable)?|chromium(?:-browser)?)$/.test(program)
+      const firefox = /^(firefox(?:-esr|-developer-edition)?)$/.test(program)
+      if (chromium || firefox) {
+        const data = Quickshell.env("XDG_DATA_HOME") || Quickshell.env("HOME") + "/.local/share"
+        const profile = data + "/cornice/desktops/" + DesktopSession.name + (chromium ? "/chrome" : "/firefox")
+        const quoted = "'" + profile.replace(/'/g, "'\\''") + "'"
+        const flags = chromium ? " --ozone-platform=wayland --no-first-run --no-default-browser-check --user-data-dir=" + quoted
+                               : " --no-remote --profile " + quoted
+        executable = "mkdir -p " + quoted + " && " + match[1] + flags + match[2]
+      }
+    }
+    const command = "PATH=\"$HOME/.local/bin:$PATH\" " + executable
     if (command.trim() === "") return
     if (wantsTerminal(entry, forceTerminal)) runInTerminal(command)
     else Quickshell.execDetached(["sh", "-c", command])

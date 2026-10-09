@@ -816,11 +816,12 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                     fail("Browser profile is managed per desktop; omit profile overrides");
             }
             const auto profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
-                                 "/cornice/desktops/" + name + "/chrome";
+                                 "/cornice/desktops/" + name + (chromium ? "/chrome" : "/firefox");
             QDir().mkpath(profile);
-            if (chromium)
+            if (chromium) {
                 args.insert(1, "--user-data-dir=" + profile);
-            else {
+                args.insert(2, "--ozone-platform=wayland");
+            } else {
                 args.insert(1, "--no-remote");
                 args.insert(2, "--profile");
                 args.insert(3, profile);

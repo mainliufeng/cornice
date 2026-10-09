@@ -51,3 +51,37 @@ Mutter、特性版 Hyprland、Cornice、GTK、Chrome、kitty、Qt 与 Fcitx。
 - 本地部署使用新的独立 session-trial 快照，只选定下一次登录。正在运行的旧 Hyprland
   和应用保持原样；需要注销并重新登录才能验证真实物理输出。
 - 回退：`cornice session-trial cancel` 取消待启动版本；试用会话退出后原稳定入口保留。
+
+## 接管卡顿及 Launcher 修复（同日追加）
+
+真机反馈为接管后鼠标、打字都卡，Agent Launcher 的 Chrome 无窗口。
+发现并修复的路径：
+
+- Agent Workspace 未成为 monitor 的 activeWorkspace，窗口及子表面的 commit 被
+  当作隐藏工作区跳过损伤提交。现在正在原生显示的 Workspace 正常触发重绘，
+  包括弹窗；不改变人的 activeWorkspace。
+- 应用的 `wp_presentation` 反馈原来按几何所属虚拟输出排队。现在由实际绘制输出
+  排队；虚拟输出的重复绘制、直接扫描和空闲回调不能抢走反馈。FIFO 等待随实际
+  输出呈现释放，离开观察后恢复普通输出规则。
+- Launcher 对 Agent Chrome/Chromium 使用该 seat 的独立 profile 并启用 Wayland，
+  避免复用人的浏览器单例；Firefox 同样隔离 profile。CLI 的 Firefox profile 与
+  Chrome 分开，CLI Chromium 启动补齐 Wayland 参数。
+
+新增 `presentation-pacing-verify.py` 使用真实 Wayland 窗口、`wp_presentation`
+与 FIFO，不用截图绘制次数代替呈现。相同测试运行当前旧快照时，第一阶段在 12 秒
+内无法完成；修复后普通和 FIFO 阶段均收到 100 次真实呈现反馈，输出均为人正在
+观看的 `human`，同一窗口退出观察后继续在私有输出完成，总计 600 帧。
+
+3072×1920、2×、120 Hz 配置的隔离输出测试：8 次键盘输入到呈现反馈约
+10.8–15.5 ms，8 次鼠标输入约 9.6–16.2 ms；普通/FIFO 呈现反馈 P95 分别约
+5.8/6.0 ms。测试输出的 refreshNs 为 0；这些是嵌套输出的事件延迟，不能解释为
+笔记本 DRM 扫描帧率或物理设备到屏幕发光的延迟。
+
+新增 `agent-launcher-verify.py` 在人的 Chrome 已启动时，通过真正的 Agent
+Launcher 搜索及主 seat 回车启动 Chrome，检查独立 profile、Agent Workspace、
+原生 Wayland、人的 workspace/focus 不变，并等待窗口内容实际绘制完整。
+最终原生切换回归、headless verify 和 `make check` 通过。证据封存在
+`~/.local/state/cornice/session-trial/verification/input-launcher-20261009`。
+
+本次更改继续留在两库特性分支；本地新快照供下一次登录使用。当前会话不强制退出。
+是否已生效以新会话中的 Hyprland 版本及快照路径为准，真机观感仍需新会话验证。
