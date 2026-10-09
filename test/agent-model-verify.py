@@ -162,7 +162,7 @@ try:
     save_run('01-input-and-click', result)
     record('real Pi + DeepSeek vision identifies GTK controls, types Chinese, clicks and verifies completion')
     with native_owner() as owner:
-        accepted = runtime('start','modeltest',prompt='请先截图。若控制被人接管或暂停，必须调用 desktop_wait 等待，不要中止，不要试图恢复控制。只有人结束接管并明确恢复 Agent 控制之后，才重新截图，检查人修改后的输入框，在末尾添加 restored；然后截图核实，desktop_finish completed。等待期间不要修改界面。')
+        accepted = runtime('start','modeltest',prompt='请先截图。若控制被人接管或暂停，必须调用 desktop_wait 等待，不要中止，不要试图恢复控制。只有人结束接管并明确恢复 Agent 控制之后，才重新截图，检查人修改后的输入框，在已有文本 human 的末尾准确追加 ASCII 文本 restored，不插入空格或其他字符，最终文本必须是 humanrestored；然后截图核实，desktop_finish completed。等待期间不要修改界面。')
         view = rpc(owner,'takeover',{'name':'modeltest'})
         assert view['active'] and view['native'] and view['humanControl'], view
         assert cli('state','modeltest')['controlMode'] == 'human'

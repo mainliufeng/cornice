@@ -28,6 +28,10 @@ primary manager，绕过了原生策略。只给某一个 dispatcher 增加 seat
 `seat-action-routing-verify.py` 通过 25 项真实输入/工作区检查；
 `seat-foreign-activation-verify.py` 验证共享窗口、请求 seat、暂停和全锁。
 已有 layout-shortcuts、workspace-response、human-lock 套件也通过。
+封存版本通过现有 Magpie + DeepSeek 的四个真实任务：中文输入/点击、原生接管后
+等待与精确恢复、接管中的情境取消、重复提交门禁与明确取消；人的原桌面及应用
+内容保持不变。模型测试明确要求追加文本不能插入空格，避免将自然语言理解差异
+误判为输入路由失败。
 Workspace/bar 响应测量属于嵌套环境，不是笔记本物理输出的延迟保证。
 
 旧版复现、修复版 JSON、协议日志和截图保留在本地
