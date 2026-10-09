@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""Supervised local MCP transport; never discovers or defaults a desktop."""
+import ctypes
+import os
+from pathlib import Path
+import shutil
+import signal
+import sys
+
+root = Path(__file__).resolve().parent.parent
+parent = os.getppid()
+if ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0) != 0 or os.getppid() != parent:
+    raise SystemExit("Unable to supervise desktop MCP")
+node = shutil.which("node")
+if not node:
+    raise SystemExit("Node.js >=20 is required for Cornice MCP")
+if len(sys.argv) > 1 and sys.argv[1] == "--browser":
+    from urllib.parse import urlsplit
+    endpoint = os.environ.get("PLAYWRIGHT_MCP_CDP_ENDPOINT", "")
+    parsed = urlsplit(endpoint)
+    if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port or parsed.path in ("", "/"):
+        raise SystemExit("Authorized browser endpoint is required")
+    home = Path(os.environ["CORNICE_MCP_BROWSER_HOME"]).resolve()
+    if not home.is_dir() or home.stat().st_mode & 0o077:
+        raise SystemExit("Private browser directory is required")
+    env = dict(PATH=os.defpath, HOME=str(home), TMPDIR=str(home), XDG_CONFIG_HOME=str(home/"config"),
+               XDG_CACHE_HOME=str(home/"cache"), PLAYWRIGHT_MCP_CDP_ENDPOINT=endpoint, PWTEST_SOCKETS_DIR=str(home))
+    args = [node, str(root/"native/agent/node_modules/@playwright/mcp/cli.js"), "--image-responses", "omit",
+            "--no-webmcp", "--codegen", "none", "--cdp-timeout", "10000"]
+    os.chdir(home)
+else:
+    allow = ("PATH", "HOME", "XDG_RUNTIME_DIR", "XDG_STATE_HOME", "HYPRLAND_INSTANCE_SIGNATURE", "CORNICE_PATH",
+             "CORNICE_MCP_BINDING", "CORNICE_AGENT_JOB", "CORNICE_AGENT_BRIDGE", "CORNICE_AGENT_MCP_TMP")
+    env = {key:os.environ[key] for key in allow if key in os.environ}
+    env.setdefault("PATH", os.defpath)
+    args = [node, str(root/"native/agent/mcp-server.mjs"), *sys.argv[1:]]
+os.execve(node, args, env)

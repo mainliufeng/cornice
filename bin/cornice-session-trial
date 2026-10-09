@@ -122,7 +122,7 @@ def prepare(args):
         release = STATE / "releases" / identifier
         product = release / "cornice"
         product.mkdir(parents=True, mode=0o700)
-        for directory in ("bin", "shell", "i18n", "themes", "wallpapers", "config"):
+        for directory in ("bin", "shell", "i18n", "themes", "wallpapers", "config", "plugins"):
             shutil.copytree(source / directory, product / directory, ignore=shutil.ignore_patterns("__pycache__"))
         if (source / "native/bin/cornice-desktop-runtime").is_file():
             shutil.copytree(source / "native", product / "native")
@@ -143,6 +143,7 @@ def prepare(args):
         shutil.copy2(Path(args.hyprland).resolve(), release / "Hyprland")
         shutil.copy2(__file__, release / "runner")
         configuration = native_layout_bindings(Path(args.config).read_text())
+        configuration = configuration.replace(str(source), str(product))
         # The old bootstrap rewrites real config and starts cornice.service. Suppress it.
         # Route existing absolute Cornice shortcuts to this immutable candidate instead.
         configuration = configuration.replace(str(Path.home() / ".local/bin/cornice"), str(product / "bin/cornice"))
@@ -375,7 +376,7 @@ class Trial:
                    for level in monitor.get("levels", {}).values() for layer in level):
             raise RuntimeError("Cornice bar is missing")
         desktops = json.loads(self.command("desktop", "list"))["desktops"]
-        if {d["name"] for d in desktops} != set(self.seat_names):
+        if {d["name"] for d in desktops} != set(self.seat_names) | {"main"}:
             raise RuntimeError("Agent desktops are missing")
         for desktop in desktops:
             if len(desktop.get("workspaceSlots", [])) != 10:

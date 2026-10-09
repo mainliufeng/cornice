@@ -62,7 +62,7 @@ run_against() {
     failures=$((failures + 1))
     return 1
   fi
-  for dir in bin shell i18n themes wallpapers config docs native/agent; do
+  for dir in bin shell i18n themes wallpapers config docs plugins native/agent; do
     if ! diff -qr "$tmp/source/$dir" "$root/$dir"; then
       echo "  FAIL: installed $dir differs from the committed source"
       failures=$((failures + 1))

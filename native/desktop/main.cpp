@@ -77,13 +77,13 @@ int main(int argc, char **argv) {
             return app.exec();
         }
         QJsonObject request{{"id", QUuid::createUuid().toString(QUuid::WithoutBraces)}};
-        QString socket = command == "tool" ? QString{} : desktopSocket(instance), bindingPath, outputPath;
+        QString socket = (command == "tool" || command == "detach") ? QString{} : desktopSocket(instance), bindingPath, outputPath;
         if (command == "request") {
             QFile input;
             if (!input.open(stdin, QIODevice::ReadOnly))
                 throw std::runtime_error("Cannot read request");
             request = readJson(input.readAll());
-        } else if (command == "tool") {
+        } else if (command == "tool" || command == "detach") {
             bindingPath = take(args);
             QFile file(bindingPath);
             struct stat info{};
@@ -92,9 +92,15 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("Private agent binding file required");
             const auto binding = readJson(file.readAll());
             socket = binding["socket"].toString();
-            request["token"] = binding["token"];
-            request["method"] = take(args);
-            request["params"] = args.isEmpty() ? QJsonObject{} : readJson(take(args).toUtf8());
+            if (command == "detach") {
+                request["method"] = "detach";
+                request["params"] = QJsonObject{{"name",binding["name"]},{"seatId",binding["seatId"]},
+                    {"generation",binding["generation"]},{"bindingToken",binding["token"]}};
+            } else {
+                request["token"] = binding["token"];
+                request["method"] = take(args);
+                request["params"] = args.isEmpty() ? QJsonObject{} : readJson(take(args).toUtf8());
+            }
         } else {
             request["method"] = command;
             QJsonObject params;
@@ -112,6 +118,10 @@ int main(int argc, char **argv) {
                 params["address"] = take(args);
             } else if (command == "view-workspace") {
                 params["slot"] = take(args).toInt();
+            } else if (command == "allow-agent") {
+                const auto value = take(args);
+                if (value != "on" && value != "off") throw std::runtime_error("Expected on or off");
+                params["allowed"] = value == "on";
             } else if (command == "lock-policy") {
                 params["policy"] = take(args);
             } else if (command == "launch") {

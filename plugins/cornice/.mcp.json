@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cornice": {
+      "command": "cornice-desktop-mcp",
+      "args": []
+    }
+  }
+}

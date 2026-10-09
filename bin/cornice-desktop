@@ -14,6 +14,21 @@ if [[ ${1:-} == --instance ]]; then
   export HYPRLAND_INSTANCE_SIGNATURE=$2
   shift 2
 fi
+if [[ ${1:-} == attach ]]; then
+  [[ $# == 3 && $3 =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || { echo 'usage: cornice desktop attach NAME HARNESS' >&2; exit 2; }
+  harness_dir="${XDG_STATE_HOME:-$HOME/.local/state}/cornice/harness"
+  mkdir -p "$harness_dir"
+  chmod 700 "$harness_dir"
+  "$runtime" resume "$2" >/dev/null
+  exec "$runtime" bind "$2" "$harness_dir/$3.binding.json"
+fi
+if [[ ${1:-} == detach ]]; then
+  [[ $# == 2 && $2 =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || { echo 'usage: cornice desktop detach HARNESS' >&2; exit 2; }
+  binding="${XDG_STATE_HOME:-$HOME/.local/state}/cornice/harness/$2.binding.json"
+  "$runtime" detach "$binding"
+  rm -- "$binding"
+  exit 0
+fi
 if [[ ${1:-} == observe ]]; then
   [[ $# == 2 ]] || { echo 'usage: cornice desktop observe NAME' >&2; exit 2; }
   [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} && -n ${XDG_RUNTIME_DIR:-} ]] || { echo 'explicit compositor environment required' >&2; exit 1; }
@@ -32,10 +47,13 @@ Usage: cornice desktop [--instance SIGNATURE] COMMAND
   create NAME --workspace WS [--virtual-output 1920x1080 | --output OUTPUT]
                 [--human-lock-policy pause|continue]
   lock-policy NAME pause|continue   Set policy while unlocked
+  allow-agent NAME on|off           Allow or revoke automation (main defaults off)
   resume NAME | pause NAME          Grant fresh devices or revoke desktop input
   state NAME | windows NAME         Inspect a managed seat
   launch NAME -- APPLICATION ARG... Start an application on its seat display
   capture NAME ABSOLUTE_PATH        Save the seat workspace screenshot
+  attach NAME HARNESS              Assign desktop and private binding to a harness
+  detach HARNESS                   Revoke harness assignment
   bind NAME PRIVATE_FILE           Create a seat-bound agent credential
   tool PRIVATE_FILE METHOD [JSON]  desktop.state/capture/windows/input/workspace/focus/launch/browser
   request                          Send a JSON RPC object from stdin

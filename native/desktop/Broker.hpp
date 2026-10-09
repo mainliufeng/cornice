@@ -31,11 +31,16 @@ class Broker : public QObject {
         std::unique_ptr<BrowserSession> browser;
         std::unique_ptr<QProcess> shell;
         qint64 shellRestartAt = 0;
+        bool agentAllowed = true;
+        bool primary = false;
+        int number = 0;
     };
     struct Binding {
         QString name, id, generation;
         QMap<QString, QJsonObject> frames;
         QStringList frameOrder;
+        QString controller;
+        QElapsedTimer heartbeat;
     };
     QByteArray compositor(const QString &command, bool json = false);
     QJsonObject state(const QString &name);
@@ -45,11 +50,13 @@ class Broker : public QObject {
                         const QString &format, bool agent = false);
     Desktop &managed(const QString &name);
     void save();
+    void revokeBindings(const QString &name);
     void startShell(const QString &name);
     void pause(const QString &name);
     void endTakeover(const QString &reason);
     void resume(const QString &name);
     void validateFrame(const Binding &, const QString &frame, const QJsonObject &actual);
+    int m_nextDesktopNumber = 2;
     QString m_instance, m_socketPath, m_directory;
     QLocalServer m_server;
     QLocalSocket m_events;

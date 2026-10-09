@@ -26,7 +26,7 @@ def click(x, y):
 
 def control(name):
     menus = json.loads(shell('ipc','desktopObserver','controls'))
-    icon = next(item for item in menus if item['name'] == ('status' if name in ('run','takeover','prompt','cancel') else 'switch'))
+    icon = next(item for item in menus if item['name'] == ('status' if name in ('run','takeover','prompt','cancel','permission') else 'switch'))
     send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']/2)}")
     def ready():
         row = next((item for item in json.loads(shell('ipc', 'desktopObserver', 'controls')) if item['name'] == name), None)
@@ -236,7 +236,7 @@ try:
     shell('ipc','desktopObserver','follow')
     wait(lambda:status()['presentation'].get('following'))
     record('read-only browsing an empty workspace leaves the agent current workspace unchanged; Follow restores it')
-    control('');wait(lambda:not status()['open'])
+    control('main');wait(lambda:not status()['open'])
     wait(lambda:human_state()==human)
     record('application shortcut and button work; releasing control pauses agent, returning restores human workspace/focus/cursor')
     # Browser scroll is measured from the real rendered page's title. Its CDP
@@ -321,6 +321,13 @@ try:
     record('lost heartbeats revoke physical takeover and restore the human scene without auto-resuming the Agent')
     shell('desktop','observe','agent1');wait(lambda:status()['presentation'].get('active'))
     shell('ipc','desktopObserver','takeover','true');wait(lambda:status()['humanControl'])
+    control('permission');wait(lambda:not cli('state','agent1')['agentAllowed'])
+    assert status()['humanControl'], 'disabling Agent permission must preserve human takeover'
+    entry('agent1');send('type permissionoff')
+    wait(lambda:'permissionoff' in (BASE/'agent1.txt').read_text())
+    control('permission');wait(lambda:cli('state','agent1')['agentAllowed'])
+    subprocess.run(['grim','-o','human',str(BASE/'permission-menu.png')],env=ENV,check=True)
+    record('real bar permission switch revokes Agent permission and preserves native human input')
     qs.kill();qs.wait(timeout=5)
     wait(lambda:cli('state','agent1')['paused'])
     wait(lambda:human_state()==human_high)

@@ -14,7 +14,7 @@ Item {
   readonly property string prefix: Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
   readonly property string instance: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || ""
   readonly property string socketPath: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/cornice/" + instance + "/desktop.sock"
-  property string selectedDesktop: DesktopSession.name
+  property string selectedDesktop: DesktopSession.name || "main"
   property var observer: null
   Component.onCompleted: DesktopSession.service = root
   function show(name) {
@@ -23,16 +23,19 @@ Item {
       Quickshell.execDetached([prefix + "/bin/cornice-agent-view", name]); return "requested"
     }
     host.hide("cn.agent-desktop")
-    if (!name) return host.hide("cn.desktop-observer")
+    if (!name || name === "main") { selectedDesktop = "main"; return host.hide("cn.desktop-observer") }
     if (!available || !desktops.some(item => item.name === name)) return "desktop-unavailable"
     return host.summon("cn.desktop-observer", {name: name})
   }
   function desktopLabel(name) {
+    const desktop = desktops.find(item => item.name === name)
+    if (desktop && desktop.label) return desktop.label
+    if (!name || name === "main") return "桌面 1 · 主桌面"
     const definition = (options.desktops || []).find(item => item.name === name)
     return definition && definition.label || String(name).replace(/^agent([0-9]+)(?:-[0-9a-f]{8})?$/, "Agent $1")
   }
   function stateLabel(desktop) {
-    return desktop.error || !desktop.available ? "不可用" : desktop.controlMode === "human" ? "接管中" : desktop.paused ? "已暂停" : "运行中"
+    return desktop.error || !desktop.available ? "不可用" : desktop.controlMode === "human" ? "人工控制" : desktop.paused ? "已暂停" : "Agent 控制"
   }
   property var tasks: ({})
   property var modelConfig: ({})
@@ -111,7 +114,7 @@ Item {
   Connections {
     target:Hyprland
     function onRawEvent(event) {
-      if (event.name === "seatshortcut" && event.data === DesktopSession.name + ",prompt") root.prompt(DesktopSession.agentShell ? DesktopSession.name : root.selectedDesktop)
+      if (event.name === "seatshortcut" && event.data === (DesktopSession.agentShell ? DesktopSession.name : "") + ",prompt") root.prompt(DesktopSession.agentShell ? DesktopSession.name : root.selectedDesktop)
       if (event.name === "seatworkspace" || event.name === "seatpresentation" || event.name === "seatcontrol") root.refresh()
       if (event.name === "seatcontrol") root.refreshTasks()
     }

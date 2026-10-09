@@ -1,0 +1,20 @@
+{
+  "name": "cornice-local",
+  "interface": {
+    "displayName": "Cornice"
+  },
+  "plugins": [
+    {
+      "name": "cornice",
+      "source": {
+        "source": "local",
+        "path": "./plugins/cornice"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -27,7 +27,7 @@ Item {
   function close() {
     if (!isOpen) return
     isOpen = false
-    if (service) service.selectedDesktop = ""
+    if (service) service.selectedDesktop = "main"
     dismissed()
   }
   function takeControl(enabled) { if (presentation.item) presentation.item.takeControl(enabled) }

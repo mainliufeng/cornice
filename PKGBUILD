@@ -61,6 +61,7 @@ package() {
 
   install -dm755 "$pkgdir/usr/share/cornice/native"
   cp -r "$startdir/native/agent" "$pkgdir/usr/share/cornice/native/"
+  cp -r "$startdir/plugins" "$pkgdir/usr/share/cornice/"
   install -dm755 "$pkgdir/usr/bin"
   local f name
   for f in "$pkgdir"/usr/share/cornice/bin/cornice*; do

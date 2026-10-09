@@ -23,3 +23,6 @@ The task editor accepts native Fcitx Chinese composition in both the human contr
 Agent shell processes have separate Wayland seats and short per-instance IPC paths; lock/idle/polkit/notification ownership stays with the human shell. Each Agent has its own persistent browser profile and stable logical name. The executor and UI do not provide an OS security boundary against an application launched on a desktop. Physical session checks remain a separate rollout step; a prepared immutable candidate takes effect on next login, never by replacing the compositor under a running session.
 
 Task submission acknowledges a specific run; it does not mean the model has begun desktop actions. The status menu distinguishes startup and execution. If startup or execution fails, the control icon shows an alert and the menu displays the actual reason. Submitted text is retained for retry; failures never reopen the task prompt or take keyboard focus. A task-status read failure is explicitly marked instead of presenting cached status as current.
+
+
+Desktop interfaces and permissions are now uniform, including the native primary desktop. See [shared MCP, skill and Codex plugin](desktop-harness.md). Pi delegates all native and browser tools to that same MCP; its extension only manages lifecycle and outgoing screenshot history.

@@ -6,11 +6,12 @@ DesktopMenu {
   property var service: null
   property bool compact: true
   property string selected: service ? service.selectedDesktop : ""
-  icon: selected ? "󰚩" : "󰍹"
-  description: selected && service ? service.desktopLabel(selected) : "人的桌面"
-  entries: [{key: "", label: "人", selected: selected === ""}].concat(service ? service.desktops.map(desktop => ({
+  icon: selected && selected !== "main" ? "󰚩" : "󰍹"
+  description: service ? service.desktopLabel(selected || "main") : "桌面 1 · 主桌面"
+  entries: service && service.desktops.length ? service.desktops.map(desktop => ({
     key: desktop.name, label: service.desktopLabel(desktop.name) + " · " + service.stateLabel(desktop),
-    selected: desktop.name === selected, enabled: !!desktop.available && !desktop.error})) : [])
+    selected: desktop.name === (selected || "main"), enabled: desktop.primary || (!!desktop.available && !desktop.error)
+  })) : [{key:"main",label:"桌面 1 · 主桌面",selected:true}]
   onChosen: key => { if (service) service.show(key) }
   function controls() { return rows() }
 }

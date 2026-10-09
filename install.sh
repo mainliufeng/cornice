@@ -138,7 +138,7 @@ if ((copy)); then
   staging="$libdir.new.$$"
   rm -rf "$staging"
   mkdir -p "$staging"
-  for dir in bin shell i18n themes wallpapers config docs; do
+  for dir in bin shell i18n themes wallpapers config docs plugins; do
     [[ -d $repo/$dir ]] && cp -r "$repo/$dir" "$staging/"
   done
   mkdir -p "$staging/native"

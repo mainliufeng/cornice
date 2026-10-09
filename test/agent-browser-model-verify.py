@@ -33,7 +33,7 @@ try:
  names=[e['toolName'] for e in results]
  images=sum(sum(c.get('type')=='image' for c in e.get('result',{}).get('content',[])) for e in results)
  assert images==0,(images,names)
- assert 'desktop_browser_connect' in names and any(n.endswith('browser_click') for n in names) and any(n.endswith('browser_fill_form') or n.endswith('browser_type') for n in names),names
+ assert any(n.endswith('desktop_browser_connect') for n in names) and any(n.endswith('browser_click') for n in names) and any(n.endswith('browser_fill_form') or n.endswith('browser_type') for n in names),names
  assert any(re.search(r'paragraph \[ref=[^\]]+\]: seat CDP中文', json.dumps(e.get('result',{}),ensure_ascii=False)) for e in results if e['toolName'].endswith('browser_snapshot'))
  assert human_state()==human,(human,human_state())
  assert not any(e.get('type')=='extension_error' for e in events),[e for e in events if e.get('type')=='extension_error']

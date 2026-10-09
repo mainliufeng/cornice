@@ -6,7 +6,7 @@ try:
     for index in range(3):
         cli("create", "agent" + str(index + 1), "--workspace", str(10 + index), "--output", "human")
         cli("resume", "agent" + str(index + 1))
-    assert len(cli("list")["desktops"]) == 3
+    assert len(cli("list")["desktops"]) == 4
     record("three managed agent seats on one output, precreated before GTK clients")
     start(["/usr/bin/python3", str(ROOT / "test/agent-desktop-client.py"), "human-window", str(BASE / "human.txt")], "human")
     wait(lambda: len(ctl("clients", True)) == 1)
@@ -242,7 +242,7 @@ FloatingWindow {
         "background": {"enabled": False}, "weather": {"intervalMinutes": 0}}))
     quickshell = start([str(PRODUCT / "bin/cornice-qs"), "-p", str(PRODUCT / "shell")], "cornice")
     wait(lambda: json.loads(shell("ipc", "desktop", "status"))["available"])
-    assert len(json.loads(shell("ipc", "desktop", "status"))["desktops"]) == 3
+    assert len(json.loads(shell("ipc", "desktop", "status"))["desktops"]) == 4
     shell("desktop", "observe", "agent1")
     frame_ui = wait(lambda: json.loads(shell("ipc", "desktopObserver", "status")).get("presentation", {}).get("active"))
     shell("desktop", "observe", "agent1")
@@ -346,7 +346,7 @@ FloatingWindow {
     assert all(ctl("seat state agent" + str(i + 1), True)["paused"] for i in range(3))
     broker = start([str(PRODUCT / "bin/cornice-desktopd")], "desktopd-restarted")
     wait(desktop_ready)
-    assert len(cli("list")["desktops"]) == 3
+    assert len(cli("list")["desktops"]) == 4
     assert all(d["paused"] for d in cli("list")["desktops"])
     cli("resume", "agent2")
     broker.kill(); broker.wait(timeout=5)

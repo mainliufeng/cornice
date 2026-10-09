@@ -4,7 +4,7 @@
 
 ## 已实现
 
-Agent prompt → Pi 常驻任务循环 → Cornice 桌面扩展 → Broker 的 seat 授权 CDP → Microsoft Playwright MCP → Agent 自己的 Chrome。
+Agent prompt → Pi 常驻任务循环 → Cornice Pi 适配 → 共享 Cornice MCP → Broker 的 seat 授权 CDP → Microsoft Playwright MCP → Agent 自己的 Chrome。
 
 - 浏览器先读取 accessibility snapshot（角色、名称、状态、文字、元素引用），用语义点击、填写、键盘和标签页工具操作。操作后读更新的树，避免复用过期元素。
 - `desktop_browser_connect` 只连接 Broker 启动的本 Agent 浏览器，复用该桌面的持久 profile。模型不接收 CDP 地址、授权 token，也不能指定人的浏览器端口。
@@ -41,4 +41,4 @@ AT-SPI 默认共享同一用户会话的无障碍总线，独立 Wayland seat �
 - [Codex 浏览器](https://developers.openai.com/codex/app/browser)；[Codex computer use](https://learn.chatgpt.com/docs/computer-use)；[OpenAI context compaction](https://developers.openai.com/api/docs/guides/compaction)。OpenAI API 的 compaction 与当前 DeepSeek/Pi 执行器是不同接口。
 - [DeepSeek vision limits](https://api-docs.deepseek.com/guides/vision/#limits)。
 
-回归入口：`node test/agent-screenshot-verify.ts`、`node test/agent-browser-tools-verify.ts`、`python3 test/agent-runtime-protocol-verify.py`；真实模型与隔离桌面运行 `test/isolated-desktop-test.sh agent-browser-model-verify.py`（需要真实模型配置与 fork）。
+回归入口：`node test/agent-screenshot-verify.ts`、`node test/mcp-transport-verify.mjs`、`python3 test/agent-runtime-protocol-verify.py`；真实模型与隔离桌面运行 `test/isolated-desktop-test.sh agent-browser-model-verify.py`（需要真实模型配置与 fork）。

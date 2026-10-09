@@ -1,0 +1,21 @@
+{
+  "name": "cornice",
+  "version": "0.1.0",
+  "description": "Operate an explicitly assigned Cornice desktop with native input and structured browser tools.",
+  "author": {
+    "name": "cornice"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Cornice",
+    "shortDescription": "操作已分配的桌面",
+    "longDescription": "通过 Cornice 的统一接口观察、操作和交接桌面。主桌面默认禁止 Agent 控制。",
+    "developerName": "cornice",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ]
+  }
+}

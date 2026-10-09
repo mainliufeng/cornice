@@ -152,7 +152,8 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     cli_path = release / "cornice/bin/cornice"
     desktops = json.loads(subprocess.check_output([str(cli_path), "desktop", "list"],
         env=selected | {"CORNICE_PATH": str(release / "cornice")}, text=True))["desktops"]
-    assert len(desktops) == 3 and all(d["humanLockPolicy"] == "continue" and d["paused"] for d in desktops), desktops
+    assert len(desktops) == 4 and desktops[0]["primary"] and desktops[0]["agentAllowed"] is False, desktops
+    assert all(d["humanLockPolicy"] == "continue" and d["paused"] for d in desktops if not d["primary"]), desktops
     (BASE / "trial-initial-desktops.json").write_text(json.dumps(desktops, indent=2))
     record("three real deployment seats explicitly allow human-lock continuation but remain initially paused without input grants")
     # Both the human shell and all private shells share this right-side layout.

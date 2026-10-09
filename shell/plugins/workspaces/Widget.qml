@@ -26,7 +26,7 @@ Item {
   readonly property var slots: {
     const out = []
     for (let id = 1; id <= 10; ++id) {
-      const scoped = DesktopSession.selected !== ""
+      const scoped = DesktopSession.secondary
       const name = "cornice-agent-" + DesktopSession.selected + "-ws-" + id
       const current = (workspaces || []).find(ws => scoped ? ws.name === name : ws.id === id)
       out.push({id: id, label: String(id), occupied: !!current && current.toplevels.values.length > 0,
