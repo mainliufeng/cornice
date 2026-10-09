@@ -73,7 +73,19 @@ hl.env("QT_IM_MODULE", "fcitx")
 hl.env("GTK_IM_MODULE", "fcitx")
 hl.env("CORNICE_TRIAL_ENV_PROBE", "from-lua")
 hl.define_submap("trial-test", function() hl.bind("escape", hl.dsp.submap("reset"), {}) end)
+hl.bind("SUPER + h", hl.dsp.exec_cmd("~/.config/hypr/scripts/layoutmsg-active.sh mfact -0.025"), {})
+hl.bind("SUPER + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/layoutmsg-active.sh mfact +0.025"), {})
+hl.bind("SUPER + i", hl.dsp.exec_cmd("~/.config/hypr/scripts/layoutmsg-active.sh addmaster"), {})
+hl.bind("SUPER + d", hl.dsp.exec_cmd("~/.config/hypr/scripts/layoutmsg-active.sh removemaster"), {})
+hl.bind("SUPER + CTRL + h", hl.dsp.exec_cmd("~/.config/hypr/scripts/layoutmsg-active.sh splitratio -0.025"), {})
+hl.bind("SUPER + CTRL + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/layoutmsg-active.sh splitratio +0.025"), {})
+hl.bind("SUPER + ALT + h", hl.dsp.exec_cmd("~/.config/hypr/scripts/layoutmsg-active.sh mfact -0.025; true"), {})
+hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh mfact +0.025"), {})
 ''')
+    absolute_helper = str(pathlib.Path(ENV["HOME"]) / ".config/hypr/scripts/layoutmsg-active.sh")
+    with configuration.open("a") as stream:
+        stream.write('hl.bind("SUPER + ALT + i", hl.dsp.exec_cmd(' + json.dumps(absolute_helper + ' mfact exact 0.55') + '), {})\n')
+    original_configuration = configuration.read_text()
     SDDM = BASE / "wayland-session"
     sentinel_path = BASE / "normal-login"
     SDDM.write_text('print -r -- "normal stable entry" > ' + shlex.quote(str(sentinel_path)) + '\n')
@@ -89,6 +101,13 @@ hl.define_submap("trial-test", function() hl.bind("escape", hl.dsp.submap("reset
                                 "--cornice", PRODUCT, "--config", configuration))
     release = pathlib.Path(prepared["prepared"])
     assert not status()["armed"] and settings.read_bytes() == original_settings
+    trial_configuration = (release / "hyprland.lua").read_text()
+    for message in ("mfact -0.025", "mfact +0.025", "addmaster", "removemaster", "splitratio -0.025", "splitratio +0.025", "mfact exact 0.55"):
+        assert 'hl.dsp.layout(' + json.dumps(message) + ')' in trial_configuration, message
+    for command in ("~/.config/hypr/scripts/layoutmsg-active.sh mfact -0.025; true", "~/.config/hypr/scripts/unrelated.sh mfact +0.025"):
+        assert 'hl.dsp.exec_cmd(' + json.dumps(command) + ')' in trial_configuration, command
+    assert configuration.read_text() == original_configuration
+    record("prepare converts literal master/dwindle layout shortcuts to native seat-aware Lua without changing source or unrelated shell commands")
     layout = json.loads((release / "config-home/cornice/config.json").read_text())["bar"]["layout"]
     assert layout["left"] == [] and layout["right"] == ["cn.agent-desktop"], layout
     record("prepare preserves an existing right-side Agent control and removes duplicate copies")

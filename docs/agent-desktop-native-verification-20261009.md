@@ -126,3 +126,30 @@ Hyprvoice 使用独立 `codex/cornice-seat-input` 分支；Cornice 与 Hyprland 
 分支。无 main 合并，无 dotfiles 改动。当前使用中的会话不重启；下一次登录使用新
 封存快照和已备份安装的 Hyprvoice，待启动版本可用 `cornice session-trial cancel`
 撤销，旧语音二进制备份记录在本地交付证据中。
+
+## 最大化焦点循环与布局快捷键（同日追加）
+
+反馈为 Agent 最大化后 Super+J/K 不切窗口，且人和 Agent 的 Super+H/L 都不调整布局。
+两者原因不同：
+
+- Agent 的地址聚焦 dispatcher 直接走 seat 的底层 focusWindow。最大化/全屏挡住其他
+  tiled 窗口时，目标会因不可输入被拒绝，漏掉人的 fullWindowFocus 全屏冲突策略。
+  现在两边共用该策略，再进入各自 seat 的原始聚焦路径，不临时抢人的焦点。
+- H/L 的 Lua 外层绑定已迁移，但仍运行旧 layoutmsg-active.sh；脚本内部调用旧
+  `hyprctl dispatch layoutmsg`，当前 Lua 分支拒绝该命令。这是命令接口迁移遗漏，
+  与多 seat 的布局隔离无关。快照准备把该已知脚本的固定字面消息转换为原生
+  `hl.dsp.layout`，一并修复 I/D 的 addmaster/removemaster 和 splitratio 同类调用。
+  原生 dispatcher 选择当前 seat 的 workspace；人的 special workspace 也直接选择，
+  不需要脚本切过去再切回来。原配置和 dotfiles 不改，不增加兼容转发脚本。
+
+同一套原生 Lua 快捷键注册表供各 seat 使用，输入与动作状态由 seat 上下文隔离，
+不用为 Agent 重写或复制一套普通快捷键。自行查询 activewindow/activeworkspace 的
+外部脚本仍应明确目标 seat；旧 Hyprland IPC 脚本不能只迁移外层 bind 就当作完成。
+
+新增 layout-shortcuts-verify.py。旧封存 2333cf2 在真实主 seat Super+J/K 普通循环通过，
+Agent 最大化后当前地址不变，复现失败；修复后人、Agent 各三个真实 GTK 窗口在普通、
+最大化、全屏三种模式下，J/K 双向循环整圈均通过，切换后的最大化/全屏状态正确。
+H/L 在人、Agent 和人的 special workspace 均观测到 master 比例 0.5 → 0.475 → 0.5，
+其他 workspace 几何不变。只读模式逐键拒绝 J/K/H/L，退出观察后人的完整状态恢复。
+完整 session-trial 回归通过，验证仅转换已知字面消息、保留原配置和无关 shell 命令。
+以上为真实合成器/客户端的隔离验证；新 Hyprland 的真机按键体验需下一次登录验证。

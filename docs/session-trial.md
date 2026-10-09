@@ -99,6 +99,11 @@ CORNICE_TEST_HYPRLAND_SOURCE=/home/liufeng/Code/source/Hyprland \
 环境，包含输入法模块和 DISPLAY 等。临时环境文件权限为 0600，读取后立即删除。
 窗口循环快捷键只在快照中改用 `cornice-cycle-focus`，保留原来的分组、方向和全屏行为，
 改为调用 Lua dispatcher；不覆盖稳定版的用户脚本。
+快照中对旧 `layoutmsg-active.sh` 的固定调用也改为原生 `hl.dsp.layout`，覆盖
+H/L 的 master `mfact`、dwindle `splitratio`，以及 I/D 的添加和移除 master。
+只识别该已知脚本的字面消息，不改无关命令或复合 shell 命令。原生 dispatcher
+直接选当前 seat 的工作区；人的 special 工作区打开时选 special，无需临时切换后再切回。
+这些变换仅写入试运行快照，不改原始 Lua 或 dotfiles 脚本。
 Chrome 的试运行配置副本使用原生 Wayland 输出缩放，去除固定倍数；稳定配置保持原样。
 2x 输出上同时强制 Chrome 2x 会得到 4x DPR 和双倍界面，此回归已在隔离环境复现。
 

@@ -90,6 +90,30 @@ def remove_block(contents):
     return contents[:start] + contents[end:]
 
 
+def native_layout_bindings(configuration):
+    # These generated bindings still called a stable Hyprland helper. Replace
+    # only its literal layout messages, without parsing arbitrary shell code.
+    helpers = ("~/.config/hypr/scripts/layoutmsg-active.sh", str(Path.home() / ".config/hypr/scripts/layoutmsg-active.sh"))
+    number = r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)"
+    messages = re.compile(r"(?:addmaster|removemaster|mfact (?:exact )?" + number + r"|splitratio " + number + r"(?: exact)?)")
+
+    def replace(match):
+        try:
+            command = json.loads(match[1])
+        except ValueError:
+            return match[0]
+        for helper in helpers:
+            prefix = helper + " "
+            if not command.startswith(prefix):
+                continue
+            message = command[len(prefix):]
+            if messages.fullmatch(message):
+                return "hl.dsp.layout(" + json.dumps(message) + ")"
+        return match[0]
+
+    return re.sub(r'\bhl\.dsp\.exec_cmd\(\s*("(?:[^"\\]|\\.)*")\s*\)', replace, configuration)
+
+
 def prepare(args):
     # No system package, deployment pointer, service or existing configuration is changed.
     with locked():
@@ -118,7 +142,7 @@ def prepare(args):
                 run(["patchelf", "--set-rpath", "$ORIGIN", library])
         shutil.copy2(Path(args.hyprland).resolve(), release / "Hyprland")
         shutil.copy2(__file__, release / "runner")
-        configuration = Path(args.config).read_text()
+        configuration = native_layout_bindings(Path(args.config).read_text())
         # The old bootstrap rewrites real config and starts cornice.service. Suppress it.
         # Route existing absolute Cornice shortcuts to this immutable candidate instead.
         configuration = configuration.replace(str(Path.home() / ".local/bin/cornice"), str(product / "bin/cornice"))
