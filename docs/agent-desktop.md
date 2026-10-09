@@ -230,6 +230,8 @@ guard 持有 sleep block/delay 和 lid inhibitor；启用后使用 Cornice 的 s
 
 ## Agent 浏览器的 CDP
 
+内置 Pi 执行器现已接入：`desktop_browser_connect` 授权连接后提供 Playwright MCP 元素树及语义操作，浏览器优先读树。依赖安装、截图兜底、原生 AT-SPI 边界及 Codex 对照见 [Agent 的观察路线](agent-observation.md)。
+
 ```bash
 cornice desktop tool /tmp/writer.binding.json desktop.browser
 ```

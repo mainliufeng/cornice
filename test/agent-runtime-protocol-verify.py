@@ -34,7 +34,11 @@ def bridge(operation, params):
       input=json.dumps(params),text=True,capture_output=True,check=True)
     return json.loads(result.stdout)
 assert '--no-builtin-tools' in sys.argv and '--no-extensions' in sys.argv
-assert pathlib.Path(sys.argv[sys.argv.index('--extension')+1]).is_file()
+assert '--no-mcp' not in sys.argv
+assert 'builtin:mcp' in sys.argv
+assert any(pathlib.Path(sys.argv[i+1]).is_file() for i,v in enumerate(sys.argv[:-1]) if v == '--extension')
+assert pathlib.Path.cwd().is_relative_to(job/'workspace')
+assert pathlib.Path(os.environ['PI_CODING_AGENT_DIR']).is_relative_to(job/'pi')
 if mode == 'early-startup':
     sys.stderr.write('Provider cannot start: missing model definition\n');sys.stderr.flush()
     sys.exit(2)
@@ -198,6 +202,7 @@ class RuntimeProtocol(unittest.TestCase):
     def test_model_retries_exhaust_with_actual_error(self):
         accepted = self.start('retry-failed')
         self.wait(lambda:(self.directory/'fixture.retry').exists())
+        self.wait(lambda: self.read_status().get('phase') == 'running')
         self.assertEqual(self.read_status()['phase'],'running')
         self.assertNotIn(self.read_status()['phase'],TERMINAL)
         (self.directory/'fixture.continue').touch()
@@ -212,6 +217,7 @@ class RuntimeProtocol(unittest.TestCase):
         self.configure(token=token)
         accepted = self.start('retry-failed')
         self.wait(lambda:(self.directory/'fixture.retry').exists())
+        self.wait(lambda: self.read_status().get('phase') == 'running')
         self.assertEqual(self.read_status()['phase'],'running')
         (self.directory/'fixture.continue').touch()
         result = self.terminal(accepted)
@@ -234,6 +240,7 @@ class RuntimeProtocol(unittest.TestCase):
     def test_retry_recovery_keeps_production_tools_and_finish(self):
         accepted = self.start('retry-recovered')
         self.wait(lambda:(self.directory/'fixture.retry').exists())
+        self.wait(lambda: self.read_status().get('phase') == 'running')
         self.assertEqual(self.read_status()['phase'],'running')
         (self.directory/'fixture.continue').touch()
         self.assertEqual(self.terminal(accepted)['phase'],'completed')

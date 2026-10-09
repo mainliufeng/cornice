@@ -1,0 +1,13 @@
+{
+  "name": "cornice-agent-tools",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pinned structured browser tools for the seat-bound Cornice agent runtime",
+  "dependencies": {
+    "@playwright/mcp": "0.0.83"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}

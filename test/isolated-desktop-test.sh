@@ -9,7 +9,7 @@ export CORNICE_TEST_HYPRLAND=${CORNICE_TEST_HYPRLAND:-$CORNICE_TEST_HYPRLAND_SOU
 [[ -x $CORNICE_TEST_HYPRLAND ]] || { echo 'Built fork missing' >&2; exit 1; }
 suite=${1:-desktop-recovery-verify.py}
 case "$suite" in
-  agent-model-verify.py|agent-product-verify.py|agent-task-ui-verify.py|desktop-switcher-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|voice-session-verify.py|layout-shortcuts-verify.py|seat-focus-lifecycle-verify.py|seat-action-routing-verify.py|seat-foreign-activation-verify.py) ;;
+  agent-browser-model-verify.py|agent-model-verify.py|agent-product-verify.py|agent-task-ui-verify.py|desktop-switcher-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|voice-session-verify.py|layout-shortcuts-verify.py|seat-focus-lifecycle-verify.py|seat-action-routing-verify.py|seat-foreign-activation-verify.py) ;;
   *) echo 'Unknown isolated suite' >&2; exit 2 ;;
 esac
 product_mount=()
@@ -26,7 +26,7 @@ if [[ $suite == voice-session-verify.py ]]; then
   voice_mount=(--ro-bind "$CORNICE_TEST_VOICE_APP" /tmp/voice-app --setenv CORNICE_TEST_VOICE_APP /tmp/voice-app)
 fi
 network=()
-if [[ $suite == agent-model-verify.py ]]; then
+if [[ $suite == agent-model-verify.py || $suite == agent-browser-model-verify.py ]]; then
   # Only this explicit real-provider suite shares networking; input, DRM card,
   # compositor, bus, PID, HOME and configuration isolation stay intact.
   : "${CORNICE_TEST_MODEL_CONFIG:?Private real model config required}"

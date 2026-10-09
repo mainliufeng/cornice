@@ -14,3 +14,5 @@ src/
 native/build/
 
 test/__pycache__/
+
+native/agent/node_modules/

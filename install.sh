@@ -122,6 +122,8 @@ fi
 # ---------------------------------------------------------------------------
 step "Installing"
 if ((desktop)); then
+  command -v npm >/dev/null 2>&1 || { bad "npm is required for Agent browser tools"; exit 1; }
+  npm ci --prefix "$repo/native/agent" --omit=dev --ignore-scripts --no-audit --no-fund
   cmake -S "$repo/native/desktop" -B "$repo/native/build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
   cmake --build "$repo/native/build" -j4
 fi

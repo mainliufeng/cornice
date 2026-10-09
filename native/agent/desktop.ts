@@ -1,22 +1,42 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
+import { registerBrowserTools } from "./browser-tools.ts";
+import { encodeScreenshot, latestDesktopScreenshot } from "./screenshot-context.ts";
 
 function invoke(operation: string, params: unknown, signal?: AbortSignal): Promise<any> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.CORNICE_AGENT_BRIDGE!, ["bridge", operation], { stdio: ["pipe", "pipe", "pipe"], signal });
+    const bridge = process.env.CORNICE_AGENT_BRIDGE;
+    if (!bridge) throw new Error("Desktop bridge executable is not configured");
+    const child = spawn(bridge, ["bridge", operation], { stdio: ["pipe", "pipe", "pipe"], signal });
     let out = "", error = "";
     child.stdout.on("data", data => out += data);
     child.stderr.on("data", data => error += data);
     child.on("error", reject);
-    child.on("close", code => {
-      try { resolve(code === 0 ? JSON.parse(out) : { error: error.trim(), interrupted: true }); }
-      catch (e) { reject(e); }
+    child.on("close", (code, terminationSignal) => {
+      if (code !== 0) {
+        reject(new Error("desktop_" + operation + " failed (" +
+          (terminationSignal ? "signal " + terminationSignal : "exit " + code) +
+          "): " + (error.trim() || "Desktop bridge exited without a diagnostic")));
+        return;
+      }
+      try {
+        const result = JSON.parse(out);
+        if (!result || typeof result !== "object" || Array.isArray(result))
+          throw new Error("expected a JSON object");
+        resolve(result);
+      } catch (e) {
+        reject(new Error("desktop_" + operation + " returned an invalid response: " +
+          (e instanceof Error ? e.message : String(e))));
+      }
     });
+    child.stdin.on("error", reject);
     child.stdin.end(JSON.stringify(params));
   });
 }
 export default function(pi: ExtensionAPI) {
+  registerBrowserTools(pi, invoke);
+  pi.on("context", event => ({ messages: latestDesktopScreenshot(event.messages) }));
   const tools = [
     ["state", "Read desktop control, identity and workspace even while interrupted", Type.Object({})],
     ["capture", "Capture assigned desktop. Read pixelSize and use its frameId for input", Type.Object({})],
@@ -35,10 +55,11 @@ export default function(pi: ExtensionAPI) {
     pi.registerTool(defineTool({name:"desktop_"+operation,label:"Desktop "+operation,description,parameters,
       async execute(_id, params, signal) {
         const result = await invoke(operation, params, signal);
-        const image = result.pngBase64; delete result.pngBase64;
-        const content: any[] = [{type:"text",text:JSON.stringify(result)}];
-        if (image) content.push({type:"image",data:image,mimeType:"image/png"});
-        return {content,details:result};
+        const { pngBase64, ...details } = result;
+        const content: any[] = [{type:"text",text:JSON.stringify(details)}];
+        if (pngBase64 !== undefined)
+          content.push(encodeScreenshot(pngBase64, details.pixelSize));
+        return {content,details};
       }
     }));
   }
