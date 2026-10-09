@@ -16,6 +16,7 @@ Item {
   property var accepted: ({})
   property var submission: ({})
   property bool restoringDraft: false
+  property int editorGeneration: 0
   readonly property var task: service && service.tasks[name] ? service.tasks[name] : ({phase:"idle"})
   function saveDraft(target, text) {
     if (!target) return
@@ -23,6 +24,7 @@ Item {
   }
   function open(target) {
     saveDraft(name, editor.text)
+    editorGeneration += 1
     restoringDraft = true; name = target; editor.text = String(drafts[target] || ""); restoringDraft = false
     error = ""; opened = true; Qt.callLater(() => editor.forceActiveFocus())
   }
@@ -61,31 +63,34 @@ Item {
       editor.forceActiveFocus(); return
     }
     if (editor.text.trim() === "") return
-    submitted = editor.text.trim(); submission = {name:name,text:submitted}; error = ""
+    submitted = editor.text.trim(); submission = {name:name,text:submitted,generation:editorGeneration}; error = ""
     saveDraft(name, editor.text); run.stdinEnabled = true; run.running = true
   }
   Process {
     id: run
     command: [root.service.prefix + "/bin/cornice-agent-runtime", "start", root.submission.name || root.name]
     property var reply: null
+    property string replyError: ""
     stdinEnabled: true
-    onStarted: { reply = null; write(root.submission.text); stdinEnabled = false }
-    stdout: StdioCollector { onStreamFinished: {try {run.reply = JSON.parse(text)} catch(e) {root.error = "任务启动结果无效，输入内容已保留。"}} }
+    onStarted: { reply = null; replyError = ""; write(root.submission.text); stdinEnabled = false }
+    stdout: StdioCollector { onStreamFinished: {try {run.reply = JSON.parse(text)} catch(e) {run.replyError = "任务启动结果无效，输入内容已保留。"}} }
     stderr: StdioCollector {
       onStreamFinished: if (text.trim() !== "") {
-        try { root.error = String(JSON.parse(text).error || text.trim()) }
-        catch(e) { root.error = text.trim() }
+        try { run.replyError = String(JSON.parse(text).error || text.trim()) }
+        catch(e) { run.replyError = text.trim() }
       }
     }
     onExited: code => {
+      const currentEditor = root.name === root.submission.name && root.editorGeneration === root.submission.generation
       if (code === 0 && reply && reply.accepted === true && reply.started === true && reply.name === root.submission.name && reply.runId) {
         root.accepted = Object.assign({}, root.accepted, {[reply.name]:{runId:reply.runId,text:root.submission.text,started:false,failureSeen:false}})
         root.service.submissionResult(reply.name, "")
-        root.opened = false
+        if (currentEditor) root.opened = false
         root.updateTasks()
       } else {
-        if (root.error === "") root.error = "任务未能启动，输入内容已保留。"
-        if (root.service) root.service.submissionResult(root.submission.name, root.error)
+        const message = replyError || "任务未能启动，输入内容已保留。"
+        if (currentEditor) root.error = message
+        if (root.service) root.service.submissionResult(root.submission.name, message)
       }
       if (root.service) root.service.refreshTasks()
     }

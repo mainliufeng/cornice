@@ -88,8 +88,13 @@ Item {
         try {
           const result = JSON.parse(text)
           if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("invalid status")
+          for (const name of Object.keys(result)) {
+            const task = result[name]
+            if (!task || typeof task !== "object" || Array.isArray(task) || typeof task.phase !== "string" || task.phase.trim() === "")
+              throw new Error("无效任务状态：" + name)
+          }
           root.tasks = result; taskStatus.validReply = true; root.taskError = ""; root.reportTaskFailures()
-        } catch(e) { taskStatus.readError = "任务状态读取失败，当前显示可能已过期。" }
+        } catch(e) { taskStatus.validReply = false; taskStatus.readError = "任务状态读取失败：" + String(e.message || "当前显示可能已过期。") }
       }
     }
     stderr:StdioCollector {onStreamFinished:if (text.trim() !== "") taskStatus.readError = "任务状态读取失败：" + text.trim()}
