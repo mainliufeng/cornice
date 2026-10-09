@@ -996,6 +996,8 @@ void Broker::configureDesktop(const QString &name) {
     add({"SUPER", "A"}, "notify", "prompt", false);
     add({"SUPER", "A"}, "notify", "prompt", true);
     QJsonArray overlays;
+    const QStringList shellLayers{"cornice-bar", "cornice-desktop-menu", "cornice-agent-prompt", "cornice-panel",
+                                  "cornice-menu", "cornice-status-tooltip", "cornice-window-tooltip", "cornice-notification-popups"};
     QSet<qint64> shellPids, voicePids;
     const auto outputs = json(compositor("layers", true)).object();
     for (auto output = outputs.begin(); output != outputs.end(); ++output) {
@@ -1004,7 +1006,7 @@ void Broker::configureDesktop(const QString &name) {
             for (const auto &value : level.value().toArray()) {
                 const auto layer = value.toObject();
                 const auto space = layer["namespace"].toString();
-                if (space != "cornice-bar" && space != "cornice-desktop-menu" && space != "cornice-agent-prompt" && space != "hyprvoice") continue;
+                if (!shellLayers.contains(space) && space != "hyprvoice") continue;
                 if (layer["pid"].toInteger() <= 0) continue;
                 if (space == "hyprvoice") voicePids.insert(layer["pid"].toInteger());
                 else shellPids.insert(layer["pid"].toInteger());
@@ -1013,8 +1015,10 @@ void Broker::configureDesktop(const QString &name) {
     // The popup shares its shell process with the bar but is created on demand.
     // Register its route before it appears, so its first pointer event is native.
     for (const auto pid : shellPids)
-        for (const auto &space : {QString("cornice-bar"), QString("cornice-desktop-menu"), QString("cornice-agent-prompt")})
-            overlays.append(QJsonObject{{"name", space}, {"pid", pid}, {"keyboard", space == "cornice-agent-prompt"}, {"localInView", space != "cornice-agent-prompt"}});
+        for (const auto &space : shellLayers)
+            overlays.append(QJsonObject{{"name", space}, {"pid", pid},
+                {"keyboard", space == "cornice-agent-prompt" || space == "cornice-panel" || space == "cornice-menu"},
+                {"localInView", space == "cornice-bar" || space == "cornice-desktop-menu"}});
     for (const auto pid : voicePids)
         overlays.append(QJsonObject{{"name", "hyprvoice"}, {"pid", pid}, {"keyboard", true}});
     const QJsonObject configuration{{"owner", desktop.configurationOwner}, {"seatName", name}, {"seatId", desktop.id},

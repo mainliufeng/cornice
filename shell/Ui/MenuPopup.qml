@@ -96,6 +96,7 @@ Item {
   function activate(level, entry, index) {
     if (!opened || !entry || !entry.enabled || entry.isSeparator || entries(level)[index] !== entry) return
     if (canOpen(entry)) { openSubmenu(level, entry, index); return }
+    if (DesktopSession.readOnly) return
     try {
       if (typeof entry.sendTriggered === "function") entry.sendTriggered()
       else if (root.ownerId !== "") {

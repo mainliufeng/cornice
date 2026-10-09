@@ -11,6 +11,15 @@ QtObject {
   readonly property var state: service ? service.desktops.find(item => item.name === selected) || ({}) : ({})
   readonly property string viewedWorkspaceName: !agentShell && service && service.observer && service.observer.isOpen
     ? String(service.observer.presentationState.workspace || "").replace(/^name:/, "") : String(state.workspaceName || "")
+  readonly property bool readOnly: !agentShell && secondary && service && service.observer
+    && service.observer.isOpen && !service.observer.humanControl
+  function exec(command) {
+    if (readOnly || !service || !service.observer || !service.observer.isOpen || !service.observer.humanControl
+        || state.controlMode !== "human" || !state.seatId || !state.generation) return false
+    Quickshell.execDetached(["hyprctl", "seat", "dispatch", selected, String(state.seatId), String(state.generation),
+      "hl.dsp.exec_cmd(" + JSON.stringify(String(command)) + ")"])
+    return true
+  }
   function workspace(slot) {
     if (selected && selected !== "main") {
       if (!agentShell && service && service.observer && service.observer.isOpen && !service.observer.humanControl) {

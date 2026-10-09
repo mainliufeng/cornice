@@ -32,8 +32,6 @@ Item {
     }
     if (section === "left" && DesktopSession.agentShell && !configured("cn.workspaces")) out.unshift({id:"cn.workspaces"})
     if (section === "left" && DesktopSession.agentShell && !configured("cn.agent-desktop")) out.push({id:"cn.agent-desktop"})
-    if (!DesktopSession.agentShell && DesktopSession.service && DesktopSession.service.observer && DesktopSession.service.observer.isOpen)
-      return out.filter(entry => entry.id === "cn.workspaces" || entry.id === "cn.agent-desktop")
     return out
   }
 

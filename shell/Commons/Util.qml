@@ -81,6 +81,7 @@ QtObject {
   }
 
   function exec(command) {
+    if (DesktopSession.secondary && !DesktopSession.agentShell) return DesktopSession.exec(command)
     Quickshell.execDetached(["sh", "-c", command])
   }
 }

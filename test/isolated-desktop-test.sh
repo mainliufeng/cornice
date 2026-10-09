@@ -51,5 +51,7 @@ exec nice -n 15 bwrap --unshare-all "${network[@]}" --die-with-parent --new-sess
   --setenv CORNICE_TEST_SANDBOX 1 --setenv PYTHONDONTWRITEBYTECODE 1 \
   --unsetenv WAYLAND_DISPLAY --unsetenv WAYLAND_SOCKET --unsetenv DISPLAY \
   --unsetenv HYPRLAND_INSTANCE_SIGNATURE --unsetenv DBUS_SESSION_BUS_ADDRESS \
+  --unsetenv HYPRLAND_ACTION_ID --unsetenv HYPRLAND_SEAT_NAME --unsetenv HYPRLAND_SEAT_ID \
+  --unsetenv HYPRLAND_SEAT_GENERATION --unsetenv HYPRLAND_SEAT_OUTPUT \
   --unsetenv CORNICE_TRIAL_STATE_DIR \
   -- /usr/bin/python3 "$prefix/test/$suite"

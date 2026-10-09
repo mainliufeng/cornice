@@ -125,12 +125,12 @@ Item {
             const item = entry.modelData
             // A left click on a tray item means "show me its menu" for most
             // items (nm-applet, fcitx, bluetooth); items without one activate.
-            if (mouse.button === Qt.MiddleButton) item.secondaryActivate()
+            if (mouse.button === Qt.MiddleButton) { if (!DesktopSession.readOnly) item.secondaryActivate() }
             else if (item.hasMenu) root.showMenu(item, entry)
-            else item.activate()
+            else if (!DesktopSession.readOnly) item.activate()
           }
 
-          onWheel: wheel => entry.modelData.scroll(wheel.angleDelta.y > 0 ? 1 : 0, false)
+          onWheel: wheel => { if (!DesktopSession.readOnly) entry.modelData.scroll(wheel.angleDelta.y > 0 ? 1 : 0, false) }
         }
 
         Connections {
