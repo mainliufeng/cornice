@@ -149,8 +149,13 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     assert not pathlib.Path(info['run'], 'launch-environment').exists()
     record("supervised Cornice inherits actual Lua IME and application environment; temporary export is removed")
     selected = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
-    # Both the human shell and all private shells share this right-side layout.
     cli_path = release / "cornice/bin/cornice"
+    desktops = json.loads(subprocess.check_output([str(cli_path), "desktop", "list"],
+        env=selected | {"CORNICE_PATH": str(release / "cornice")}, text=True))["desktops"]
+    assert len(desktops) == 3 and all(d["humanLockPolicy"] == "continue" and d["paused"] for d in desktops), desktops
+    (BASE / "trial-initial-desktops.json").write_text(json.dumps(desktops, indent=2))
+    record("three real deployment seats explicitly allow human-lock continuation but remain initially paused without input grants")
+    # Both the human shell and all private shells share this right-side layout.
     socket_prefix = __import__('hashlib').sha256(info["instance"].encode()).hexdigest()[:8]
     for name in ("", "agent1", "agent2", "agent3"):
         socket_name = f"cs-{socket_prefix}-{name}.sock" if name else f"cornice-{os.environ['USER']}.sock"

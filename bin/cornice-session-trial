@@ -459,7 +459,10 @@ class Trial:
         # Per-trial names also avoid stale sockets left by SIGKILL/power-loss.
         # Never unlink an unknown socket to make a candidate start.
         for name in self.seat_names:
-            self.command("desktop", "create", name, "--virtual-output", "1920x1080")
+            # These explicitly enabled deployment seats may retain existing Agent
+            # control through a human-only lock; creation still leaves them paused.
+            self.command("desktop", "create", name, "--virtual-output", "1920x1080",
+                         "--human-lock-policy", "continue")
             for item in (runtime).glob("seat-" + name + "-*"):
                 identity = item.lstat()
                 if stat.S_ISSOCK(identity.st_mode):
