@@ -300,7 +300,9 @@ void Broker::resume(const QString &name, QLocalSocket *owner, bool agent) {
     const auto actual = state(name);
     if (actual["humanLocked"].toBool())
         fail("Unlock human session before granting control");
-    capture(name, desktop.id, "current", owner, "png");
+    // Validate the current view without encoding an unused PNG. At display
+    // resolution the encoding alone can exhaust the viewer request deadline.
+    capture(name, desktop.id, "current", owner, "argb");
     json(compositor(
         "seat control " + name + " " + desktop.id + " " + actual["generation"].toString() + " resume-composed", true));
     const auto resumed = state(name);

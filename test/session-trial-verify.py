@@ -62,7 +62,7 @@ try:
     profile.write_text(original)
     settings = BASE / "config/cornice/config.json"
     settings.parent.mkdir(parents=True, exist_ok=True)
-    settings.write_text(json.dumps({"agentDesktop": {"enabled": False}, "weather": {"intervalMinutes": 0},
+    settings.write_text(json.dumps({"agentDesktop": {"enabled": False}, "bar": {"layout": {"left": [], "right": ["cn.agent-desktop", {"id": "cn.agent-desktop"}]}}, "weather": {"intervalMinutes": 0},
         "background": {"enabled": False}, "idle": {"lock": 0, "screenOffAc": 0, "screenOffBattery": 0,
         "dimAc": 0, "dimBattery": 0, "lockOnSleep": False, "lockOnLockSignal": False, "lockOnLidClose": False}}))
     configuration = BASE / "trial.lua"
@@ -89,6 +89,9 @@ hl.define_submap("trial-test", function() hl.bind("escape", hl.dsp.submap("reset
                                 "--cornice", PRODUCT, "--config", configuration))
     release = pathlib.Path(prepared["prepared"])
     assert not status()["armed"] and settings.read_bytes() == original_settings
+    layout = json.loads((release / "config-home/cornice/config.json").read_text())["bar"]["layout"]
+    assert layout["left"] == [] and layout["right"] == ["cn.agent-desktop"], layout
+    record("prepare preserves an existing right-side Agent control and removes duplicate copies")
     trial_classic = release / "config-home/fcitx5/conf/classicui.conf"
     assert not (release / "config-home/fcitx5").is_symlink()
     assert 'Font="Sans 12"' in trial_classic.read_text()
@@ -127,6 +130,16 @@ hl.define_submap("trial-test", function() hl.bind("escape", hl.dsp.submap("reset
     assert not pathlib.Path(info['run'], 'launch-environment').exists()
     record("supervised Cornice inherits actual Lua IME and application environment; temporary export is removed")
     selected = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
+    # Both the human shell and all private shells share this right-side layout.
+    cli_path = release / "cornice/bin/cornice"
+    socket_prefix = __import__('hashlib').sha256(info["instance"].encode()).hexdigest()[:8]
+    for name in ("", "agent1", "agent2", "agent3"):
+        socket_name = f"cs-{socket_prefix}-{name}.sock" if name else f"cornice-{os.environ['USER']}.sock"
+        target_env = selected | {"CORNICE_PATH": str(release / "cornice"), "CORNICE_SHELL_SOCKET": str(RT / socket_name)}
+        geometry = json.loads(subprocess.check_output([str(cli_path), "ipc", "bar", "geometry"], env=target_env, text=True))
+        controls = [entry for entry in geometry if entry["id"] == "cn.agent-desktop"]
+        assert len(controls) == 1 and controls[0]["section"] == "right", (name, controls)
+    record("human and all Agent bars render exactly one configured right-side switch/status control")
     subprocess.run(["grim", str(BASE / "trial-desktop.png")], env=selected, check=True, timeout=5)
     # Inspect actual registered emergency bindings, not just generated config text.
     bindings = json.loads(subprocess.check_output(["/usr/bin/hyprctl", "-j", "binds"], env=selected, text=True))

@@ -281,6 +281,20 @@ try:
     wait(lambda: cli('state', 'agent1')['paused'])
     assert fcitx.poll() is None
     record('viewer process exit releases takeover, pauses the Agent and preserves Fcitx')
+    # Match the physical laptop display that exposed the PNG-encoding stall.
+    with socket.socket(socket.AF_UNIX) as owner:
+        owner.settimeout(5); owner.connect(path)
+        rpc(owner, 'fit', {'name': 'agent1', 'width': 3072, 'height': 1920, 'scale': 2})
+        frame = rpc(owner, 'frame', {'name': 'agent1'})
+        assert frame['pixelSize'] == [3072, 1920], frame
+        started = time.monotonic()
+        rpc(owner, 'takeover', {'name': 'agent1'})
+        elapsed = time.monotonic() - started
+        assert elapsed < 1, ('takeover consumed the two-second viewer deadline', elapsed)
+        frame = rpc(owner, 'frame', {'name': 'agent1'})
+        assert frame['pixelSize'] == [3072, 1920]
+        rpc(owner, 'release', {'name': 'agent1'})
+    record(f'3072x1920 takeover completes in {elapsed:.3f}s with full-resolution frames')
     print('Artifacts:', BASE, flush=True)
 except Exception:
     if 'qs' in globals() and qs.poll() is None:

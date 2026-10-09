@@ -159,9 +159,21 @@ def prepare(args):
         config_file = config_root / "cornice/config.json"
         settings = read(config_file) if config_file.exists() else {}
         settings["agentDesktop"] = {"enabled": True, "desktops": []}
-        left = settings.setdefault("bar", {}).setdefault("layout", {}).setdefault("left", [])
-        if not any(item.get("id") == "cn.agent-desktop" for item in left):
-            left.append({"id": "cn.agent-desktop"})
+        layout = settings.setdefault("bar", {}).setdefault("layout", {})
+        # A configured entry in any section already provides both controls.
+        found = False
+        for section in ("left", "center", "right"):
+            entries = []
+            for item in layout.get(section, []):
+                identity = item if isinstance(item, str) else item.get("id")
+                if identity == "cn.agent-desktop":
+                    if found:
+                        continue
+                    found = True
+                entries.append(item)
+            layout[section] = entries
+        if not found:
+            layout["left"].append({"id": "cn.agent-desktop"})
         atomic(config_file, settings)
         files = [p for p in product.rglob("*") if p.is_file()]
         files += [release / name for name in ("Hyprland", "runner", "hyprland.lua", "autostart.json")]

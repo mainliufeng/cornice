@@ -17,6 +17,11 @@ Item {
   readonly property bool transparent: Util.option(barConfig, "transparent", false)
   readonly property var layout: Util.option(barConfig, "layout", ({}))
 
+  function configured(id) {
+    return ["left", "center", "right"].some(section =>
+      Util.option(layout, section, []).some(entry => (typeof entry === "string" ? entry : entry && entry.id) === id))
+  }
+
   // Entries may be a bare id ("cn.clock") or an object with inline options.
   function entriesFor(section) {
     const raw = Util.option(layout, section, [])
@@ -25,8 +30,8 @@ Item {
       if (typeof entry === "string") out.push({ id: entry })
       else if (entry && entry.id) out.push(entry)
     }
-    if (section === "left" && DesktopSession.agentShell && !out.some(entry => entry.id === "cn.workspaces")) out.unshift({id:"cn.workspaces"})
-    if (section === "left" && DesktopSession.agentShell && !out.some(entry => entry.id === "cn.agent-desktop")) out.push({id:"cn.agent-desktop"})
+    if (section === "left" && DesktopSession.agentShell && !configured("cn.workspaces")) out.unshift({id:"cn.workspaces"})
+    if (section === "left" && DesktopSession.agentShell && !configured("cn.agent-desktop")) out.push({id:"cn.agent-desktop"})
     return out
   }
 
