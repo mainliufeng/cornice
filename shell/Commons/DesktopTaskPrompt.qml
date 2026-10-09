@@ -12,8 +12,41 @@ Item {
   property bool opened: false
   property string error: ""
   property string submitted: ""
+  property var drafts: ({})
+  property var accepted: ({})
+  property var submission: ({})
+  property bool restoringDraft: false
   readonly property var task: service && service.tasks[name] ? service.tasks[name] : ({phase:"idle"})
-  function open(target) { name = target; error = ""; opened = true; Qt.callLater(() => editor.forceActiveFocus()) }
+  function saveDraft(target, text) {
+    if (!target) return
+    drafts = Object.assign({}, drafts, {[target]:text})
+  }
+  function open(target) {
+    saveDraft(name, editor.text)
+    restoringDraft = true; name = target; editor.text = String(drafts[target] || ""); restoringDraft = false
+    error = ""; opened = true; Qt.callLater(() => editor.forceActiveFocus())
+  }
+  function updateTasks() {
+    if (!service) return
+    const records = Object.assign({}, accepted)
+    for (const target of Object.keys(records)) {
+      const record = Object.assign({}, records[target])
+      const current = service.tasks[target]
+      if (!current || current.runId !== record.runId) continue
+      if (["failed", "needs_attention", "blocked"].includes(current.phase) && !record.failureSeen) {
+        record.failureSeen = true
+        if (!drafts[target]) saveDraft(target, record.text)
+        if (name === target && editor.text === "") editor.text = String(drafts[target] || "")
+      } else if (["running", "completed"].includes(current.phase) && !record.started) {
+        record.started = true
+        if (!opened && name === target && editor.text === record.text) editor.text = ""
+        if (drafts[target] === record.text) saveDraft(target, "")
+      }
+      records[target] = record
+    }
+    accepted = records
+  }
+  Connections {target:root.service;function onTasksChanged() {root.updateTasks()}}
   function draft() {
     const button = runButton.mapToItem(null, 0, 0)
     return {text:editor.text, preedit:editor.preeditText, focused:editor.activeFocus, submitted:submitted, error:error,
@@ -28,15 +61,34 @@ Item {
       editor.forceActiveFocus(); return
     }
     if (editor.text.trim() === "") return
-    submitted = editor.text.trim(); error = ""; run.stdinEnabled = true; run.running = true
+    submitted = editor.text.trim(); submission = {name:name,text:submitted}; error = ""
+    saveDraft(name, editor.text); run.stdinEnabled = true; run.running = true
   }
   Process {
     id: run
-    command: [root.service.prefix + "/bin/cornice-agent-runtime", "start", root.name]
+    command: [root.service.prefix + "/bin/cornice-agent-runtime", "start", root.submission.name || root.name]
+    property var reply: null
     stdinEnabled: true
-    onStarted: { write(root.submitted); stdinEnabled = false }
-    stderr: StdioCollector { onStreamFinished: root.error = text.trim() }
-    onExited: code => { if (code === 0) { root.opened = false; editor.text = "" } }
+    onStarted: { reply = null; write(root.submission.text); stdinEnabled = false }
+    stdout: StdioCollector { onStreamFinished: {try {run.reply = JSON.parse(text)} catch(e) {root.error = "任务启动结果无效，输入内容已保留。"}} }
+    stderr: StdioCollector {
+      onStreamFinished: if (text.trim() !== "") {
+        try { root.error = String(JSON.parse(text).error || text.trim()) }
+        catch(e) { root.error = text.trim() }
+      }
+    }
+    onExited: code => {
+      if (code === 0 && reply && reply.accepted === true && reply.started === true && reply.name === root.submission.name && reply.runId) {
+        root.accepted = Object.assign({}, root.accepted, {[reply.name]:{runId:reply.runId,text:root.submission.text,started:false,failureSeen:false}})
+        root.service.submissionResult(reply.name, "")
+        root.opened = false
+        root.updateTasks()
+      } else {
+        if (root.error === "") root.error = "任务未能启动，输入内容已保留。"
+        if (root.service) root.service.submissionResult(root.submission.name, root.error)
+      }
+      if (root.service) root.service.refreshTasks()
+    }
   }
   PanelWindow {
     id: window; visible: root.opened
@@ -50,7 +102,9 @@ Item {
       Text { text: root.service ? root.service.desktopLabel(root.name) + " · 新任务" : "新任务"; color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.largeFontSize }
       Text { text: "默认模型 · " + (root.service ? root.service.modelConfig.model || "未配置" : "");color:Color.muted;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize }
       TextArea {
-        id: editor; width:parent.width;height:150;wrapMode:TextEdit.Wrap;placeholderText:"描述希望 Agent 在这个桌面完成的任务…"
+        id: editor; width:parent.width;height:150;wrapMode:TextEdit.Wrap
+        onTextChanged:if (!root.restoringDraft) root.saveDraft(root.name, text)
+        placeholderText:"描述希望 Agent 在这个桌面完成的任务…"
         placeholderTextColor:Color.muted
         color:Color.foreground; font.family:Style.fontFamily;font.pixelSize:Style.fontSize
         background: Rectangle {color:Color.background;radius:Style.radius;border.color:Color.surfaceBorder}
@@ -59,7 +113,7 @@ Item {
           else if (event.key === Qt.Key_Return && (event.modifiers & Qt.ControlModifier)) {root.submit();event.accepted = true}
         }
       }
-      Text {width:parent.width;wrapMode:Text.Wrap;text:root.error || root.task.message || "接管时 Agent 会等待或中止；提交任务将启用 Agent 控制。";color:root.error ? Color.urgent : Color.muted;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
+      Text {width:parent.width;wrapMode:Text.Wrap;text:root.error || (root.service ? root.service.taskError : "") || root.task.message || "接管时 Agent 会等待或中止；提交任务将启用 Agent 控制。";color:root.error || (root.service && root.service.taskError) || ["failed","needs_attention","blocked"].includes(root.task.phase) ? Color.urgent : Color.muted;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
       Row {spacing:Style.space(1)
         PanelButton {id:runButton;label:run.running ? "启动中…" : "运行 · Ctrl+Enter";enabled:!run.running && (editor.text.trim() !== "" || editor.preeditText !== "");onClicked:root.submit()}
         PanelButton {label:"关闭";onClicked:root.opened = false}

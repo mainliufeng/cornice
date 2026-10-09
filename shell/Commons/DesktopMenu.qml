@@ -6,6 +6,7 @@ Item {
   id: root
   property string icon: "󰍹"
   property string description: "桌面"
+  property bool alert: false
   property var entries: []
   property bool opened: false
   // Extend the popup's hit area through the gap below the icon. Its visible
@@ -20,7 +21,8 @@ Item {
     if (opened) for (let i = 0; i < items.count; ++i) {
       const item = items.itemAt(i)
       out.push({name: item.modelData.key, x: popup.margins.left, y: popup.margins.top + column.y + item.y,
-        width: item.width, height: item.height, enabled: item.enabled, label: item.modelData.label})
+        width: item.width, height: item.height, enabled: item.enabled, label: item.modelData.label, detail:item.modelData.detail || "",
+        detailHeight:item.detailHeight, alert:item.modelData.alert === true})
     }
     return out
   }
@@ -28,6 +30,7 @@ Item {
     anchors.fill: parent; radius: Style.radius
     color: mouse.containsMouse || root.opened ? Color.hover : "transparent"
     Text { anchors.centerIn: parent; text: root.icon; color: Color.foreground; font.family: Style.iconFamily; font.pixelSize: Style.fontSize + 3 }
+    Rectangle {anchors.right:parent.right;anchors.top:parent.top;width:7;height:7;radius:3.5;visible:root.alert;color:Color.urgent}
     MouseArea {
       id: mouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
       onEntered: { closeDelay.stop(); root.opened = true }
@@ -65,13 +68,25 @@ Item {
         id: items; model: root.entries
         delegate: Rectangle {
           required property var modelData
-          width: column.width; height: Style.space(5)
+          property real detailHeight: detailText.visible ? detailText.implicitHeight : 0
+          width: column.width; height: modelData.detail ? labelText.implicitHeight + detailHeight + Style.space(2) : Style.space(5)
           enabled: modelData.enabled !== false
           color: rowMouse.containsMouse ? Color.hover : "transparent"
           Text {
-            anchors { left: parent.left; leftMargin: Style.space(1.5); verticalCenter: parent.verticalCenter }
-            text: (modelData.selected ? "✓ " : "") + modelData.label; color: parent.enabled ? Color.foreground : Color.muted
+            id:labelText
+            anchors { left: parent.left; right:parent.right; leftMargin: Style.space(1.5); rightMargin:Style.space(1.5) }
+            y: modelData.detail ? Style.space(1) : (parent.height - implicitHeight) / 2
+            text: (modelData.selected ? "✓ " : "") + modelData.label; color: modelData.alert ? Color.urgent : parent.enabled ? Color.foreground : Color.muted
+            elide:Text.ElideRight
             font.family: Style.fontFamily; font.pixelSize: Style.fontSize
+          }
+          Text {
+            id:detailText;visible:!!modelData.detail
+            anchors {left:labelText.left;right:labelText.right}
+            y:labelText.y + labelText.implicitHeight
+            text:modelData.detail || "";wrapMode:Text.Wrap;maximumLineCount:8;elide:Text.ElideRight
+            color:modelData.alert ? Color.urgent : Color.muted
+            font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize
           }
           MouseArea {
             id: rowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
