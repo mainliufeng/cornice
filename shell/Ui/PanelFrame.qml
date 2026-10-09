@@ -18,6 +18,9 @@ Item {
   // Placement, overridable per plugin.
   property string edge: "top"           // top | bottom | center
   property int panelWidth: 360
+  // Menus can reserve their expanded width so Wayland pointer coordinates
+  // never go stale when a child column appears. Other panels keep one width.
+  property int windowWidth: panelWidth
   property int panelHeight: 400
   property bool takesKeyboard: false
   // Dismiss when the user clicks somewhere else. This needs the same keyboard
@@ -86,17 +89,29 @@ Item {
             Math.round(((window.screen ? window.screen.height : 1080) - root.panelHeight) / 2))
         : 0
     margins.bottom: root.edge === "bottom" ? Style.space(2) : 0
-    margins.left: Math.max(0, Math.round(((window.screen ? window.screen.width : 1280) - root.panelWidth) / 2))
+    margins.left: Math.max(0, Math.round(((window.screen ? window.screen.width : 1280) - root.windowWidth) / 2))
 
-    implicitWidth: root.panelWidth
+    implicitWidth: root.windowWidth
     implicitHeight: root.panelHeight
 
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "cornice-panel"
     WlrLayershell.keyboardFocus: root.wantsKeyboard ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
+    MouseArea {
+      anchors.right: parent.right
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      width: Math.max(0, root.windowWidth - root.panelWidth)
+      enabled: width > 0
+      onClicked: root.close()
+    }
+
     Surface {
-      anchors.fill: parent
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      width: root.panelWidth
       padding: Style.space(1.4)
 
       Item {

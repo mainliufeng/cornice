@@ -17,18 +17,19 @@ PanelFrame {
   id: root
 
   edge: "top"
-  panelWidth: 320
+  windowWidth: Math.min(640, window.screen ? window.screen.width - Style.space(2) : 640)
+  panelWidth: Math.min(page === "themes" ? 640 : 320, window.screen ? window.screen.width - Style.space(2) : 640)
   readonly property int rowHeight: Style.space(5.5)
 
   readonly property var notifications: host ? host.services["cn.notifications"] : null
   readonly property bool dnd: notifications ? notifications.dnd === true : false
 
-  // One level of pages: the root menu, and the theme picker behind "Theme".
-  // Cycling is fine for two themes; the list needs a page.
+  // Theme choices expand beside the persistent root menu.
   property string page: "root"
   property var themes: []
   // Index into `rows` of the keyboard highlight; -1 until the first move.
   property int selection: -1
+  property int rootSelection: 0
   // Live theme preview: what to restore if the choice is cancelled with Esc.
   property string themeBefore: ""
   property bool themeConfirmed: false
@@ -71,12 +72,12 @@ PanelFrame {
 
   panelHeight: Math.min(
     window.screen ? window.screen.height - Style.barHeight - Style.space(4) : 560,
-    contentHeight + Style.space(2.4))
+    Math.max(contentHeight, rootRows.reduce((sum, row) => sum + (row.separator === true ? Style.space(1.4) : rowHeight), 0)) + Style.space(2.4))
 
   function activate(row) {
     // Page rows navigate the panel; they must not close it.
     if (row.page === "themes") {
-      root.page = "themes"
+      if (root.page !== "themes") { rootSelection = selection; root.page = "themes" }
       return
     }
     if (row.page === "root") {
@@ -118,6 +119,7 @@ PanelFrame {
   // dropped in while the shell is running).
   onOpened: {
     root.page = "root"
+    rootSelection = 0
     themeBefore = ""
     themeConfirmed = false
     resetSelection()
@@ -134,7 +136,8 @@ PanelFrame {
     } else {
       cancelPreview()
     }
-    resetSelection()
+    if (page === "root") selection = rootSelection
+    else resetSelection()
   }
   onSelectionChanged: {
     ensureVisible(selection)
@@ -167,6 +170,7 @@ PanelFrame {
   }
 
   function ensureVisible(index) {
+    const viewport = page === "themes" ? themeViewport : rootViewport
     if (index < 0 || !viewport || viewport.height <= 0) return
     let y = 0
     for (let i = 0; i < index; i++)
@@ -195,7 +199,14 @@ PanelFrame {
     case Qt.Key_Return:
     case Qt.Key_Enter:
     case Qt.Key_Space:
-      activateSelected(); event.accepted = true; break
+      if (!event.isAutoRepeat) activateSelected(); event.accepted = true; break
+    case Qt.Key_Left:
+    case Qt.Key_Backspace:
+      if (!event.isAutoRepeat) page = "root"
+      event.accepted = true; break
+    case Qt.Key_Right:
+      if (!event.isAutoRepeat && rows[selection] && rows[selection].page === "themes") activateSelected()
+      event.accepted = true; break
     case Qt.Key_Home:
       selection = -1; moveSelection(1); event.accepted = true; break
     case Qt.Key_End:
@@ -215,10 +226,20 @@ PanelFrame {
     }
   }
 
-  Flickable {
-    id: viewport
-    anchors.fill: parent
-    anchors.margins: Style.space(1.1)
+  component MenuViewport: Flickable {
+    property bool themeColumn: false
+    readonly property var displayedRows: themeColumn ? root.themeRows : root.rootRows
+    function inspect() {
+      const out = []
+      for (let i = 0; i < displayedItems.count; ++i) {
+        const row = displayedItems.itemAt(i)
+        const point = row.mapToItem(root.window.contentItem, row.width / 2, row.height / 2)
+        out.push({page: row.modelData.page || "", theme: row.modelData.theme || "", x: Math.round(point.x), y: Math.round(point.y)})
+      }
+      return out
+    }
+    readonly property int displayedSelection: themeColumn ? root.selection : root.page === "root" ? root.selection : root.rootSelection
+
     contentHeight: column.implicitHeight
     clip: true
     boundsBehavior: Flickable.StopAtBounds
@@ -229,7 +250,8 @@ PanelFrame {
       spacing: 1
 
       Repeater {
-        model: root.rows
+        id: displayedItems
+        model: displayedRows
 
         delegate: Item {
           id: row
@@ -250,7 +272,7 @@ PanelFrame {
             anchors.fill: parent
             visible: row.modelData.separator !== true
             radius: Style.radius
-            color: row.index === root.selection ? Color.workspaceActive
+            color: row.index === displayedSelection ? Color.workspaceActive
                  : row.hovered ? Color.hover : "transparent"
           }
 
@@ -265,7 +287,7 @@ PanelFrame {
               anchors.verticalCenter: parent.verticalCenter
               width: Style.space(1.8)
               text: row.modelData.glyph || ""
-              color: row.index === root.selection ? Color.workspaceActiveText : Color.accent
+              color: row.index === displayedSelection ? Color.workspaceActiveText : Color.accent
               font.family: Style.iconFamily
               font.pixelSize: Style.fontSize
             }
@@ -274,7 +296,7 @@ PanelFrame {
               anchors.verticalCenter: parent.verticalCenter
               width: parent.width - Style.space(3.4)
               text: row.modelData.label || ""
-              color: row.index === root.selection ? Color.workspaceActiveText : Color.foreground
+              color: row.index === displayedSelection ? Color.workspaceActiveText : Color.foreground
               elide: Text.ElideRight
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
@@ -290,14 +312,44 @@ PanelFrame {
             cursorShape: Qt.PointingHandCursor
             onEntered: {
               row.hovered = true
-              if (row.modelData.separator !== true) root.selection = row.index
+              if (themeColumn === (root.page === "themes")) root.selection = row.index
+              else if (!themeColumn) root.rootSelection = row.index
             }
             onExited: row.hovered = false
-            onClicked: root.activate(row.modelData)
+            onClicked: {
+              if (!themeColumn && row.modelData.page !== "themes") root.page = "root"
+              root.activate(row.modelData)
+            }
           }
         }
       }
     }
+  }
+
+  MenuViewport {
+    id: rootViewport
+    anchors.left: parent.left
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    anchors.margins: Style.space(1.1)
+    width: (parent.width - Style.space(2.2)) / (root.page === "themes" ? 2 : 1)
+  }
+  Rectangle {
+    visible: root.page === "themes"
+    x: parent.width / 2
+    width: 1
+    height: parent.height
+    color: Color.surfaceBorder
+  }
+  MenuViewport {
+    id: themeViewport
+    themeColumn: true
+    visible: root.page === "themes"
+    anchors.right: parent.right
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    anchors.margins: Style.space(1.1)
+    width: rootViewport.width - Style.space(1.1)
   }
 
   ShellIpc {
@@ -318,6 +370,8 @@ PanelFrame {
         commands: entries.filter(row => row.command).map(row => String(row.command).split(" ").slice(0, 2).join(" ")),
         selected: entries.filter(row => row.selected === true).length,
         selection: root.selection,
+        columns: root.page === "themes" ? 2 : 1,
+        panels: root.page === "themes" ? [rootViewport.inspect(), themeViewport.inspect()] : [rootViewport.inspect()],
         theme: Theme.name,
         themes: root.themes
       })

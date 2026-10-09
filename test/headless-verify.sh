@@ -16,14 +16,7 @@ prefix=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export CORNICE_PATH="$prefix"
 export PATH="$prefix/bin:$PATH"
 
-# Leftovers from a harness that was killed before its cleanup ran: an orphaned
-# headless Hyprland keeps a core at 100% forever (this is what once had a laptop
-# fan screaming for 11 hours). Sweep them before starting a new run.
-pkill -f "Hyprland -c /tmp/cn" 2>/dev/null
-pkill -f "mutter --headless --wayland --wayland-display=cornice" 2>/dev/null
-sleep 0.3
-
-runtime=$(mktemp -d /tmp/cn-XXXXXX)   # short: unix socket paths are length-limited
+runtime=$(mktemp -d /tmp/menuverify-XXXXXX)   # short: unix socket paths are length-limited
 # Isolated brightness backend: interaction tests must never change host hardware.
 mkdir -p "$runtime/test-bin"
 export CORNICE_TEST_BACKLIGHT="$runtime/backlight-level"
@@ -57,7 +50,6 @@ cleanup() {
   pkill -f "Hyprland -c $runtime/hyprland.conf" 2>/dev/null
   [[ -n $mutter_pid ]] && kill "$mutter_pid" 2>/dev/null
   [[ -n $dbus_pid ]] && kill "$dbus_pid" 2>/dev/null
-  pkill -f "mutter --headless --wayland --wayland-display=cornice-test" 2>/dev/null
   sleep 0.4
   if ((keep)); then
     echo "artifacts kept in $runtime"
@@ -76,10 +68,6 @@ warn() { printf '  WARN  %s\n' "$1"; }
 expect_eq() {   # label expected actual
   if [[ $2 == "$3" ]]; then pass "$1"; else fail "$1 (expected '$2', got '$3')"; fi
 }
-
-# Leftovers from an interrupted run would collide on socket names.
-pkill -f "mutter --headless --wayland --wayland-display=cornice-test" 2>/dev/null
-sleep 0.2
 
 export XDG_RUNTIME_DIR="$runtime"
 # Desktop entries are localized from the shell's locale. A real session gets
@@ -159,18 +147,18 @@ dbus_pid=$DBUS_PID
 export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
 pass "private session bus: ${DBUS_ADDR%%guid=*}"
 
-mutter --headless --wayland --no-x11 --wayland-display=cornice-test \
+mutter --headless --wayland --no-x11 --wayland-display=menuverify-test \
   --virtual-monitor 1280x800 >"$runtime/mutter.log" 2>&1 &
 mutter_pid=$!
 
 for _ in $(seq 1 100); do
-  [[ -S "$runtime/cornice-test" ]] && break
+  [[ -S "$runtime/menuverify-test" ]] && break
   sleep 0.1
 done
-if [[ -S "$runtime/cornice-test" ]]; then pass "headless mutter is up"
+if [[ -S "$runtime/menuverify-test" ]]; then pass "headless mutter is up"
 else fail "mutter never created its socket"; tail -20 "$runtime/mutter.log"; exit 1; fi
 
-export WAYLAND_DISPLAY=cornice-test
+export WAYLAND_DISPLAY=menuverify-test
 # LIBSEAT_BACKEND=noop: libseat cannot find a live logind session here, and an
 #   "inactive session" makes Hyprland skip every frame commit.
 # AQ_DRM_DEVICES=/dev/null: deny aquamarine any DRM node, so the nested Wayland
@@ -337,6 +325,12 @@ if ((ready)); then
 else
   fail "the shell never answered 'cornice ping'"
   echo "--- shell.log ---"; tail -40 "$runtime/shell.log"
+fi
+
+if [[ ${CORNICE_MENU_ONLY:-0} == 1 ]]; then
+  source "$prefix/test/menu-ui-verify.sh"
+  ((result == 0)) && echo "RESULT: all checks passed" || echo "RESULT: failures above"
+  exit "$result"
 fi
 
 source "$prefix/test/bar-alignment-verify.sh"
@@ -772,60 +766,7 @@ fi
 "$prefix/bin/cornice-tray-activate" --help >/dev/null 2>&1 \
   && pass "tray helper is runnable" || fail "tray helper is not runnable"
 
-section "tray submenu hover"
-python3 "$prefix/test/fake-tray-menu.py" >"$runtime/tray-fixture.log" 2>&1 &
-tray_fixture_pid=$!
-for _ in $(seq 1 30); do
-  cornice ipc tray dump 2>/dev/null | jq -e '.[] | select(.id == "cornice-menu-test")' >/dev/null && break
-  sleep 0.1
-done
-cornice ipc tray invoke cornice-menu-test menu >/dev/null 2>&1
-sleep 0.5
-menu_state=$(cornice ipc tray menuState 2>/dev/null || echo '{}')
-expect_eq "fixture menu opens" "true" "$(jq -r '.opened' <<<"$menu_state")"
-hover_x=$(jq -r '.rows[] | select(.text == "First submenu") | .x' <<<"$menu_state")
-hover_y=$(jq -r '.rows[] | select(.text == "First submenu") | .y' <<<"$menu_state")
-# Layer-shell placement includes the bar's reserved area, which is absent from
-# PanelWindow.margins. Use the compositor's actual surface origin.
-menu_origin=$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-menu")] | first | [.x, .y] | join(" ")')
-read -r menu_x menu_y <<<"$menu_origin"
-if [[ $hover_x =~ ^[0-9]+$ && $hover_y =~ ^[0-9]+$ ]]; then
-  hover_x=$((hover_x + menu_x))
-  hover_y=$((hover_y + menu_y))
-  wayland-scanner client-header "$prefix/test/wlr-virtual-pointer-unstable-v1.xml" "$runtime/virtual-pointer.h"
-  wayland-scanner private-code "$prefix/test/wlr-virtual-pointer-unstable-v1.xml" "$runtime/virtual-pointer.c"
-  cc "$prefix/test/hover-pointer.c" "$runtime/virtual-pointer.c" -I"$runtime" \
-    $(pkg-config --cflags --libs wayland-client) -o "$runtime/hover-pointer"
-  extent=$(hyprctl monitors -j | jq -r '[(map(.x + (.width / .scale)) | max), (map(.y + (.height / .scale)) | max)] | map(ceil) | join(" ")')
-  read -r pointer_width pointer_height <<<"$extent"
-  "$runtime/hover-pointer" "$hover_x" "$hover_y" "$pointer_width" "$pointer_height" >"$runtime/hover-pointer.log" 2>&1 &
-  hover_pointer_pid=$!
-  for _ in $(seq 1 20); do
-    grep -q hovering "$runtime/hover-pointer.log" && break
-    sleep 0.05
-  done
-  sleep 0.8
-  menu_state=$(cornice ipc tray menuState)
-  expect_eq "hover opens the first submenu" "1" "$(jq -r '.depth' <<<"$menu_state")"
-  expect_eq "nested submenu appears under the stationary pointer" "Nested submenu" \
-    "$(jq -r '.rows[0].text' <<<"$menu_state")"
-  sleep 0.6
-  expect_eq "stationary pointer does not cascade into the nested submenu" "1" \
-    "$(cornice ipc tray menuState | jq -r '.depth')"
-  # A fresh move on that same nested row should deliberately open the next level.
-  sleep 1
-  menu_state=$(cornice ipc tray menuState)
-  expect_eq "deliberate movement opens the nested submenu" "2" "$(jq -r '.depth' <<<"$menu_state")"
-  expect_eq "the deepest real DBusMenu entry is rendered" "Deep leaf" "$(jq -r '.rows[0].text' <<<"$menu_state")"
-  wait "$hover_pointer_pid" || fail "virtual pointer failed: $(cat "$runtime/hover-pointer.log")"
-  hover_pointer_pid=""
-else
-  fail "submenu fixture rows not available: $menu_state ($(cat "$runtime/tray-fixture.log"))"
-fi
-cornice ipc tray invoke cornice-menu-test menu >/dev/null 2>&1
-expect_eq "closing releases the submenu stack" "0" "$(cornice ipc tray menuState | jq -r '.depth')"
-kill "$tray_fixture_pid" 2>/dev/null || true
-tray_fixture_pid=""
+source "$prefix/test/menu-ui-verify.sh"
 
 section "keyboard layout"
 layout=$(cornice ipc keylayout status 2>/dev/null || echo '{}')
