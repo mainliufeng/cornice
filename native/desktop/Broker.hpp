@@ -1,5 +1,6 @@
 #pragma once
 #include "BrowserSession.hpp"
+#include "HyprlandAdapter.hpp"
 #include "SeatDriver.hpp"
 #include <QElapsedTimer>
 #include <QJsonArray>
@@ -34,6 +35,11 @@ class Broker : public QObject {
         bool agentAllowed = true;
         bool primary = false;
         int number = 0;
+        QMap<int, QString> workspaceSlots;
+        QString configurationOwner, configurationError;
+        QJsonObject lastConfiguration;
+        QJsonArray bindingOverrides;
+
     };
     struct Binding {
         QString name, id, generation;
@@ -50,6 +56,10 @@ class Broker : public QObject {
                         const QString &format, bool agent = false);
     Desktop &managed(const QString &name);
     void save();
+    void initializeSlots(const QString &name, const QJsonObject &saved = {});
+    void configureDesktop(const QString &name);
+    void invokeControllerAction(const QJsonObject &event);
+
     void revokeBindings(const QString &name);
     void startShell(const QString &name);
     void pause(const QString &name);
@@ -62,6 +72,8 @@ class Broker : public QObject {
     QLocalSocket m_events;
     QByteArray m_eventInput;
     QTimer m_watchdog;
+    QElapsedTimer m_configurationHeartbeat;
+    HyprlandAdapter m_compositor;
     std::map<QString, Desktop> m_desktops;
     QMap<QString, Binding> m_bindings;
     QLocalSocket *m_humanOwner = nullptr;

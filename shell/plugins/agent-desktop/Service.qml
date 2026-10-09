@@ -114,7 +114,6 @@ Item {
   Connections {
     target:Hyprland
     function onRawEvent(event) {
-      if (event.name === "seatshortcut" && event.data === (DesktopSession.agentShell ? DesktopSession.name : "") + ",prompt") root.prompt(DesktopSession.agentShell ? DesktopSession.name : root.selectedDesktop)
       if (event.name === "seatworkspace" || event.name === "seatpresentation" || event.name === "seatcontrol") root.refresh()
       if (event.name === "seatcontrol") root.refreshTasks()
     }

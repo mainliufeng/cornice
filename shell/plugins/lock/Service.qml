@@ -316,7 +316,7 @@ Item {
     running: true
     stdout: StdioCollector {
       onStreamFinished: {
-        try { const features = JSON.parse(text).features; root.compositorHumanLockAvailable = ["human-lock-v1", "agent-private-output", "lock-aware-seat-input", "lock-aware-agent-export", "session-guard-v1"].every(name => features.indexOf(name) >= 0) } catch (e) {}
+        try { const features = JSON.parse(text).features; root.compositorHumanLockAvailable = ["lock-scope-v1", "private-output-v1", "lock-aware-seat-input", "lock-aware-export-v1", "session-guard-v1"].every(name => features.indexOf(name) >= 0) } catch (e) {}
       }
     }
   }
@@ -333,6 +333,7 @@ Item {
       onStreamFinished: {
         try {
           const actual = JSON.parse(text)
+          if (actual.scope === "scoped") actual.scope = "human"
           root.compositorLocked = actual.locked === true
           if (root.nativeOwned && root.scope === actual.scope) root.secure = actual.secure === true
           if (actual.locked && !actual.ownerConnected && root.pamChecked && root.pamAvailable && root.humanLockAvailable) {

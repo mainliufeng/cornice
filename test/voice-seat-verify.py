@@ -127,7 +127,7 @@ try:
     # Use the fork's genuine CLI, never an RPC test double or host socket.
     ENV['PATH'] = str(FORK / 'build-agent-session/hyprctl') + os.pathsep + ENV['PATH']
     initialize()
-    assert 'human-input-target-v1' in ctl('seat capabilities', True)['features']
+    assert 'physical-input-target-v1' in ctl('seat capabilities', True)['features']
     config.write_text('{}')
     # One retained production Desktop owns every seat's clipboard, exactly as
     # the daemon does when a user moves between their own and Agent desktops.

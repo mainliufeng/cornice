@@ -200,7 +200,7 @@ try:
     assert launched['workspace']['name']==cli('state','agent1')['workspaceName'],launched
     assert ctl('activewindow',True)['address']==human['window']
     seat_state=cli('state','agent1')
-    cycle_env=ENV | {'CORNICE_DESKTOP_NAME':'agent1','CORNICE_DESKTOP_ID':seat_state['seatId'],'CORNICE_DESKTOP_GENERATION':seat_state['generation']}
+    cycle_env=ENV | {'HYPRLAND_SEAT_NAME':'agent1','HYPRLAND_SEAT_ID':seat_state['seatId'],'HYPRLAND_SEAT_GENERATION':seat_state['generation']}
     focused=seat_state['windowAddress']
     subprocess.run([str(PRODUCT/'bin/cornice-cycle-focus'),'next'],env=cycle_env,check=True)
     assert cli('state','agent1')['windowAddress']!=focused
@@ -220,6 +220,17 @@ try:
     assert ctl('activewindow',True)['address']==human['window']
     record('Super+Shift+number moves the Agent window; Super+number switches only that seat')
 
+    agent_shell = ENV | {'CORNICE_DESKTOP_NAME': 'agent1'}
+    def agent_ui(method):
+        return json.loads(subprocess.check_output([str(PRODUCT/'bin/cornice'),'ipc','desktop',method],env=agent_shell,text=True,timeout=8))
+    for event in ('key 125 1','key 30 1','key 30 0','key 125 0'):send(event)
+    wait(lambda:agent_ui('status')['prompt']=={'open':True,'name':'agent1'})
+    send('type native controller prompt')
+    wait(lambda:agent_ui('promptDraft')['text']=='native controller prompt')
+    send('key 1 1');send('key 1 0')
+    wait(lambda:not agent_ui('status')['prompt']['open'])
+    record('seat-scoped Super+A unicasts to the correct private shell; native prompt typing works during takeover')
+
     control('takeover');wait(lambda:not status()['humanControl'])
     wait(lambda:cli('state','agent1')['paused'])
     agent_workspace=cli('state','agent1')['workspace']
@@ -236,6 +247,16 @@ try:
     shell('ipc','desktopObserver','follow')
     wait(lambda:status()['presentation'].get('following'))
     record('read-only browsing an empty workspace leaves the agent current workspace unchanged; Follow restores it')
+
+    before_text=(BASE/'agent1.txt').read_text()
+    for event in ('key 125 1','key 30 1','key 30 0','key 125 0'):send(event)
+    wait(lambda:json.loads(shell('ipc','desktop','status'))['prompt']=={'open':True,'name':'agent1'})
+    send('type readonly controller prompt')
+    wait(lambda:json.loads(shell('ipc','desktop','promptDraft'))['text']=='readonly controller prompt')
+    assert (BASE/'agent1.txt').read_text()==before_text
+    send('key 1 1');send('key 1 0')
+    wait(lambda:not json.loads(shell('ipc','desktop','status'))['prompt']['open'])
+    record('readonly Super+A targets the selected desktop through its local controller UI without editing the application')
     control('main');wait(lambda:not status()['open'])
     wait(lambda:human_state()==human)
     record('application shortcut and button work; releasing control pauses agent, returning restores human workspace/focus/cursor')

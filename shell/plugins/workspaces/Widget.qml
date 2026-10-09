@@ -27,7 +27,7 @@ Item {
     const out = []
     for (let id = 1; id <= 10; ++id) {
       const scoped = DesktopSession.secondary
-      const name = "cornice-agent-" + DesktopSession.selected + "-ws-" + id
+      const name = String((DesktopSession.state.workspaceSlots || []).find(item => item.id === id)?.name || "").replace(/^name:/, "")
       const current = (workspaces || []).find(ws => scoped ? ws.name === name : ws.id === id)
       out.push({id: id, label: String(id), occupied: !!current && current.toplevels.values.length > 0,
         active: scoped ? DesktopSession.viewedWorkspaceName === name : id === focusedId})

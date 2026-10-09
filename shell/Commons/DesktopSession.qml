@@ -14,7 +14,7 @@ QtObject {
   function workspace(slot) {
     if (selected && selected !== "main") {
       if (!agentShell && service && service.observer && service.observer.isOpen && !service.observer.humanControl) {
-        service.observer.browseWorkspace("name:cornice-agent-" + selected + "-ws-" + slot)
+        service.observer.browseWorkspace((state.workspaceSlots || []).find(item => item.id === slot)?.name || "")
         return
       }
       if (service) service.operate(["view-workspace", selected, String(slot)])

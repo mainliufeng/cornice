@@ -63,7 +63,7 @@ QJsonObject desktopRequest(const QString &path, const QJsonObject &request) {
 
 Broker::Broker(QString instance)
     : m_instance(std::move(instance)), m_socketPath(desktopSocket(m_instance)),
-      m_directory(QFileInfo(m_socketPath).path()) {
+      m_directory(QFileInfo(m_socketPath).path()), m_compositor(m_instance) {
     QDir().mkpath(m_directory);
     QFile::setPermissions(m_directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
     for (const auto &file : QDir(m_directory).entryList({"frame-*", "shot-*"}, QDir::Files))
@@ -71,7 +71,7 @@ Broker::Broker(QString instance)
     const auto caps = json(compositor("seat capabilities", true)).object();
     const auto features = caps["features"].toArray();
     for (const QString name : {"seat-input", "seat-identity", "atomic-snapshot", "readonly-workspace", "argb-frame",
-                               "input-pause", "composed-seat-input", "seat-shell-v1", "native-seat-presentation-v1", "primary-desktop-v1"})
+                               "input-pause", "composed-seat-input", "seat-shell-v1", "native-seat-presentation-v1", "primary-desktop-v1", "managed-seat-config-v1"})
         if (!features.contains(name))
             fail("Required compositor capability missing: " + name);
     if (caps["protocol"].toInt() != 1)
@@ -98,6 +98,7 @@ Broker::Broker(QString instance)
                 recovered.agentAllowed = it.value().toObject()["agentAllowed"].toBool(true);
                 recovered.number = it.value().toObject()["number"].toInt(m_nextDesktopNumber);
                 m_nextDesktopNumber = std::max(m_nextDesktopNumber, recovered.number + 1);
+                initializeSlots(it.key(), it.value().toObject()["workspaceSlots"].toObject());
                 // Recovery revokes survivors; never restore input automatically.
                 pause(it.key());
                 startShell(it.key());
@@ -110,7 +111,16 @@ Broker::Broker(QString instance)
     auto &main = m_desktops.at("main");
     main.primary = true; main.number = 1; main.agentAllowed = false;
     pause("main");
+    m_configurationHeartbeat.start();
     connect(&m_watchdog, &QTimer::timeout, this, [this] {
+        if (m_configurationHeartbeat.elapsed() >= 1000) {
+            m_configurationHeartbeat.restart();
+            for (auto &[name, desktop] : m_desktops) {
+                if (desktop.primary) continue;
+                try { configureDesktop(name); desktop.configurationError.clear(); }
+                catch (const std::exception &error) { desktop.configurationError = QString::fromUtf8(error.what()); }
+            }
+        }
         if (m_humanOwner) {
             try {
                 const auto actual = state(m_humanBinding.name);
@@ -179,6 +189,7 @@ Broker::~Broker() {
     for (auto &[name, desktop] : m_desktops) {
         try {
             pause(name);
+            if (!desktop.configurationOwner.isEmpty()) m_compositor.remove(desktop.configurationOwner);
         } catch (...) {
         }
     }
@@ -188,25 +199,7 @@ Broker::~Broker() {
 }
 
 QByteArray Broker::compositor(const QString &command, bool asJson) {
-    const auto path = qEnvironmentVariable("XDG_RUNTIME_DIR") + "/hypr/" + m_instance + "/.socket.sock";
-    QLocalSocket socket;
-    socket.connectToServer(path);
-    if (!socket.waitForConnected(1000))
-        fail("Bound compositor unavailable");
-    socket.write((asJson ? "j/" : "/") + command.toUtf8());
-    if (!socket.waitForBytesWritten(1000))
-        fail("Compositor write timed out");
-    QByteArray answer;
-    while (socket.state() == QLocalSocket::ConnectedState) {
-        if (socket.bytesAvailable() == 0 && !socket.waitForReadyRead(2000) &&
-            socket.state() == QLocalSocket::ConnectedState)
-            fail("Compositor response timed out");
-        answer += socket.readAll();
-        if (answer.size() > 8 * 1024 * 1024)
-            fail("Compositor response too large");
-    }
-    answer += socket.readAll();
-    return answer.trimmed();
+    return m_compositor.command(command, asJson);
 }
 
 QJsonObject Broker::state(const QString &name) {
@@ -226,8 +219,12 @@ QJsonObject Broker::state(const QString &name) {
     QJsonArray workspaceSlots;
     const auto workspace = result["workspace"].toString().remove("name:");
     for (int i = 1; i <= 10; ++i) {
-        const auto value = primary ? QString::number(i) : "cornice-agent-" + name + "-ws-" + QString::number(i);
-        workspaceSlots.append(QJsonObject{{"id", i}, {"name", primary ? value : "name:" + value}, {"active", workspace == value}});
+        const auto value = primary ? QString::number(i) : m_desktops.contains(name) ? m_desktops.at(name).workspaceSlots.value(i) : QString{};
+        workspaceSlots.append(QJsonObject{{"id", i}, {"name", value}, {"active", workspace == QString(value).remove("name:")}});
+    }
+    if (m_desktops.contains(name)) {
+        result["bindingOverrides"] = m_desktops.at(name).bindingOverrides;
+        result["configurationError"] = m_desktops.at(name).configurationError;
     }
     result["workspaceName"] = workspace;
     result["workspaceSlots"] = workspaceSlots;
@@ -280,9 +277,13 @@ Broker::Desktop &Broker::managed(const QString &name) {
 }
 void Broker::save() {
     QJsonObject saved;
-    for (const auto &[name, desktop] : m_desktops)
+    for (const auto &[name, desktop] : m_desktops) {
+        QJsonObject workspaceMap;
+        for (auto it = desktop.workspaceSlots.begin(); it != desktop.workspaceSlots.end(); ++it)
+            workspaceMap[QString::number(it.key())] = it.value();
         saved[name] = QJsonObject{{"seatId", desktop.id}, {"privateOutput", desktop.privateOutput},
-                                  {"agentAllowed", desktop.agentAllowed}, {"number", desktop.number}};
+                                  {"agentAllowed", desktop.agentAllowed}, {"number", desktop.number}, {"workspaceSlots", workspaceMap}};
+    }
     QSaveFile file(m_directory + "/desktops.json");
     if (!file.open(QIODevice::WriteOnly))
         fail("Cannot save desktop lifecycle record");
@@ -540,6 +541,11 @@ void Broker::validateFrame(const Binding &binding, const QString &frame, const Q
 }
 
 QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Binding *binding, QLocalSocket *owner) {
+    if (method == "controller-action") {
+        invokeControllerAction(params);
+        return {{"processed", true}};
+    }
+
     if (method == "doctor")
         return {{"instance", m_instance}, {"capabilities", json(compositor("seat capabilities", true)).object()}};
     if (method == "list") {
@@ -595,10 +601,12 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             m_desktops.emplace(name,
                                Desktop{actual["seatId"].toString(), {}, privateOutput ? output : QString{}, {}, {}});
             m_desktops.at(name).number = m_nextDesktopNumber++;
+            initializeSlots(name);
             const auto switched = compositor("seat workspace " + name + " " + workspace);
             if (switched != "ok")
                 fail(QString::fromUtf8(switched));
             pause(name);
+            configureDesktop(name);
             if (params.contains("human-lock-policy")) {
                 const auto paused = state(name);
                 const auto policy = params["human-lock-policy"].toString();
@@ -665,7 +673,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         if (slot < 1 || slot > 10 || state(name)["humanLocked"].toBool())
             fail("Expected workspace 1–10 in unlocked session");
         const auto reply =
-            compositor("seat view-workspace " + name + " name:cornice-agent-" + name + "-ws-" + QString::number(slot));
+            compositor("seat view-workspace " + name + " " + desktop.workspaceSlots.value(slot));
         if (reply != "ok")
             fail(QString::fromUtf8(reply));
         return state(name);
@@ -690,6 +698,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             .object();
     }
     if (method == "present") {
+        configureDesktop(name);
         if (desktop.primary) fail("Primary desktop already uses the native display");
         if (state("main")["controlMode"].toString() == "agent") pause("main");
         if (m_humanOwner == owner &&
@@ -719,6 +728,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                     nullptr, owner);
         const auto workspace = params["workspace"].toString("current");
         atom(workspace);
+        if (workspace != "current") m_compositor.ensureWorkspace(name, desktop.id, workspace);
         return json(compositor("seat present " + name + " " + desktop.id + " " + output + " " + workspace + " " +
                                    m_presentations[owner],
                                true))
@@ -929,7 +939,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         if (method == "desktop.workspace" && params.contains("slot")) {
             const int slot = params["slot"].toInt();
             if (slot < 1 || slot > 10) fail("Workspace slot must be 1–10");
-            value = desktop.primary ? QString::number(slot) : "name:cornice-agent-" + name + "-ws-" + QString::number(slot);
+            value = desktop.primary ? QString::number(slot) : desktop.workspaceSlots.value(slot);
         }
         atom(value);
         const auto reply = compositor("seat act " + name + " " + desktop.id + " " + binding->generation + " " +
@@ -949,4 +959,100 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     }
     fail("Unknown desktop method");
     return {};
+}
+
+void Broker::initializeSlots(const QString &name, const QJsonObject &saved) {
+    auto &desktop = m_desktops.at(name);
+    desktop.configurationOwner = uuid() + uuid();
+    for (int i = 1; i <= 10; ++i) {
+        const auto value = saved[QString::number(i)].toString("name:cornice-agent-" + name + "-ws-" + QString::number(i));
+        atom(value);
+        desktop.workspaceSlots[i] = value;
+    }
+}
+
+void Broker::configureDesktop(const QString &name) {
+    auto &desktop = m_desktops.at(name);
+    if (desktop.primary) return;
+    const auto actual = state(name);
+    if (actual["seatId"].toString() != desktop.id) fail("Stale configuration target");
+    if (actual["humanLocked"].toBool()) {
+        if (!desktop.lastConfiguration.isEmpty()) m_compositor.renew(desktop.configurationOwner);
+        return;
+    }
+    QJsonArray bindings;
+    auto add = [&](const QStringList &keys, const QString &action, const QString &argument, bool readonly) {
+        bindings.append(QJsonObject{{"keys", QJsonArray::fromStringList(keys)}, {"action", action},
+            {"argument", argument}, {"viewOnly", readonly}, {"overrideInherited", true}});
+    };
+    for (int i = 1; i <= 10; ++i) {
+        const auto workspace = desktop.workspaceSlots.value(i);
+        if (desktop.lastConfiguration.isEmpty()) m_compositor.ensureWorkspace(name, desktop.id, workspace);
+        const auto key = QString::number(i % 10);
+        add({"SUPER", key}, "workspace", workspace, false);
+        add({"SUPER", "SHIFT", key}, "move", workspace, false);
+        add({"SUPER", key}, "workspace", workspace, true);
+    }
+    add({"SUPER", "A"}, "notify", "prompt", false);
+    add({"SUPER", "A"}, "notify", "prompt", true);
+    QJsonArray overlays;
+    QSet<qint64> shellPids, voicePids;
+    const auto outputs = json(compositor("layers", true)).object();
+    for (auto output = outputs.begin(); output != outputs.end(); ++output) {
+        const auto levels = output.value().toObject()["levels"].toObject();
+        for (auto level = levels.begin(); level != levels.end(); ++level)
+            for (const auto &value : level.value().toArray()) {
+                const auto layer = value.toObject();
+                const auto space = layer["namespace"].toString();
+                if (space != "cornice-bar" && space != "cornice-desktop-menu" && space != "cornice-agent-prompt" && space != "hyprvoice") continue;
+                if (layer["pid"].toInteger() <= 0) continue;
+                if (space == "hyprvoice") voicePids.insert(layer["pid"].toInteger());
+                else shellPids.insert(layer["pid"].toInteger());
+            }
+    }
+    // The popup shares its shell process with the bar but is created on demand.
+    // Register its route before it appears, so its first pointer event is native.
+    for (const auto pid : shellPids)
+        for (const auto &space : {QString("cornice-bar"), QString("cornice-desktop-menu"), QString("cornice-agent-prompt")})
+            overlays.append(QJsonObject{{"name", space}, {"pid", pid}, {"keyboard", space == "cornice-agent-prompt"}, {"localInView", space != "cornice-agent-prompt"}});
+    for (const auto pid : voicePids)
+        overlays.append(QJsonObject{{"name", "hyprvoice"}, {"pid", pid}, {"keyboard", true}});
+    const QJsonObject configuration{{"owner", desktop.configurationOwner}, {"seatName", name}, {"seatId", desktop.id},
+        {"bindings", bindings}, {"overlays", overlays}, {"callback", m_socketPath}};
+    if (configuration == desktop.lastConfiguration) {
+        try { m_compositor.renew(desktop.configurationOwner); return; }
+        catch (const std::exception &) { /* Reload or expired lease: restore atomically. */ }
+    }
+    const auto configured = m_compositor.configure(configuration);
+    desktop.lastConfiguration = configuration;
+    desktop.bindingOverrides = configured["inheritedOverrides"].toArray();
+}
+
+void Broker::invokeControllerAction(const QJsonObject &event) {
+    const auto name = event["seat"].toString();
+    if (!m_desktops.contains(name)) return;
+    const auto &desktop = m_desktops.at(name);
+    const auto actual = state(name);
+    if (event["owner"].toString() != desktop.configurationOwner || event["seatId"].toString() != desktop.id ||
+        event["generation"] != actual["generation"] || actual["humanLocked"].toBool() || event["action"].toString() != "prompt") return;
+    if (event["mode"].toString() == "readonly") {
+        const auto owner = event["viewOwner"].toString();
+        if (owner.isEmpty() || !m_presentations.values().contains(owner)) return;
+        const auto view = json(compositor("seat presentation " + owner, true)).object();
+        if (view["name"].toString() != name || !view["active"].toBool() || view["humanControl"].toBool()) return;
+    }
+    const auto actionId = event["actionId"].toString();
+    if (actionId.isEmpty()) return;
+    const auto validation = json(compositor("seat validate-context " + actionId + " " + desktop.configurationOwner, true)).object();
+    if (!validation["valid"].toBool() || validation["seatId"].toString() != desktop.id) return;
+    QProcess process;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    if (event["mode"].toString() == "readonly" || desktop.privateOutput.isEmpty()) {
+        environment.remove("CORNICE_DESKTOP_NAME");
+        environment.remove("CORNICE_SHELL_SOCKET");
+    } else environment.insert("CORNICE_DESKTOP_NAME", name);
+    process.setProcessEnvironment(environment);
+    process.setProgram(qEnvironmentVariable("CORNICE_PATH") + "/bin/cornice");
+    process.setArguments({"ipc", "desktop", "prompt", name});
+    process.startDetached();
 }

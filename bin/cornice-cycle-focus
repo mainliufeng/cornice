@@ -10,18 +10,24 @@ if [[ "$mode" != "workspace" && "$mode" != "group" && "$mode" != "all" ]]; then
   mode="workspace"
 fi
 cache_file="${XDG_RUNTIME_DIR:-/tmp}/hypr-cycle-group-${UID}.json"
-if [[ -n ${CORNICE_DESKTOP_NAME:-} ]]; then
-  [[ $CORNICE_DESKTOP_NAME =~ ^[a-zA-Z0-9_-]+$ ]] || exit 2
-  cache_file="${XDG_RUNTIME_DIR:-/tmp}/hypr-cycle-group-${UID}-${CORNICE_DESKTOP_NAME}.json"
+if [[ -n ${HYPRLAND_SEAT_NAME:-} ]]; then
+  [[ $HYPRLAND_SEAT_NAME =~ ^[a-zA-Z0-9_-]+$ ]] || exit 2
+  cache_file="${XDG_RUNTIME_DIR:-/tmp}/hypr-cycle-group-${UID}-${HYPRLAND_SEAT_NAME}.json"
 fi
 seat_dispatch() {
-  if [[ -n ${CORNICE_DESKTOP_NAME:-} ]]; then
-    local state identity generation
-    state=$(hyprctl -j seat state "$CORNICE_DESKTOP_NAME")
-    identity=${CORNICE_DESKTOP_ID:-$(jq -r .seatId <<<"$state")}
-    generation=${CORNICE_DESKTOP_GENERATION:-$(jq -r .generation <<<"$state")}
+  if [[ -n ${HYPRLAND_ACTION_ID:-} ]]; then
     local result
-    result=$(hyprctl seat dispatch "$CORNICE_DESKTOP_NAME" "$identity" "$generation" "$1")
+    result=$(hyprctl seat context-dispatch "$HYPRLAND_ACTION_ID" "$1")
+    [[ $result == ok ]] || { echo "$result" >&2; return 1; }
+    return
+  fi
+  if [[ -n ${HYPRLAND_SEAT_NAME:-} ]]; then
+    local state identity generation
+    state=$(hyprctl -j seat state "$HYPRLAND_SEAT_NAME")
+    identity=${HYPRLAND_SEAT_ID:-$(jq -r .seatId <<<"$state")}
+    generation=${HYPRLAND_SEAT_GENERATION:-$(jq -r .generation <<<"$state")}
+    local result
+    result=$(hyprctl seat dispatch "$HYPRLAND_SEAT_NAME" "$identity" "$generation" "$1")
     [[ $result == ok ]] || { echo "$result" >&2; return 1; }
   else hyprctl dispatch "$1"; fi
 }
@@ -29,8 +35,8 @@ seat_dispatch() {
 
 internal=0
 client=0
-if [[ -n ${CORNICE_DESKTOP_NAME:-} ]]; then
-  address=$(hyprctl -j seat state "$CORNICE_DESKTOP_NAME" | jq -r .windowAddress)
+if [[ -n ${HYPRLAND_SEAT_NAME:-} ]]; then
+  address=$(hyprctl -j seat state "$HYPRLAND_SEAT_NAME" | jq -r .windowAddress)
   json=$(hyprctl -j clients | jq --arg address "$address" '.[] | select(.address==$address)')
 else json="$(hyprctl -j activewindow 2>/dev/null || true)"; fi
 if [[ -n "$json" ]]; then
@@ -66,7 +72,7 @@ if not cache_file:
     raise SystemExit(0)
 
 def hyprctl_json(*args):
-    seat = os.environ.get("CORNICE_DESKTOP_NAME")
+    seat = os.environ.get("HYPRLAND_SEAT_NAME")
     if seat and args[0] in ("activeworkspace", "activewindow"):
         state = json.loads(subprocess.check_output(["hyprctl", "-j", "seat", "state", seat], text=True))
         if args[0] == "activewindow":
@@ -142,7 +148,7 @@ cache_file = os.environ.get("CACHE_FILE")
 is_fullscreen = os.environ.get("FULLSCREEN") == "1"
 
 def hyprctl_json(*args):
-    seat = os.environ.get("CORNICE_DESKTOP_NAME")
+    seat = os.environ.get("HYPRLAND_SEAT_NAME")
     if seat and args[0] in ("activeworkspace", "activewindow"):
         state = json.loads(subprocess.check_output(["hyprctl", "-j", "seat", "state", seat], text=True))
         if args[0] == "activewindow":

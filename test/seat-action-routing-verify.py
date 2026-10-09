@@ -134,7 +134,7 @@ try:
         env = dict(ENV, WAYLAND_DEBUG='1')
         if seat:
             state = cli('state', seat)
-            env.update(WAYLAND_DISPLAY=state['display'], CORNICE_DESKTOP_NAME=seat, CORNICE_DESKTOP_ID=state['seatId'], CORNICE_DESKTOP_GENERATION=state['generation'])
+            env.update(WAYLAND_DISPLAY=state['display'], HYPRLAND_SEAT_NAME=seat, HYPRLAND_SEAT_ID=state['seatId'], HYPRLAND_SEAT_GENERATION=state['generation'])
             # Launch with the real seat launcher so placement uses its workspace.
             command = shlex.join(['/usr/bin/env', 'WAYLAND_DEBUG=1', '/usr/bin/python3', str(ROOT / 'test/agent-desktop-client.py'), name, str(paths[name])]) + ' 2>' + shlex.quote(str(BASE / (name + '.log')))
             cli('launch', seat, '--', '/bin/sh', '-c', command)

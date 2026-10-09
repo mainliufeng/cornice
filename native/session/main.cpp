@@ -1,4 +1,4 @@
-#include "cornice-human-lock-v1.h"
+#include "hyprland-lock-scope-v1.h"
 #include <QCoreApplication>
 #include <QDBusConnection>
 #include <QDBusMessage>
@@ -24,8 +24,8 @@ class SessionGuard : public QObject {
   Q_OBJECT
 public:
   wl_display *display = nullptr;
-  cornice_human_lock_manager_v1 *manager = nullptr;
-  cornice_session_guard_v1 *guardian = nullptr;
+  hyprland_lock_scope_manager_v1 *manager = nullptr;
+  hyprland_lock_guard_v1 *guardian = nullptr;
   ~SessionGuard() override {
     if (display)
       wl_display_disconnect(display);
@@ -38,18 +38,18 @@ public:
     static const wl_registry_listener listener{
         [](void *data, wl_registry *registry, uint32_t id, const char *name,
            uint32_t) {
-          if (!strcmp(name, "cornice_human_lock_manager_v1")) {
+          if (!strcmp(name, "hyprland_lock_scope_manager_v1")) {
             auto *self = static_cast<SessionGuard *>(data);
             self->manager =
-                static_cast<cornice_human_lock_manager_v1 *>(wl_registry_bind(
-                    registry, id, &cornice_human_lock_manager_v1_interface, 1));
+                static_cast<hyprland_lock_scope_manager_v1 *>(wl_registry_bind(
+                    registry, id, &hyprland_lock_scope_manager_v1_interface, 1));
           }
         },
         [](void *, wl_registry *, uint32_t) {}};
     wl_registry_add_listener(registry, &listener, this);
     if (wl_display_roundtrip(display) < 0 || !manager)
       return false;
-    guardian = cornice_human_lock_manager_v1_get_guard(manager);
+    guardian = hyprland_lock_scope_manager_v1_get_guard(manager);
     if (wl_display_roundtrip(display) < 0)
       return false;
     auto *notifier = new QSocketNotifier(wl_display_get_fd(display),

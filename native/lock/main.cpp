@@ -1,5 +1,5 @@
 #include "Background.hpp"
-#include "cornice-human-lock-v1.h"
+#include "hyprland-lock-scope-v1.h"
 #include "ext-session-lock-v1.h"
 #include <QCommandLineParser>
 #include <QFile>
@@ -7,6 +7,8 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QJsonDocument>
+#include <QJsonArray>
+#include <QLocalSocket>
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -38,7 +40,7 @@ struct Output {
   uint32_t id = 0;
   wl_output *output = nullptr;
   wl_surface *surface = nullptr;
-  cornice_human_lock_surface_v1 *lockSurface = nullptr;
+  hyprland_lock_scope_surface_v1 *lockSurface = nullptr;
   ext_session_lock_surface_v1 *fullSurface = nullptr;
   bool roleKnown = false, privateOutput = false, configured = false,
        dirty = true;
@@ -90,8 +92,8 @@ public:
   wl_seat *seat = nullptr;
   wl_keyboard *keyboard = nullptr;
   wl_pointer *pointer = nullptr;
-  cornice_human_lock_manager_v1 *manager = nullptr;
-  cornice_human_lock_v1 *lock = nullptr;
+  hyprland_lock_scope_manager_v1 *manager = nullptr;
+  hyprland_lock_scope_v1 *lock = nullptr;
   ext_session_lock_manager_v1 *fullManager = nullptr;
   ext_session_lock_v1 *fullLock = nullptr;
   bool fullScope = false, showUser = true;
@@ -225,7 +227,7 @@ public:
       fullLock = nullptr;
     }
     if (lock) {
-      cornice_human_lock_v1_unlock_and_destroy(lock);
+      hyprland_lock_scope_v1_unlock_and_destroy(lock);
       lock = nullptr;
     }
     if (wl_display_roundtrip(display) < 0) {
@@ -347,7 +349,7 @@ public:
     if (o->fullSurface)
       ext_session_lock_surface_v1_ack_configure(o->fullSurface, serial);
     else
-      cornice_human_lock_surface_v1_ack_configure(o->lockSurface, serial);
+      hyprland_lock_scope_surface_v1_ack_configure(o->lockSurface, serial);
     o->width = width;
     o->height = height;
     o->configured = true;
@@ -440,13 +442,13 @@ public:
       return;
     }
     o->lockSurface =
-        cornice_human_lock_v1_get_lock_surface(lock, o->surface, o->output);
-    static const cornice_human_lock_surface_v1_listener listener{
+        hyprland_lock_scope_v1_get_lock_surface(lock, o->surface, o->output);
+    static const hyprland_lock_scope_surface_v1_listener listener{
         [](void *data, auto *, uint32_t serial, uint32_t w, uint32_t h) {
           auto o = static_cast<Output *>(data);
           o->owner->configure(o, serial, w, h);
         }};
-    cornice_human_lock_surface_v1_add_listener(o->lockSurface, &listener, o);
+    hyprland_lock_scope_surface_v1_add_listener(o->lockSurface, &listener, o);
   }
   bool start() {
     display = wl_display_connect(nullptr);
@@ -494,13 +496,13 @@ public:
             wl_output_add_listener(o->output, &outputListener, o.get());
             self->outputs[id] = std::move(o);
             if (self->manager && self->ownsLock())
-              cornice_human_lock_manager_v1_get_output_role(
+              hyprland_lock_scope_manager_v1_get_output_role(
                   self->manager, self->outputs[id]->output);
-          } else if (!strcmp(iface, "cornice_human_lock_manager_v1")) {
+          } else if (!strcmp(iface, "hyprland_lock_scope_manager_v1")) {
             self->manager =
-                static_cast<cornice_human_lock_manager_v1 *>(wl_registry_bind(
-                    registry, id, &cornice_human_lock_manager_v1_interface, 1));
-            static const cornice_human_lock_manager_v1_listener listener{
+                static_cast<hyprland_lock_scope_manager_v1 *>(wl_registry_bind(
+                    registry, id, &hyprland_lock_scope_manager_v1_interface, 1));
+            static const hyprland_lock_scope_manager_v1_listener listener{
                 [](void *data, auto *, wl_output *output,
                    uint32_t privateOutput) {
                   auto self = static_cast<HumanLock *>(data);
@@ -511,7 +513,7 @@ public:
                       self->createSurface(o.get());
                     }
                 }};
-            cornice_human_lock_manager_v1_add_listener(self->manager, &listener,
+            hyprland_lock_scope_manager_v1_add_listener(self->manager, &listener,
                                                        self);
           } else if (!strcmp(iface, "ext_session_lock_manager_v1")) {
             self->fullManager =
@@ -647,7 +649,7 @@ public:
           if (it->second->fullSurface)
             ext_session_lock_surface_v1_destroy(it->second->fullSurface);
           if (it->second->lockSurface)
-            cornice_human_lock_surface_v1_destroy(it->second->lockSurface);
+            hyprland_lock_scope_surface_v1_destroy(it->second->lockSurface);
           if (it->second->surface)
             wl_surface_destroy(it->second->surface);
           wl_output_destroy(it->second->output);
@@ -658,7 +660,7 @@ public:
         (fullScope && !fullManager) || !compositor || !shm)
       return false;
     for (const auto &[id, o] : outputs)
-      cornice_human_lock_manager_v1_get_output_role(manager, o->output);
+      hyprland_lock_scope_manager_v1_get_output_role(manager, o->output);
     if (wl_display_roundtrip(display) < 0)
       return false;
     if (fullScope) {
@@ -676,8 +678,8 @@ public:
           }};
       ext_session_lock_v1_add_listener(fullLock, &listener, this);
     } else {
-      lock = cornice_human_lock_manager_v1_lock(manager);
-      static const cornice_human_lock_v1_listener lockListener{
+      lock = hyprland_lock_scope_manager_v1_create_lock(manager);
+      static const hyprland_lock_scope_v1_listener lockListener{
           [](void *data, auto *) {
             auto self = static_cast<HumanLock *>(data);
             self->secure = true;
@@ -688,7 +690,32 @@ public:
             self->event("finished");
             QCoreApplication::quit();
           }};
-      cornice_human_lock_v1_add_listener(lock, &lockListener, this);
+      hyprland_lock_scope_v1_add_listener(lock, &lockListener, this);
+    }
+    if (!fullScope) {
+      QLocalSocket socket;
+      socket.connectToServer(qEnvironmentVariable("XDG_RUNTIME_DIR") + "/hypr/" +
+                             qEnvironmentVariable("HYPRLAND_INSTANCE_SIGNATURE") + "/.socket.sock");
+      if (!socket.waitForConnected(1000)) return false;
+      socket.write("j/seat list");
+      if (!socket.waitForBytesWritten(1000)) return false;
+      QByteArray answer;
+      while (socket.state() == QLocalSocket::ConnectedState) {
+        if (!socket.bytesAvailable() && !socket.waitForReadyRead(1000) && socket.state() == QLocalSocket::ConnectedState) return false;
+        answer += socket.readAll();
+      }
+      answer += socket.readAll();
+      const auto document = QJsonDocument::fromJson(answer);
+      if (!document.isArray()) return false;
+      for (const auto &value : document.array()) {
+        const auto seat = value.toObject();
+        if (seat["primary"].toBool() || seat["scopePolicy"].toString() != "allow") continue;
+        hyprland_lock_scope_v1_allow_seat(lock, seat["name"].toString().toUtf8().constData(),
+          seat["seatId"].toString().toUtf8().constData(), seat["generation"].toString().toUtf8().constData());
+      }
+      for (const auto &[id, o] : outputs)
+        if (o->privateOutput) hyprland_lock_scope_v1_exclude_output(lock, o->output);
+      hyprland_lock_scope_v1_activate(lock);
     }
     for (const auto &[id, o] : outputs)
       createSurface(o.get());

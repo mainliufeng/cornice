@@ -185,7 +185,7 @@ try:
     assert ctl("seat lock-state", True)["secure"]
     os.kill(deny.pid, signal.SIGKILL); deny.wait()
     wait(lambda: ctl("seat lock-state", True)["phase"] == "orphaned")
-    recovery = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"], env=ENV,
+    recovery = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--scope", "session", "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"], env=ENV,
         stdin=subprocess.PIPE, stdout=open(BASE / "recovery-events", "w"), stderr=open(BASE / "recovery.log", "w"), start_new_session=True, text=True)
     PROCESSES.append(recovery); wait(lambda: ctl("seat lock-state", True)["secure"] and ctl("seat lock-state", True)["ownerConnected"])
     recovery.stdin.write("emergency-unlock\n"); recovery.stdin.flush(); wait(lambda: not ctl("seat lock-state", True)["locked"])
@@ -265,7 +265,7 @@ try:
     ok('eval hl.monitor({output="human",mode="3072x1920",position="0x0",scale=2})')
     wait(lambda: next(m for m in ctl("monitors", True) if m["name"] == "human")["scale"] == 2)
     shell("lock")
-    wait(lambda: ctl("seat lock-state", True)["scope"] == "human" and ctl("seat lock-state", True)["secure"])
+    wait(lambda: ctl("seat lock-state", True)["scope"] == "scoped" and ctl("seat lock-state", True)["secure"])
     assert not cli("state", "continuing")["paused"]
     wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["presentation"].get("active") is not True)
     def visible_lock():
@@ -302,9 +302,10 @@ try:
     os.kill(owners[0], signal.SIGKILL)
     wait(lambda: ctl("seat lock-state", True)["ownerConnected"] and ctl("seat lock-state", True)["lockId"] != old_id)
     wait(lambda: ctl("seat lock-state", True)["secure"])
-    assert not cli("state", "continuing")["paused"]
-    tool(fresh, "capture")
-    record("actual Cornice native human lock clears observer buffers; provider crash automatically restores authentication while continue binding survives")
+    assert ctl("seat lock-state", True)["scope"] == "session"
+    assert cli("state", "continuing")["paused"]
+    tool(fresh, "capture", succeeds=False)
+    record("scope owner loss escalates to a full lock, revokes continuing seats, and automatically restores native authentication")
     shell("suspend")
     wait(lambda: len([e for e in events() if e["event"] == "suspend"]) == 2)
     wait(lambda: json.loads(shell("ipc", "lock", "status"))["scope"] == "session" and json.loads(shell("ipc", "lock", "status"))["secure"])
