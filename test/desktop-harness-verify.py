@@ -108,6 +108,15 @@ try:
  main.call('desktop_workspace',{'workspace':'1'});assert cli('state','main')['workspace']=='1'
  assert cli('state','agent2')==before_agent
  record('enabled primary desktop uses identical MCP capture/input/workspace tools with native primary devices')
+ main.call('desktop_browser_connect');main.call('browser_navigate',{'url':url})
+ tree=str(main.call('browser_snapshot'))
+ target=re.search(r'textbox "Answer" \[ref=([^\]]+)\]',tree).group(1)
+ button=re.search(r'button "Verify" \[ref=([^\]]+)\]',tree).group(1)
+ main.call('browser_type',{'target':target,'text':'Primary browser 中文'})
+ main.call('browser_click',{'target':button})
+ assert 'Primary browser 中文' in str(main.call('browser_snapshot'))
+ assert cli('state','agent2')==before_agent
+ record('primary desktop browser uses the same authorized CDP trees and semantic actions without affecting another desktop')
  # An existing non-Broker primary device models native input without touching
  # host devices. It is never tagged with the Broker's control generation.
  for source, name in (('virtual-keyboard-unstable-v1','virtual-keyboard'),('wlr-virtual-pointer-unstable-v1','virtual-pointer')):
