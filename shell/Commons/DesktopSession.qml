@@ -8,8 +8,14 @@ QtObject {
   property var service: null
   readonly property string selected: agentShell ? name : service ? service.selectedDesktop : ""
   readonly property var state: service ? service.desktops.find(item => item.name === selected) || ({}) : ({})
+  readonly property string viewedWorkspaceName: !agentShell && service && service.observer && service.observer.isOpen
+    ? String(service.observer.presentationState.workspace || "").replace(/^name:/, "") : String(state.workspaceName || "")
   function workspace(slot) {
     if (selected) {
+      if (!agentShell && service && service.observer && service.observer.isOpen && !service.observer.humanControl) {
+        service.observer.browseWorkspace("name:cornice-agent-" + selected + "-ws-" + slot)
+        return
+      }
       if (service) service.operate(["view-workspace", selected, String(slot)])
       return
     }

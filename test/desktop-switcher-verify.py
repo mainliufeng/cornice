@@ -1,8 +1,16 @@
-"""Exercise the actual fullscreen switcher and socket-owned human input lease."""
+"""Exercise compositor-native presentation and direct physical-seat input."""
 from desktop_harness import *
 
 
+_held_mods = {}
+
 def send(command):
+    # The virtual-keyboard protocol requires separate modifier events. Real
+    # hardware updates this state itself; mirror it rather than testing bare keys.
+    words = command.split()
+    if len(words) == 3 and words[0] == 'key' and int(words[1]) in {29:4,42:1,54:1,56:8,125:64}:
+        _held_mods[int(words[1])] = {29:4,42:1,54:1,56:8,125:64}[int(words[1])] if int(words[2]) else 0
+        send('mods ' + str(sum(set(_held_mods.values()))))
     keyboard.stdin.write(command + '\n'); keyboard.stdin.flush()
     assert select.select([keyboard.stdout], [], [], 5)[0] and keyboard.stdout.readline().strip() == 'done', command
 
@@ -44,12 +52,13 @@ def entry(name, field="entry"):
     state = cli('state', name)
     client = next(c for c in ctl('clients', True) if c['title'] == name + '-window')
     geometry = json.loads((BASE / (name + '.geometry')).read_text())[field]
-    layer = next(item for item in ctl('layers', True)['human']['levels']['2'] if item['namespace'] == 'cornice-desktop')
-    # Private output has exactly the view's physical size and output scale.
     logical = state['logicalSize']
-    toolbar = layer['h'] - logical[1]
-    click(client['at'][0] - state['position'][0] + geometry[0] + geometry[2] / 2,
-          toolbar + client['at'][1] - state['position'][1] + geometry[1] + geometry[3] / 2)
+    target = next(m for m in ctl('monitors', True) if m['name']=='human')
+    factor = min(target['width']/state['pixelSize'][0], target['height']/state['pixelSize'][1])*state['scale']/target['scale']
+    ox = (target['width']-state['pixelSize'][0]*factor*target['scale']/state['scale'])/target['scale']/2
+    oy = (target['height']-state['pixelSize'][1]*factor*target['scale']/state['scale'])/target['scale']/2
+    click(ox+(client['at'][0]-state['position'][0]+geometry[0]+geometry[2]/2)*factor,
+          oy+(client['at'][1]-state['position'][1]+geometry[1]+geometry[3]/2)*factor)
 
 
 def rejected(connection, method, params):
@@ -64,7 +73,7 @@ def rejected(connection, method, params):
         return reply['error']
 
 try:
-    initialize()
+    broker = initialize()
     for index in range(1, 4):
         cli('create', 'agent' + str(index), '--workspace', str(10 + index), '--virtual-output', '1280x800')
         cli('resume', 'agent' + str(index))
@@ -72,7 +81,7 @@ try:
     profile = BASE / 'config/fcitx5/profile'; profile.parent.mkdir(parents=True, exist_ok=True)
     profile.write_text('[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=pinyin\n\n[Groups/0/Items/0]\nName=keyboard-us\n\n[Groups/0/Items/1]\nName=pinyin\n\n[GroupOrder]\n0=Default\n')
     ENV.update(QT_IM_MODULE='fcitx', XMODIFIERS='@im=fcitx')
-    fcitx = start(['fcitx5', '-D', '--disable=vinput,cloudpinyin'], 'fcitx')
+    fcitx = start(['fcitx5', '-D', '--disable=vinput,cloudpinyin'], 'fcitx', ENV | {'WAYLAND_DEBUG':'client'})
     wait(lambda: 'true' in subprocess.run(['gdbus', 'call', '--session', '--dest', 'org.freedesktop.DBus', '--object-path', '/org/freedesktop/DBus', '--method', 'org.freedesktop.DBus.NameHasOwner', 'org.fcitx.Fcitx5'], env=ENV, capture_output=True, text=True).stdout)
     subprocess.run(['fcitx5-remote', '-c'], env=ENV, check=True)
     start(['/usr/bin/python3', ROOT / 'test/agent-desktop-client.py', 'human-window', BASE / 'human.txt'], 'human')
@@ -100,6 +109,9 @@ try:
     PROCESSES.append(keyboard)
     assert select.select([keyboard.stdout], [], [], 5)[0] and keyboard.stdout.readline().strip() == 'ready'
     ok('eval hl.monitor({output="human",mode="2560x1600",position="0x0",scale=2})')
+    ok('eval hl.bind("SUPER + F", hl.dsp.window.float(), {}); hl.bind("SUPER + M", hl.dsp.window.fullscreen({mode="fullscreen"}), {}); hl.bind("SUPER + Q", hl.dsp.window.close(), {}); hl.bind("SUPER + mouse:272", hl.dsp.window.drag(), {mouse=true})')
+    command=shlex.join(['/usr/bin/python3',str(ROOT/'test/agent-desktop-client.py'),'native-launched',str(BASE/'launched.txt')])
+    ok('eval hl.bind("SUPER + SHIFT + Return", hl.dsp.exec_cmd('+json.dumps(command)+'), {})')
     config = BASE / 'config/cornice'; config.mkdir(parents=True, exist_ok=True)
     (config / 'config.json').write_text(json.dumps({'agentDesktop': {'enabled': True}, 'bar': {'layout': {'left': [{'id': 'cn.agent-desktop'}], 'center': [], 'right': []}}, 'background': {'enabled': False}, 'weather': {'intervalMinutes': 0}, 'idle': {'lock': 0, 'screenOffAc': 0, 'screenOffBattery': 0, 'dimAc': 0, 'dimBattery': 0, 'lockOnSleep': False, 'lockOnLockSignal': False, 'lockOnLidClose': False}}))
     qs = start([str(PRODUCT / 'bin/cornice-qs'), '-p', str(PRODUCT / 'shell')], 'cornice')
@@ -122,184 +134,203 @@ try:
     row = bar_agent()
     assert row, 'desktop selector closed while pointer remained in the popup'
     subprocess.run(['grim','-o','human',str(BASE/'hover-menu.png')],env=ENV,check=True)
+    human['cursor']={'x':round(row['x']+row['width']/2),'y':round(row['y']+row['height']/2)}
     click(row['x']+row['width']/2,row['y']+row['height']/2)
     wait(lambda: status()['open'] and status()['name'] == 'agent1')
-    view = wait(lambda: status() if status()['frame'].get('scale') == 2 else None)
-    ok('dismissnotify -1')
-    layer = next(item for item in ctl('layers', True)['human']['levels']['2'] if item['namespace'] == 'cornice-desktop')
-    assert [layer[k] for k in ('x', 'y', 'w', 'h')] == [0, 0, 1280, 800], layer
-    assert view['readonly'] and view['fullscreen'] and view['frame']['pixelSize'][0] == 2560
-    assert cli('state', 'agent3') == agent3
-    subprocess.run(['grim', '-o', 'human', str(BASE / 'fullscreen-readonly-2x.png')], env=ENV, check=True)
-    before = status(); time.sleep(2); after = status()
-    fps = (after['paintedFrames'] - before['paintedFrames']) * 1000 / (after['lastPaintMs'] - before['lastPaintMs'])
-    assert fps >= 13, fps
-    (BASE / 'fullscreen-performance.json').write_text(json.dumps({'paintedFpsAt2x': round(fps, 2)}))
+    view = wait(lambda: status() if status()['presentation'].get('active') else None)
+    assert view['native'] and view['readonly'], view
+    assert not any(l['namespace']=='cornice-desktop' for level in ctl('layers',True)['human']['levels'].values() for l in level)
+    assert human_state()==human, (human_state(),human)
+    subprocess.run(['grim','-o','human',str(BASE/'native-readonly.png')],env=ENV,check=True)
+    displayed_clock(BASE/'native-readonly.png')  # Warm the image decoder outside timing.
+    ages=[]
+    for _ in range(5):
+        shot=BASE/'native-clock.ppm'
+        subprocess.run(['grim','-t','ppm','-o','human',str(shot)],env=ENV,check=True)
+        captured=int(time.monotonic()*1000)&0xffffffff
+        ages.append((captured-displayed_clock(shot))&0xffffffff)
+        time.sleep(.03)
+    frame_age=max(ages)
+    assert frame_age<200,ages
+    before=status()['presentation']['frames'];started=time.monotonic();time.sleep(2);after=status()['presentation']['frames']
+    fps=(after-before)/(time.monotonic()-started)
+    assert fps>=35,(before,after,fps)
+    (BASE/'native-performance.json').write_text(json.dumps({'nativeSceneDrawsPerSecond':fps,'paintToCaptureMs':frame_age}))
+    assert not list((RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']).glob('frame-*'))
     send('type blocked')
-    assert not (BASE / 'agent1.txt').exists() and not (BASE / 'human.txt').exists()
-    record('actual fullscreen read-only UI occupies the entire output; private client renders at matching 2x scale')
-    control('takeover')
-    wait(lambda: status()['humanControl'])
-    assert cli('state', 'agent1')['controlMode'] == 'human'
-    assert 'revoked' in tool(previous, 'state', succeeds=False)
-    assert 'human control' in cli('resume', 'agent1', succeeds=False).lower()
-    assert 'human control' in cli('bind', 'agent1', BASE / 'denied.binding', succeeds=False).lower()
-    entry('agent1'); send('type human')
-    wait(lambda: (BASE / 'agent1.txt').read_text() == 'human')
-    assert not (BASE / 'human.txt').exists() and not (BASE / 'agent2.txt').exists()
-    record('real human-seat pointer and keyboard operate the Agent application; prior agent binding and resume are rejected')
-    subprocess.run(['fcitx5-remote', '-o'], env=ENV, check=True)
-    send('type nihao'); time.sleep(.5)
-    subprocess.run(['grim', '-o', 'human', str(BASE / 'takeover-pinyin-preedit.png')], env=ENV, check=True)
-    send('key 57 1'); send('key 57 0')
-    wait(lambda: (BASE / 'agent1.txt').read_text() == 'human你好')
-    subprocess.run(['fcitx5-remote', '-c'], env=ENV, check=True)
-    assert fcitx.poll() is None
-    record('real Fcitx pinyin commits Chinese through the fullscreen viewer into the Agent GTK entry')
-    subprocess.run(['grim', '-o', 'human', str(BASE / 'fullscreen-takeover-2x.png')], env=ENV, check=True)
-    # Test modifiers and application shortcuts through the real input path.
-    for event in ('key 29 1', 'key 30 1', 'key 30 0', 'key 29 0', 'type replaced'):
-        send(event)
-    wait(lambda: (BASE / 'agent1.txt').read_text() == 'replaced')
-    record('application Ctrl+A and subsequent typing preserve modifier and key-release semantics')
-    entry('agent1', 'button')
-    wait(lambda: (BASE / 'agent1.click').read_text() == '1')
-    state = cli('state', 'agent1')
-    client = next(c for c in ctl('clients', True) if c['title'] == 'agent1-window')
-    geometry = json.loads((BASE / 'agent1.geometry').read_text())['entry']
-    y = client['at'][1] - state['position'][1] + geometry[1] + geometry[3] / 2
-    x = client['at'][0] - state['position'][0] + geometry[0]
-    for event in (f'motion {round(x + 10)} {round(y)}', 'button 272 1', f'motion {round(x + 300)} {round(y)}', 'button 272 0'):
-        send(event)
-        time.sleep(.15)
-    wait(lambda: len(json.loads((BASE / 'agent1.geometry').read_text())['selection']) == 2)
-    send('type dragged'); wait(lambda: (BASE / 'agent1.txt').read_text() == 'dragged')
-    record('real pointer clicks activate an Agent button; drag selection and typing replace the selected text')
-    control('takeover'); wait(lambda: not status()['humanControl'])
-    wait(lambda: cli('state', 'agent1')['paused'])
-    assert not status()['frame'].get('humanLocked')
-    control('run'); wait(lambda: not cli('state', 'agent1')['paused'])
-    resumed = bind('agent1')
-    snapshot = tool(resumed, 'capture')
-    tool(resumed, 'input', {'action': 'text', 'text': ' Agent恢复', 'frameId': snapshot['frameId']})
-    wait(lambda: (BASE / 'agent1.txt').read_text() == 'dragged Agent恢复')
-    record('ending takeover leaves Agent paused; explicit Run Agent restores real Unicode tool input while Fcitx remains active')
-    control('takeover'); wait(lambda: status()['humanControl'])
-    for event in ('key 29 1', 'key 56 1', 'mods 12', 'key 1 1', 'key 1 0', 'key 56 0', 'key 29 0', 'mods 0'):
-        send(event)
-    wait(lambda: not status()['humanControl'] and cli('state', 'agent1')['paused'])
-    assert status()['open'], 'Ctrl+Alt+Esc ends takeover without hiding the viewer'
-    record('Ctrl+Alt+Esc ends takeover through actual keyboard modifiers and leaves the Agent paused')
-    control('takeover'); wait(lambda: status()['humanControl'])
-    send('key 42 1')
-    control('agent2'); wait(lambda: status()['name'] == 'agent2' and status()['frame'].get('frameId'))
-    wait(lambda: cli('state', 'agent1')['paused'])
-    assert status()['readonly'] and cli('state', 'agent2')['controlMode'] == 'agent'
-    send('key 42 0'); send('type blocked')
-    assert not (BASE / 'agent2.txt').exists()
-    record('direct Agent-to-Agent switch releases held input and takeover; destination starts read-only')
-    page = BASE / 'scroll.html'
-    page.write_text('<meta charset="utf-8"><body style="height:12000px;font:32px sans-serif">真实 Chrome · 滚动测试<script>setInterval(()=>document.title="Scroll:"+Math.round(scrollY),100)</script>')
-    cli('launch', 'agent2', '--', '/opt/google/chrome/google-chrome', '--ozone-platform=wayland', '--no-first-run', '--no-default-browser-check', page.as_uri())
-    chrome = wait(lambda: next((c for c in ctl('clients', True) if c['title'].startswith('Scroll:')), None))
-    OWNED_PIDS.append(chrome['pid'])
-    control('takeover'); wait(lambda: status()['humanControl'])
-    state = cli('state', 'agent2')
-    chrome = next(c for c in ctl('clients', True) if c['pid'] == chrome['pid'])
-    x = chrome['at'][0] - state['position'][0] + chrome['size'][0] / 2
-    y = 60 + chrome['at'][1] - state['position'][1] + chrome['size'][1] / 2
-    click(x, y)
-    wait(lambda: cli('state', 'agent2')['window'].startswith('Scroll:'))
-    send('scroll 120')
-    wait(lambda: any(c['title'].startswith('Scroll:') and int(c['title'].split(':', 1)[1].split(' ')[0]) > 0 for c in ctl('clients', True)), timeout=5)
-    record('a real human wheel event scrolls actual Chrome content on the Agent desktop')
-    control('takeover'); wait(lambda: cli('state', 'agent2')['paused'])
-    control('run'); wait(lambda: not cli('state', 'agent2')['paused'])
-    os.kill(chrome['pid'], signal.SIGTERM)
-    wait(lambda: not any(c['pid'] == chrome['pid'] for c in ctl('clients', True)))
-    control('run'); wait(lambda: cli('state', 'agent2')['paused'])
-    control('run'); wait(lambda: not cli('state', 'agent2')['paused'])
-    control(''); wait(lambda: not status()['open'])
-    assert ctl('activeworkspace', True)['id'] == human['workspace']['id']
-    assert ctl('activewindow', True)['address'] == human['window']
-    assert cli('state', 'agent3') == agent3
-    record('human button returns to the original human window/workspace; another running Agent remains unchanged')
-    widget = next(item for item in json.loads(shell('ipc', 'bar', 'geometry')) if item['id'] == 'cn.agent-desktop')
-    icon = next(item for item in widget['controls'] if item['name'] == 'switch')
-    send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']/2)}")
-    def bar_agent():
-        widget = next(item for item in json.loads(shell('ipc','bar','geometry')) if item['id'] == 'cn.agent-desktop')
-        return next((item for item in widget['controls'] if item['name'] == 'agent1'),None)
-    row = wait(bar_agent)
-    wait(lambda: any(item['namespace'] == 'cornice-desktop-menu' for item in ctl('layers',True)['human']['levels']['3']))
-    time.sleep(.15)
-    subprocess.run(['grim','-o','human',str(BASE/'hover-menu.png')],env=ENV,check=True)
-    click(row['x']+row['width']/2,row['y']+row['height']/2)
-    wait(lambda: status()['open'] and status()['frame'].get('frameId'))
-    wait(lambda: status()['keyboardReady'])
-    send('key 1 1'); send('key 1 0'); wait(lambda: not status()['open'])
-    record('Escape returns from read-only view without sending Escape to the Agent application')
-    # The owner is a persistent socket, not a reusable agent credential.
-    path = str(RT / 'cornice' / ENV['HYPRLAND_INSTANCE_SIGNATURE'] / 'desktop.sock')
+    assert not (BASE/'agent1.txt').exists() and not (BASE/'human.txt').exists()
+    record('physical output renders the real agent scene at native output cadence without screenshot buffers; read-only blocks typing')
+    control('takeover');wait(lambda:status()['humanControl'])
+    assert 'revoked' in tool(previous,'state',succeeds=False)
+    entry('agent1');send('type native')
+    wait(lambda:(BASE/'agent1.txt').read_text()=='native')
+    assert not (BASE/'human.txt').exists() and not (BASE/'agent2.txt').exists()
+    record('physical pointer and keyboard directly control the agent GTK client, revoking its previous agent generation')
+    subprocess.run(['fcitx5-remote','-o'],env=ENV,check=True)
+    send('type nihao');time.sleep(.5)
+    subprocess.run(['grim','-o','human',str(BASE/'native-pinyin.png')],env=ENV,check=True)
+    send('key 57 1');send('key 57 0')
+    wait(lambda:(BASE/'agent1.txt').read_text()=='native你好')
+    subprocess.run(['fcitx5-remote','-c'],env=ENV,check=True)
+    record('native physical input composes Chinese through real Fcitx into the agent application')
+    time.sleep(.5)
+    for event in ('mods 4','key 29 1','key 30 1','key 30 0','key 29 0','mods 0','type replaced'):send(event)
+    subprocess.run(['grim','-o','human',str(BASE/'native-replaced.png')],env=ENV,check=True)
+    wait(lambda:(BASE/'agent1.txt').read_text()=='replaced')
+    entry('agent1','button');wait(lambda:(BASE/'agent1.click').read_text()=='1')
+    # Stop the control service briefly: physical input must still reach the
+    # client, proving it does not depend on a Cornice forwarding request.
+    entry('agent1');os.kill(broker.pid,signal.SIGSTOP)
+    try:
+        send('type direct')
+        wait(lambda:(BASE/'agent1.txt').read_text()=='replaceddirect',timeout=1)
+    finally:os.kill(broker.pid,signal.SIGCONT)
+    record('physical input continues while broker is stopped; no human.input RPC or frame acknowledgement is involved')
+    for code in (33,50,50):
+        send('key 125 1');send(f'key {code} 1');send(f'key {code} 0');send('key 125 0')
+    client=wait(lambda:next(c for c in ctl('clients',True) if c['title']=='agent1-window' and c['floating']))
+    assert client['fullscreen']==0
+    x,y=client['at'];state=cli('state','agent1')
+    click(x-state['position'][0]+50,y-state['position'][1]+20)
+    send('key 125 1');send('button 272 1');send(f"motion {round(x-state['position'][0]+150)} {round(y-state['position'][1]+100)}");send('button 272 0');send('key 125 0')
+    subprocess.run(['grim','-o','human',str(BASE/'native-drag.png')],env=ENV,check=True)
+    wait(lambda:next(c for c in ctl('clients',True) if c['title']=='agent1-window')['at']!=[x,y])
+    for command in ('key 125 1','key 42 1','key 28 1','key 28 0','key 42 0','key 125 0'):send(command)
+    launched=wait(lambda:next((c for c in ctl('clients',True) if c['title']=='native-launched'),None))
+    assert launched['workspace']['name']==cli('state','agent1')['workspaceName'],launched
+    assert ctl('activewindow',True)['address']==human['window']
+    seat_state=cli('state','agent1')
+    cycle_env=ENV | {'CORNICE_DESKTOP_NAME':'agent1','CORNICE_DESKTOP_ID':seat_state['seatId'],'CORNICE_DESKTOP_GENERATION':seat_state['generation']}
+    focused=seat_state['windowAddress']
+    subprocess.run([str(PRODUCT/'bin/cornice-cycle-focus'),'next'],env=cycle_env,check=True)
+    assert cli('state','agent1')['windowAddress']!=focused
+    subprocess.run([str(PRODUCT/'bin/cornice-cycle-focus'),'prev'],env=cycle_env,check=True)
+    assert cli('state','agent1')['windowAddress']==focused
+    assert ctl('activewindow',True)['address']==human['window']
+    record('the real Cornice focus-cycle helper targets the controlled seat in both directions')
+    for command in ('key 125 1','key 16 1','key 16 0','key 125 0'):send(command)
+    wait(lambda:not any(c['title']=='native-launched' for c in ctl('clients',True)))
+    record('native window floating/fullscreen, Super-drag, application launch and close stay on the target seat')
+    original_workspace=cli('state','agent1')['workspace']
+    for event in ('key 125 1','key 42 1','key 5 1','key 5 0','key 42 0','key 125 0'):send(event)
+    wait(lambda:next(c for c in ctl('clients',True) if c['title']=='agent1-window')['workspace']['name']=='cornice-agent-agent1-ws-4')
+    assert cli('state','agent1')['workspace']==original_workspace
+    for event in ('key 125 1','key 5 1','key 5 0','key 125 0'):send(event)
+    wait(lambda:cli('state','agent1')['workspace']=='cornice-agent-agent1-ws-4')
+    assert ctl('activewindow',True)['address']==human['window']
+    record('Super+Shift+number moves the Agent window; Super+number switches only that seat')
+
+    control('takeover');wait(lambda:not status()['humanControl'])
+    wait(lambda:cli('state','agent1')['paused'])
+    agent_workspace=cli('state','agent1')['workspace']
+    shell('ipc','desktopObserver','browse','name:cornice-agent-agent1-ws-2')
+    wait(lambda:status()['presentation'].get('workspace')=='cornice-agent-agent1-ws-2')
+    assert cli('state','agent1')['workspace']==agent_workspace
+    for event in ('key 125 1','key 4 1','key 4 0','key 125 0'):send(event)
+    wait(lambda:status()['presentation'].get('workspace')=='cornice-agent-agent1-ws-3')
+    assert cli('state','agent1')['workspace']==agent_workspace
+    shell('ipc','desktopObserver','takeover','true');wait(lambda:status()['humanControl'])
+    assert cli('state','agent1')['workspace']=='cornice-agent-agent1-ws-3'
+    shell('ipc','desktopObserver','takeover','false');wait(lambda:not status()['humanControl'])
+    assert cli('state','agent1')['paused']
+    shell('ipc','desktopObserver','follow')
+    wait(lambda:status()['presentation'].get('following'))
+    record('read-only browsing an empty workspace leaves the agent current workspace unchanged; Follow restores it')
+    control('');wait(lambda:not status()['open'])
+    wait(lambda:human_state()==human)
+    record('application shortcut and button work; releasing control pauses agent, returning restores human workspace/focus/cursor')
+    # Browser scroll is measured from the real rendered page's title. Its CDP
+    # grant is deliberately revoked before physical takeover, as in production.
+    from cdp_client import Cdp
+    cli('resume','agent2'); browser_binding=bind('agent2')
+    browser=tool(browser_binding,'browser');cdp=Cdp(browser['cdpUrl'])
+    html='<title>native-scroll:0</title><body style="height:12000px;background:linear-gradient(white,teal)"><h1>Native wheel</h1><script>onscroll=()=>document.title="native-scroll:"+Math.round(scrollY)</script>'
+    import urllib.parse
+    created=cdp.call('Target.createTarget',{'url':'data:text/html,'+urllib.parse.quote(html),'newWindow':True})
+    cdp.call('Target.activateTarget',{'targetId':created['targetId']})
+    browser_window=wait(lambda:next((w for w in tool(browser_binding,'windows')['windows'] if w['title'].startswith('native-scroll:0')),None))
+    tool(browser_binding,'focus',{'windowId':browser_window['id']})
+    actual=cli('state','agent2')
+    ok('seat dispatch agent2 '+actual['seatId']+' '+actual['generation']+' hl.dsp.window.fullscreen({mode="fullscreen"})')
+    shell('desktop','observe','agent2');wait(lambda:status()['presentation'].get('active'))
+    shell('ipc','desktopObserver','takeover','true');wait(lambda:status()['humanControl'])
+    send('motion 640 400');send('scroll 100')
+    wait(lambda:any(c['title'].startswith('native-scroll:') and int(c['title'].split(':')[1].split()[0])>0 for c in ctl('clients',True)))
+    cdp.close()
+    record('real Chrome scrolls from the physical wheel after CDP and automation input are revoked')
+    # Emergency return must work in the compositor, even with no UI roundtrip.
+    for event in ('key 29 1','key 56 1','key 1 1','key 1 0','key 56 0','key 29 0'):send(event)
+    wait(lambda:not status()['open']);wait(lambda:cli('state','agent2')['paused'])
+    assert ctl('activewindow',True)['address']==human['window']
+    record('Ctrl+Alt+Esc returns to the human desktop and leaves the Agent paused')
+    path=str(RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktop.sock')
+    ok('eval hl.monitor({output="human",mode="3072x1920@120",position="0x0",scale=2})')
+    cli('resume','agent1'); laptop_binding=bind('agent1')
+    tool(laptop_binding,'workspace',{'workspace':'name:cornice-agent-agent1-ws-4'})
+    laptop_window=next(w for w in tool(laptop_binding,'windows')['windows'] if w['title']=='agent1-window')
+    tool(laptop_binding,'focus',{'windowId':laptop_window['id']})
+    cli('pause','agent1')
+    human_high=human_state()
     with socket.socket(socket.AF_UNIX) as owner, socket.socket(socket.AF_UNIX) as stranger:
-        for connection in (owner, stranger): connection.settimeout(5); connection.connect(path)
-        rpc(owner, 'takeover', {'name': 'agent1'})
-        frame = rpc(owner, 'frame', {'name': 'agent1'})
-        assert 'own' in rejected(stranger, 'human.input', {'name': 'agent1', 'frameId': frame['frameId'], 'events': [{'action': 'text', 'text': 'WRONG'}]}).lower()
-        assert 'owns' in rejected(stranger, 'takeover', {'name': 'agent2'})
-    wait(lambda: cli('state', 'agent1')['paused'])
-    record('a second socket cannot steal takeover or inject input; owner disconnect pauses the Agent')
+        for connection in (owner,stranger):connection.settimeout(5);connection.connect(path)
+        begin=time.monotonic()
+        native=rpc(owner,'present',{'name':'agent1'})
+        assert native['active'] and native['native']
+        assert cli('state','agent1')['pixelSize']==[3072,1920]
+        native=rpc(owner,'takeover',{'name':'agent1'})
+        elapsed=time.monotonic()-begin
+        assert native['humanControl'] and elapsed<3,elapsed
+        assert 'required' in rejected(stranger,'takeover',{'name':'agent2'}).lower()
+        assert 'owns' in rejected(stranger,'present',{'name':'agent2'}).lower()
+        entry('agent1');send('type laptop')
+        wait(lambda:(BASE/'agent1.txt').read_text().endswith('laptop'))
+        subprocess.run(['grim','-o','human',str(BASE/'native-laptop-takeover.png')],env=ENV,check=True)
+        displayed_clock(BASE/'native-laptop-takeover.png')
+        (BASE/'native-laptop-performance.json').write_text(json.dumps({'takeoverSeconds':elapsed,'pixels':[3072,1920],'refreshHz':next(m for m in ctl('monitors',True) if m['name']=='human')['refreshRate']}))
+    wait(lambda:cli('state','agent1')['paused'])
+    wait(lambda:human_state()==human_high)
+    record('full laptop resolution takeover has no frame deadline; another socket cannot steal control and disconnect restores the human view')
+    pam=BASE/'native-pam';pam.mkdir();(pam/'permit').write_text('auth required pam_permit.so\n')
     with socket.socket(socket.AF_UNIX) as owner:
-        owner.settimeout(5); owner.connect(path)
-        rpc(owner, 'takeover', {'name': 'agent1'})
-        frame = rpc(owner, 'frame', {'name': 'agent1'})
-        rpc(owner, 'human.input', {'name': 'agent1', 'frameId': frame['frameId'], 'events': [{'action': 'key', 'code': 42, 'pressed': True}]})
-        race_env = ENV | {'WAYLAND_DISPLAY': cli('state', 'agent1')['display']}
-        race = start(['/usr/bin/python3', ROOT / 'test/agent-desktop-client.py', 'focus-race-window', BASE / 'race.txt'], 'race', race_env)
-        wait(lambda: cli('state', 'agent1')['windowId'] != frame['windowId'])
-        assert 'stale' in rejected(owner, 'human.input', {'name': 'agent1', 'frameId': frame['frameId'], 'events': [{'action': 'text', 'text': 'WRONG CLIENT'}]}).lower()
-        wait(lambda: cli('state', 'agent1')['paused'])
-        assert not (BASE / 'race.txt').exists()
-        race.terminate(); race.wait(timeout=5)
-    record('a real application focus race rejects stale human input and revokes takeover instead of redirecting text')
+        owner.settimeout(5);owner.connect(path)
+        rpc(owner,'present',{'name':'agent1'});rpc(owner,'takeover',{'name':'agent1'})
+        locker=subprocess.Popen([str(PRODUCT/'bin/cornice-human-lock'),'--pam-service','permit','--pam-directory',str(pam),'--allow-emergency'],env=ENV,stdin=subprocess.PIPE,stdout=open(BASE/'native-lock-events','w'),stderr=open(BASE/'native-lock.log','w'),start_new_session=True,text=True)
+        PROCESSES.append(locker)
+        wait(lambda:ctl('seat lock-state',True)['secure'])
+        wait(lambda:ctl('seat state agent1',True)['paused'])
+        assert rpc(owner,'present-status',{'name':'agent1'})['active'] is False
+        def visible_lock():
+            from PIL import Image
+            shot=BASE/'native-takeover-lock.png'
+            subprocess.run(['grim','-o','human',str(shot)],env=ENV,check=True)
+            with Image.open(shot) as image:
+                assert image.size==(3072,1920),image.size
+                return min(high for low,high in image.convert('RGB').getextrema())>100
+        wait(visible_lock)
+        locker.stdin.write('emergency-unlock\n');locker.stdin.flush()
+        wait(lambda:not ctl('seat lock-state',True)['locked'])
+        assert cli('state','agent1')['paused']
+    record('real session lock revokes native takeover; unlocking does not restore control or resume the Agent')
     with socket.socket(socket.AF_UNIX) as owner:
-        owner.settimeout(5); owner.connect(path)
-        rpc(owner, 'takeover', {'name': 'agent1'})
-        wait(lambda: cli('state', 'agent1')['paused'], timeout=6)
-    record('an unresponsive takeover owner loses control without logging out the human session')
-    shell('desktop', 'observe', 'agent1'); wait(lambda: status()['frame'].get('frameId'))
-    control('takeover'); wait(lambda: status()['humanControl'])
-    cli('lock-policy', 'agent1', 'continue')
-    shell('lock'); wait(lambda: json.loads(shell('ipc', 'lock', 'status'))['secure'])
-    wait(lambda: cli('state', 'agent1')['paused'] and not status()['humanControl'])
-    shell('lock', 'emergency-unlock'); wait(lambda: not json.loads(shell('ipc', 'lock', 'status'))['locked'])
-    assert cli('state', 'agent1')['paused']
-    record('human lock revokes takeover even under the continue policy; unlock does not restore either controller')
-    shell('desktop', 'observe', 'agent1'); wait(lambda: status()['frame'].get('frameId'))
-    control('takeover'); wait(lambda: status()['humanControl'])
-    qs.terminate(); qs.wait(timeout=8)
-    wait(lambda: cli('state', 'agent1')['paused'])
-    assert fcitx.poll() is None
-    record('viewer process exit releases takeover, pauses the Agent and preserves Fcitx')
-    # Match the physical laptop display that exposed the PNG-encoding stall.
+        owner.settimeout(5);owner.connect(path)
+        rpc(owner,'present',{'name':'agent1'});rpc(owner,'takeover',{'name':'agent1'})
+        wait(lambda:cli('state','agent1')['paused'],timeout=5)
+        time.sleep(5.2)
+        assert rpc(owner,'present-status',{'name':'agent1'})['active'] is False
+    wait(lambda:human_state()==human_high)
+    record('lost heartbeats revoke physical takeover and restore the human scene without auto-resuming the Agent')
+    shell('desktop','observe','agent1');wait(lambda:status()['presentation'].get('active'))
+    shell('ipc','desktopObserver','takeover','true');wait(lambda:status()['humanControl'])
+    qs.kill();qs.wait(timeout=5)
+    wait(lambda:cli('state','agent1')['paused'])
+    wait(lambda:human_state()==human_high)
+    record('Cornice UI crash releases native presentation and takeover')
     with socket.socket(socket.AF_UNIX) as owner:
-        owner.settimeout(5); owner.connect(path)
-        rpc(owner, 'fit', {'name': 'agent1', 'width': 3072, 'height': 1920, 'scale': 2})
-        frame = rpc(owner, 'frame', {'name': 'agent1'})
-        assert frame['pixelSize'] == [3072, 1920], frame
-        started = time.monotonic()
-        rpc(owner, 'takeover', {'name': 'agent1'})
-        elapsed = time.monotonic() - started
-        assert elapsed < 1, ('takeover consumed the two-second viewer deadline', elapsed)
-        frame = rpc(owner, 'frame', {'name': 'agent1'})
-        assert frame['pixelSize'] == [3072, 1920]
-        rpc(owner, 'release', {'name': 'agent1'})
-    record(f'3072x1920 takeover completes in {elapsed:.3f}s with full-resolution frames')
-    print('Artifacts:', BASE, flush=True)
-except Exception:
-    if 'qs' in globals() and qs.poll() is None:
-        print('DIAGNOSTIC', status(), cli('state', 'agent1'), ctl('clients', True), flush=True)
-        subprocess.run(['grim', '-o', 'human', str(BASE / 'failure.png')], env=ENV, check=True)
-    raise
+        owner.settimeout(5);owner.connect(path)
+        rpc(owner,'present',{'name':'agent1'});rpc(owner,'takeover',{'name':'agent1'})
+        broker.kill();broker.wait(timeout=5)
+        wait(lambda:ctl('seat state agent1',True)['paused'],timeout=8)
+        wait(lambda:human_state()==human_high)
+    record('broker crash is recovered by the compositor lease, with the human workspace and focus intact')
 finally:
     cleanup()

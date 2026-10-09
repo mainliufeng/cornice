@@ -174,9 +174,10 @@ try:
     record("human-to-full upgrade is secure and revokes every seat; unlock never restores agents")
     # Failed PAM cannot unlock, and a provider crash retains protection.
     (pam / "deny").write_text("auth required pam_deny.so\naccount required pam_permit.so\n")
-    deny = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--pam-service", "deny", "--pam-directory", str(pam)], env=ENV,
+    deny = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--pam-service", "deny", "--pam-directory", str(pam)], env=ENV | {"WAYLAND_DEBUG": "client"},
         stdin=subprocess.PIPE, stdout=open(BASE / "deny-events", "w"), stderr=open(BASE / "deny.log", "w"), start_new_session=True)
     PROCESSES.append(deny); wait(lambda: ctl("seat lock-state", True)["secure"])
+    wait(lambda: any('wl_keyboard#' in line and '.enter(' in line for line in (BASE / 'deny.log').read_text().splitlines()))
     for command in ("type wrong", "key 28 1", "key 28 0"):
         human.stdin.write(command + "\n"); human.stdin.flush()
         assert select.select([human.stdout], [], [], 5)[0] and human.stdout.readline().strip() == "done"
@@ -258,16 +259,15 @@ try:
     wait(lambda: json.loads(shell("ipc", "idle", "status"))["sleepGuardReady"])
     cli("resume", "continuing"); fresh = bind("continuing")
     shell("desktop", "observe", "continuing")
-    wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["frame"].get("frameId"))
-    cached = pathlib.Path(json.loads(shell("ipc", "desktopObserver", "status"))["frame"]["buffer"])
+    wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["presentation"].get("active"))
+    assert not list((RT / "cornice" / ENV["HYPRLAND_INSTANCE_SIGNATURE"]).glob("frame-*"))
     # Match the physical laptop's mode, entirely inside the isolated compositor.
     ok('eval hl.monitor({output="human",mode="3072x1920",position="0x0",scale=2})')
     wait(lambda: next(m for m in ctl("monitors", True) if m["name"] == "human")["scale"] == 2)
     shell("lock")
     wait(lambda: ctl("seat lock-state", True)["scope"] == "human" and ctl("seat lock-state", True)["secure"])
     assert not cli("state", "continuing")["paused"]
-    wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["frame"] == {})
-    wait(lambda: not cached.exists() or cached.stat().st_size == 0)
+    wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["presentation"].get("active") is not True)
     def visible_lock():
         shot = BASE / "cornice-native-lock.png"
         subprocess.run(["grim", "-o", "human", str(shot)], env=ENV, check=True)

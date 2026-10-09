@@ -30,7 +30,7 @@ Item {
       const name = "cornice-agent-" + DesktopSession.selected + "-ws-" + id
       const current = (workspaces || []).find(ws => scoped ? ws.name === name : ws.id === id)
       out.push({id: id, label: String(id), occupied: !!current && current.toplevels.values.length > 0,
-        active: scoped ? DesktopSession.state.workspaceName === name : id === focusedId})
+        active: scoped ? DesktopSession.viewedWorkspaceName === name : id === focusedId})
     }
     return out
   }

@@ -88,6 +88,13 @@ require_shell() {
 
 # Request framing for the shell's own socket, matching services/IpcServer.qml.
 socket_path() {
+  if [[ -n ${CORNICE_DESKTOP_NAME:-} ]]; then
+    [[ $CORNICE_DESKTOP_NAME =~ ^[a-zA-Z0-9_-]+$ ]] || return 2
+    local instance_digest
+    instance_digest=$(printf '%s' "${HYPRLAND_INSTANCE_SIGNATURE:?}" | sha256sum)
+    printf '%s/cs-%.8s-%s.sock\n' "${XDG_RUNTIME_DIR:?}" "$instance_digest" "$CORNICE_DESKTOP_NAME"
+    return
+  fi
   if [[ -n ${CORNICE_SHELL_SOCKET:-} ]]; then printf '%s\n' "$CORNICE_SHELL_SOCKET"; return; fi
   # A TTY (where the emergency unlock is used from) has no XDG_RUNTIME_DIR, so
   # fall back to the user's own runtime dir before /tmp.

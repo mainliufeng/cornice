@@ -71,7 +71,7 @@ Broker::Broker(QString instance)
     const auto caps = json(compositor("seat capabilities", true)).object();
     const auto features = caps["features"].toArray();
     for (const QString name : {"seat-input", "seat-identity", "atomic-snapshot", "readonly-workspace", "argb-frame",
-                               "input-pause", "composed-seat-input", "seat-shell-v1"})
+                               "input-pause", "composed-seat-input", "seat-shell-v1", "native-seat-presentation-v1"})
         if (!features.contains(name))
             fail("Required compositor capability missing: " + name);
     if (caps["protocol"].toInt() != 1)
@@ -284,6 +284,7 @@ void Broker::endTakeover(const QString &reason) {
     m_humanOwner = nullptr;
     m_humanBinding = {};
     try {
+        if (m_presentations.contains(owner)) compositor("seat present-control " + m_presentations[owner] + " no");
         pause(name);
     } catch (...) {
         if (m_desktops.contains(name))
@@ -294,26 +295,22 @@ void Broker::endTakeover(const QString &reason) {
         '\n');
 }
 
-void Broker::resume(const QString &name, QLocalSocket *owner, bool agent) {
+void Broker::resume(const QString &name) {
     auto &desktop = managed(name);
     desktop.driver.reset();
     const auto actual = state(name);
     if (actual["humanLocked"].toBool())
         fail("Unlock human session before granting control");
-    // Validate the current view without encoding an unused PNG. At display
-    // resolution the encoding alone can exhaust the viewer request deadline.
-    capture(name, desktop.id, "current", owner, "argb");
+    if (!actual["available"].toBool()) fail("Desktop output unavailable");
     json(compositor(
         "seat control " + name + " " + desktop.id + " " + actual["generation"].toString() + " resume-composed", true));
     const auto resumed = state(name);
     try {
         desktop.captureGrant.clear();
-        if (agent) {
-            desktop.captureGrant = uuid() + uuid();
-            json(compositor("seat export-grant " + name + " " + desktop.id + " " + resumed["generation"].toString() +
-                                " " + desktop.captureGrant,
-                            true));
-        }
+        desktop.captureGrant = uuid() + uuid();
+        json(compositor("seat export-grant " + name + " " + desktop.id + " " + resumed["generation"].toString() +
+                            " " + desktop.captureGrant,
+                        true));
         desktop.driver =
             std::make_unique<SeatDriver>(resumed["display"].toString(), name, resumed["output"].toString());
     } catch (...) {
@@ -360,6 +357,7 @@ void Broker::listen() {
             connect(socket, &QLocalSocket::disconnected, this, [this, socket, input] {
                 if (m_humanOwner == socket)
                     endTakeover("Viewer disconnected");
+                if (m_presentations.contains(socket)) compositor("seat unpresent " + m_presentations.take(socket));
                 if (m_buffers.contains(socket))
                     QFile::remove(m_buffers.take(socket));
                 delete input;
@@ -406,8 +404,6 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
     try {
         reply = {{"ok", true}, {"id", id}, {"result", perform(method, request["params"].toObject(), binding, owner)}};
     } catch (const std::exception &error) {
-        if (method == "human.input" && owner == m_humanOwner)
-            endTakeover("Input rejected; take over again after resynchronization");
         if (method == "desktop.input" && binding &&
             QString::fromUtf8(error.what()) != "Screenshot became stale; capture again") {
             try {
@@ -603,44 +599,66 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                                true))
             .object();
     }
-    if (method == "takeover") {
-        if (m_humanOwner) {
-            if (m_humanOwner == owner && m_humanBinding.name == name)
-                return state(name);
-            fail("Another viewer owns human control");
+    if (method == "present") {
+        if (m_humanOwner == owner &&
+            (m_humanBinding.name != name || params["workspace"].toString("current") != "current"))
+            endTakeover("Desktop view changed");
+        if (!m_presentations.contains(owner))
+            m_presentations[owner] = uuid() + uuid();
+        const auto monitors = json(compositor("monitors", true)).array();
+        QString output;
+        QJsonObject physical;
+        for (const auto &value : monitors) {
+            const auto monitor = value.toObject();
+            if (monitor["name"].toString().startsWith("cornice-agent-"))
+                continue;
+            if (output.isEmpty() || monitor["focused"].toBool()) {
+                output = monitor["name"].toString();
+                physical = monitor;
+            }
         }
-        // Revoke agent devices, screenshot grants and CDP before creating the
-        // human input source. The physical human seat never changes workspace.
+        atom(output);
+        if (!desktop.privateOutput.isEmpty() && m_humanOwner != owner)
+            perform("fit",
+                    QJsonObject{{"name", name},
+                                {"width", physical["width"]},
+                                {"height", physical["height"]},
+                                {"scale", physical["scale"]}},
+                    nullptr, owner);
+        const auto workspace = params["workspace"].toString("current");
+        atom(workspace);
+        return json(compositor("seat present " + name + " " + desktop.id + " " + output + " " + workspace + " " +
+                                   m_presentations[owner],
+                               true))
+            .object();
+    }
+    if (method == "present-status") {
+        if (!m_presentations.contains(owner))
+            return {{"active", false}};
+        if (m_humanOwner == owner)
+            m_humanHeartbeat.restart();
+        return json(compositor("seat presentation " + m_presentations[owner], true)).object();
+    }
+    if (method == "takeover") {
+        if (!m_presentations.contains(owner))
+            fail("Native presentation required before takeover");
+        if (m_humanOwner && m_humanOwner != owner)
+            fail("Another viewer owns human control");
+        if (m_humanOwner == owner)
+            return json(compositor("seat presentation " + m_presentations[owner], true)).object();
         pause(name);
-        resume(name, owner, false);
+        auto result = json(compositor("seat present-control " + m_presentations[owner] + " yes", true)).object();
         const auto actual = state(name);
         m_humanBinding = Binding{name, desktop.id, actual["generation"].toString(), {}, {}};
         m_humanOwner = owner;
         m_humanHeartbeat.start();
-        return state(name);
+        return result;
     }
     if (method == "release") {
-        if (owner != m_humanOwner || name != m_humanBinding.name)
+        if (m_humanOwner != owner)
             fail("This viewer does not own human control");
         endTakeover("Human control ended");
-        return state(name);
-    }
-    if (method == "human.input") {
-        if (owner != m_humanOwner || name != m_humanBinding.name)
-            fail("This viewer does not own human control");
-        const auto actual = state(name);
-        if (actual["humanLocked"].toBool() || actual["paused"].toBool() || !actual["available"].toBool() ||
-            !desktop.driver)
-            fail("Human control unavailable");
-        validateFrame(m_humanBinding, params["frameId"].toString(), actual);
-        const auto events = params["events"].toArray();
-        if (events.isEmpty() || events.size() > 64)
-            fail("Expected 1 to 64 human input events");
-        const auto pixels = actual["pixelSize"].toArray();
-        for (const auto &event : events)
-            desktop.driver->input(event.toObject(), pixels[0].toInt(), pixels[1].toInt());
-        m_humanHeartbeat.restart();
-        return {{"processed", true}};
+        return json(compositor("seat presentation " + m_presentations[owner], true)).object();
     }
     if (method == "fit") {
         if (desktop.privateOutput.isEmpty())
@@ -668,7 +686,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     if (m_humanOwner && m_humanBinding.name == name && (method == "resume" || method == "bind" || method == "launch"))
         fail("End human control before granting agent input");
     if (method == "resume") {
-        resume(name, owner, true);
+        resume(name);
         return state(name);
     }
     if (method == "remove") {
@@ -717,12 +735,6 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         const auto workspace = method == "frame" ? params["workspace"].toString("current") : QString("current");
         auto result = capture(name, desktop.id, workspace, owner, method == "frame" ? "argb" : "png",
                               method == "desktop.capture");
-        if (method == "frame" && owner == m_humanOwner && name == m_humanBinding.name) {
-            if (workspace != "current")
-                fail("Human control requires the current workspace");
-            binding = &m_humanBinding;
-            m_humanHeartbeat.restart();
-        }
         if (binding) {
             if (binding->frameOrder.size() >= 16)
                 binding->frames.remove(binding->frameOrder.takeFirst());

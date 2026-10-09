@@ -21,7 +21,7 @@ target_include_directories(cornice-desktop-runtime PRIVATE ${CMAKE_CURRENT_BINAR
 target_link_libraries(cornice-desktop-runtime PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::WebSockets PkgConfig::WAYLAND PkgConfig::XKB)
 qt_add_qml_module(cornice_desktop_qml URI Cornice.Desktop VERSION 1.0
   OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/qml/Cornice/Desktop
-  SOURCES WorkspaceView.hpp WorkspaceView.cpp)
+  SOURCES DesktopPresentation.hpp DesktopPresentation.cpp)
 target_link_libraries(cornice_desktop_qml PRIVATE Qt6::Quick Qt6::Network)
 set_target_properties(cornice_desktop_qml cornice_desktop_qmlplugin PROPERTIES INSTALL_RPATH "$ORIGIN")
 install(TARGETS cornice-desktop-runtime RUNTIME DESTINATION native/bin)

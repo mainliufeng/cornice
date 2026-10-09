@@ -194,7 +194,7 @@ Agent 默认的私有输出及其自身 WS 则可独立配置尺寸。物理 DPM
 | Agent 私有输出消失 | 暂停受影响 seat、撤销代次；不退回人的输出或移动共享窗口 |
 | 人的物理输出消失 | 保留锁及恢复认证的能力；有效的 Agent 私有输出可继续 |
 | human 解锁 | 保持运行中的 Agent 状态；已暂停、失联或曾被人接管的 seat 不自动恢复 |
-| 人重新打开观察器 | 重新获取最新帧；不恢复旧 texture/SHM，也不自动接管 |
+| 人重新打开观察器 | 重新选择原生场景；不恢复旧观察租约，也不自动接管 |
 | 准备休眠 | 升级为全会话锁并暂停全部 Agent；确认安全后才能放行休眠 |
 | 唤醒 | 仍锁住；确认输出/seat 状态后由人解锁、显式恢复所需 Agent |
 
@@ -205,7 +205,7 @@ session 生效后不能在锁期间降回 human 来恢复 Agent。升级中失�
 
 ## 8. Cornice、CDP 与故障
 
-Broker 区分 observer buffer 与 Agent binding。human 锁清空并关闭 observer 通道，
+Broker 区分原生 presentation 租约与 Agent binding。human 锁撤销 presentation 并关闭观察通道，
 continue Agent 的 driver 与 binding 不因人锁屏或关屏被 watchdog 误删；旧帧元数据
 仍失效。查询状态分别报告 humanLocked、paused、可截图/可输入及不可用原因。
 Broker 需把“截图过期，请重新截图”的可恢复错误与“输入状态不确定”的错误区分：
@@ -260,7 +260,7 @@ lockEpoch/viewEpoch 进入同帧元数据及输入校验；控制代次仅在真
 | Hyprland | src/render/Context.*、src/render/Renderer.cpp、输出与 capture 路径 | 分场景锁判断、关屏下后台刷新、导出/镜像审计 |
 | Cornice | 新原生 HumanLock 提供者、native/desktop/CMakeLists.txt | 真正的私有锁 surface 与 QML 渲染桥；能力协商 |
 | Cornice | shell/plugins/lock/Service.qml、shell/plugins/idle/Idle.qml | 可选锁提供者、PAM 复用、人的空闲/关屏与休眠全锁 |
-| Cornice | native/desktop/Broker.*、WorkspaceView.*、Agent/observer 插件 | 分开缓存与控制授权、状态展示、受控 CDP |
+| Cornice | native/desktop/Broker.*、DesktopPresentation.*、Agent/observer 插件 | 分开缓存与控制授权、状态展示、受控 CDP |
 
 顺序：先在私有 headless 实例实现并验证真实 human 锁提供者和输出遮蔽；
 再实现 Agent 私有输出/输入/截图，验证共享 WS；再接 Cornice 缓存、idle、CDP；
@@ -284,7 +284,7 @@ snippet 和既有 takeover undo 路径。本轮仍不触发当前会话的 lock/
    不改变应用内容，Agent 输入不进入锁/PAM，双方 shell 命中路径隔离。
 5. 锁前截图输入被拒绝，continue seat 的 binding/设备继续有效；新截图可操作。
    不采用旧帧失败即暂停这种副作用来中断获准 Agent，返回需重新截图的明确错误。
-6. 观察器 SHM、CPU 帧和绘制节点失效；锁中 observe/frame/管理 capture 无法取新帧；
+6. 原生观察租约及物理接管失效；锁中 present/observe/frame/管理 capture 无法取新帧；
    解锁重新打开只能看到新帧。已由用户保存的截图文件不当作实时缓存销毁。
 7. DPMS off 后 Agent 应用持续刷新和接受输入，物理输出保持关闭；Agent 高频输入不
    延长人的空闲期限。锁确认期间热插拔、关屏、镜像启用不泄露普通画面。

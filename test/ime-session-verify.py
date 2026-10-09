@@ -99,7 +99,7 @@ try:
     shell('ipc','shell','hide','cn.launcher')
     shell('ipc','desktop','observe','private0')
     wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['open'])
-    wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['frame'].get('frameId'))
+    wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['presentation'].get('active'))
     time.sleep(.3)
     remote('-c')
     # Super+A in the actual read-only fullscreen viewer must focus a native

@@ -48,7 +48,7 @@ class Broker : public QObject {
     void startShell(const QString &name);
     void pause(const QString &name);
     void endTakeover(const QString &reason);
-    void resume(const QString &name, QLocalSocket *owner, bool agent);
+    void resume(const QString &name);
     void validateFrame(const Binding &, const QString &frame, const QJsonObject &actual);
     QString m_instance, m_socketPath, m_directory;
     QLocalServer m_server;
@@ -61,6 +61,7 @@ class Broker : public QObject {
     Binding m_humanBinding;
     QElapsedTimer m_humanHeartbeat;
     QMap<QLocalSocket *, QString> m_buffers;
+    QMap<QLocalSocket *, QString> m_presentations;
     QMap<QString, QJsonObject> m_completed;
     QMap<QString, QByteArray> m_requestHashes;
 };

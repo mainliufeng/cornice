@@ -118,9 +118,10 @@ flowchart LR
     Tools --> Broker
     Broker --> Control[Hyprland seat 与控制权接口]
     Control --> Apps[共享 Wayland 应用与工作区]
-    Apps --> Export[Hyprland 只读工作区帧导出]
-    Export --> View[原生 WorkspaceView]
-    View --> Shell
+    Apps --> Scene[Hyprland 原生工作区场景]
+    Scene --> Output[物理输出正常合成]
+    Shell --> View[DesktopPresentation 选择视图]
+    View --> Control
 ```
 
 ### QML 服务与插件
@@ -128,7 +129,7 @@ flowchart LR
 沿用已有 `host.services` 和 `ShellIpc`：
 
 - `cn.agent-desktop`：service + bar-widget + panel，统一展示桌面、任务与控制状态。
-- `cn.desktop-observer`：独立 overlay/观察窗口，保存 view 状态，不保存控制权真值。
+- `cn.desktop-observer`：视图控制对象，保存 follow/browse 状态；不创建观察窗口，不保存控制权真值。
 - `CompositorAdapter`：人的工作区、窗口、DPMS、启动等命令集中适配 Lua fork 和现有上游。
   老 compositor 保留通用 shell；缺少 seat 能力时明确报告 agent 桌面不可用。
 
@@ -151,24 +152,21 @@ JSON 与异步 IPC、libwayland-client、xkbcommon；一个服务管理 N 个 se
 产品 `text` 必须验证 UTF-8/中文、换行、组合键与布局；不承诺客户端没有实现的多 seat IME。
 不能静默用人的剪贴板替代输入。
 
-### 观察帧通道
+### 原生观察与输入
 
-agent 的单次截图先复用已实现的工作区 renderer，但补上同帧元数据。
-连续观察增加独立的只读 workspace view 与帧导出，建议 SHM 起步，后续再优化 DMA-BUF。
-原生 `WorkspaceView` QML 组件只消费该导出通道；无需把整个工作区拼成单窗口截图。
-现有 seat 截图导出窗口、popup 和目标 seat 光标，不包含物理输出上的 cornice bar、
-launcher 或壁纸层。观察器沿用这个边界；需要背景时由观察视图明确绘制，不能把人的
-物理输出层混进 agent 截图，也不能把合成器未导出的层声称为已支持。
+Agent 的单次截图复用工作区 renderer，并返回同帧元数据。人的连续观察由 Hyprland
+直接把选定 Workspace 的场景合成到物理输出，沿用正常输出 damage/frame 调度。
+Cornice 的 `DesktopPresentation` 只选择目标、续租、申请和释放接管，不接收应用像素。
+没有 Qt 观察窗口、截图轮询、SHM 观察缓冲或 `human.input` 转发。
 
-不能使用 `grim -o` 或现有 `ScreencopyView(screen)` 代替隐藏 ws 的画面。
-Quickshell 的现有 captureSource 接受 monitor 或 toplevel，不提供任意 workspace 来源。
-[官方类型说明](https://quickshell.org/docs/v0.3.0/types/Quickshell.Wayland/ScreencopyView/)
-与本机 0.3.1 的 qmltypes 一致。
+只读观察保留人的 Workspace/焦点/光标状态，可以独立浏览目标 seat 的工作区。
+接管先撤销 Agent 输入与 CDP，再由合成器将物理鼠标、滚轮、键盘送到目标 seat。
+目标 seat 使用独立快捷键状态、窗口动作上下文和输入法 relay；新启动应用继承目标
+Wayland socket。Cornice 的控制栏和任务框仍属于人的 shell。
 
-PNG 轮询只用于第一阶段工具截图与开发验证，不作为最终连续观察器的实现。
-只订阅打开的观察视图；关闭后释放 buffer 和观察引用。
-15 fps 与端到端延迟低于 200 ms 是首轮连续观察的**验收目标，尚未测得**；
-未达到时先修导出路径，不把慢刷新预览算作连续观察完成。
+关闭观察、锁屏、输出消失或租约失效恢复人的场景；接管过的 Agent 保持暂停。
+Agent 工具截图仍是按需导出，不参与人的观看路径。测试检查实际物理输出像素时钟、
+原生合成帧数及真实输入效果，不能用接口请求次数证明刷新率。
 
 ## 5. 状态、接口与并发
 
@@ -346,7 +344,7 @@ waybar/mako 等服务。agent 接管使用独立的 desktop control 接口。
 | `shell/services/CompositorAdapter.qml` 与命令 helper | 人的现有 compositor 动作方言适配；工作区/聚焦/DPMS 等改为统一入口 |
 | `shell/plugins/agent-desktop/` | Service、Widget、Panel 与 manifest |
 | `shell/plugins/desktop-observer/` | 只读跟随、浏览、接管状态与返回入口 |
-| `native/desktop/` | desktopd、SeatDriver、执行器工具协议与原生 WorkspaceView |
+| `native/desktop/` | desktopd、SeatDriver、执行器工具协议与DesktopPresentation |
 | `bin/cornice-desktop`、`bin/cornice-desktopd` | CLI 分发与服务启动；`bin/cornice` 增加 desktop 子命令 |
 | `config/`、`install.sh`、`PKGBUILD` | 可选特性配置、native 构建/安装、独立 fork 会话与回退记录 |
 | `test/agent-desktop-verify.sh` 等 | 真实嵌套对接、接管竞态、坐标与工具包兼容测试 |

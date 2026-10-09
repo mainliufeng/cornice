@@ -244,16 +244,16 @@ FloatingWindow {
     wait(lambda: json.loads(shell("ipc", "desktop", "status"))["available"])
     assert len(json.loads(shell("ipc", "desktop", "status"))["desktops"]) == 3
     shell("desktop", "observe", "agent1")
-    frame_ui = wait(lambda: json.loads(shell("ipc", "desktopObserver", "status")).get("frame", {}).get("frameId"))
+    frame_ui = wait(lambda: json.loads(shell("ipc", "desktopObserver", "status")).get("presentation", {}).get("active"))
     shell("desktop", "observe", "agent1")
     assert json.loads(shell("ipc", "desktopObserver", "status"))["open"], "Observe must be idempotent, not toggle/close"
     assert "different compositor instance" in cli("--instance", "nonexistent-instance", "observe", "agent1", succeeds=False)
     observed_state = cli("state", "agent1")
     shell("ipc", "desktopObserver", "browse", "11")
-    wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["frame"].get("viewWorkspace") == "11")
+    wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["presentation"].get("workspace") == "11")
     assert cli("state", "agent1") == observed_state
     shell("ipc", "desktopObserver", "follow")
-    wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["frame"].get("viewWorkspace") == "10")
+    wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["presentation"].get("workspace") == "10")
     time.sleep(.5)
     paint_start = json.loads(shell("ipc", "desktopObserver", "status"))
     samples = []; stamps = []; begun = time.monotonic(); end = begun + 3
@@ -268,14 +268,14 @@ FloatingWindow {
     # The clock also advances while its ws is hidden. This measures real output
     # pixels, not a socket acknowledgement or an unchanged screenshot.
     paint_end = json.loads(shell("ipc", "desktopObserver", "status"))
-    fps = (paint_end["paintedFrames"] - paint_start["paintedFrames"]) * 1000 / (paint_end["lastPaintMs"] - paint_start["lastPaintMs"])
-    metrics = {"paintedObserverFps": round(fps, 2), "maximumPaintToObservationMs": max(samples),
+    fps = (paint_end["presentation"]["frames"] - paint_start["presentation"]["frames"]) / elapsed
+    metrics = {"nativeSceneDrawsPerSecond": round(fps, 2), "maximumPaintToObservationMs": max(samples),
                "physicalOutputSamples": len(samples), "distinctPixelFrames": len(set(stamps))}
     (BASE / "observer-performance.json").write_text(json.dumps(metrics))
-    assert fps >= 13, metrics
+    assert fps >= 30, metrics
     assert max(samples) < 200, metrics
     record("live observer output: " + json.dumps(metrics))
-    view_buffer = pathlib.Path(json.loads(shell("ipc", "desktopObserver", "status"))["frame"]["buffer"])
+    assert not list((RT / "cornice" / ENV["HYPRLAND_INSTANCE_SIGNATURE"]).glob("frame-*"))
     # Exercise real human-seat interaction while the observer holds keyboard
     # focus. No target device is created by this view.
     human_input = subprocess.Popen([str(BASE / "legacy-input"), "Hyprland", "human"], env=ENV,
@@ -296,8 +296,7 @@ FloatingWindow {
     record("human click, text and Ctrl+W in the actual read-only observer do not reach shared applications")
     shell("lock")
     wait(lambda: json.loads(shell("ipc", "lock", "status"))["secure"])
-    wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["frame"] == {})
-    wait(lambda: not view_buffer.exists() or view_buffer.stat().st_size == 0)
+    wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["presentation"].get("active") is not True)
     assert cli("state", "agent1")["paused"]
     shell("lock", "emergency-unlock")
     wait(lambda: not json.loads(shell("ipc", "lock", "status"))["locked"])
@@ -306,23 +305,25 @@ FloatingWindow {
     # showing a fresh read-only frame must not itself resume agent input.
     shell("desktop", "observe", "agent1")
     try:
-        wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["frame"].get("frameId"))
+        wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["presentation"].get("active"))
     except RuntimeError:
         print("Post-unlock diagnostic", shell("ipc", "desktopObserver", "status"), cli("state", "agent1"),
               shell("ipc", "desktop", "status"), ctl("locked", True), flush=True)
         raise
     assert cli("state", "agent1")["paused"]
     cli("resume", "agent1")
-    record("real session lock clears observer/SHM buffers, revokes input; unlock stays paused")
+    record("real session lock clears native presentation and revokes input; unlock stays paused")
     subprocess.run(["grim", str(BASE / "observer.png")], env=ENV, check=True, timeout=5)
     human_input.stdin.write(f"motion {int(baseline['cursor']['x'])} {int(baseline['cursor']['y'])}\n"); human_input.stdin.flush()
     assert select.select([human_input.stdout], [], [], 5)[0] and human_input.stdout.readline().strip() == "done"
     shell("ipc", "shell", "hide", "cn.desktop-observer")
+    wait(lambda: not json.loads(shell("ipc", "desktopObserver", "status"))["open"])
     shell("ipc", "shell", "summon", "cn.agent-desktop", "{}")
+    wait(lambda: any(item["namespace"] == "cornice-panel" for item in ctl("layers", True)["human"]["levels"]["3"]))
     wait(lambda: all(d["paused"] == (d["name"] != "agent1") for d in json.loads(shell("ipc", "desktop", "status"))["desktops"]))
     for desired in (True, False):
         control = next(row for row in json.loads(shell("ipc", "desktopPanel", "controls")) if row["name"] == "agent1")
-        layers = ctl("layers", True)["human"]["levels"]["2"]
+        layers = ctl("layers", True)["human"]["levels"]["3"]
         layer = next(item for item in layers if item["namespace"] == "cornice-panel")
         for event in (f"motion {int(layer['x'] + control['x'] + control['width']/2)} {int(layer['y'] + control['y'] + control['height']/2)}", "button 272 1", "button 272 0"):
             human_input.stdin.write(event + "\n"); human_input.stdin.flush()
@@ -339,7 +340,7 @@ FloatingWindow {
     quickshell.terminate(); quickshell.wait(timeout=8)
     assert cli("state", "agent1")["paused"] is False, "UI teardown must not destroy the independent desktop service"
     assert human_state()["workspace"] == baseline["workspace"]
-    record("actual cornice observer follows/browses independent SHM frames; UI teardown preserves service")
+    record("actual cornice observer follows/browses native scenes; UI teardown preserves service")
     # CLI-owned service graceful shutdown and restart leave seats paused.
     broker.terminate(); assert broker.wait(timeout=8) == 0
     assert all(ctl("seat state agent" + str(i + 1), True)["paused"] for i in range(3))
