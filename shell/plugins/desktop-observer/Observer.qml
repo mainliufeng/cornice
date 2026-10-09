@@ -1,5 +1,4 @@
 import QtQuick
-import Cornice.Desktop
 import qs.Commons
 
 Item {
@@ -11,12 +10,13 @@ Item {
   readonly property var payload: { try { return JSON.parse(payloadJson) } catch (e) { return ({}) } }
   readonly property var service: host ? host.services["cn.agent-desktop"] : null
   readonly property string desktopName: String(payload.name || "")
-  readonly property var presentationState: presentation.state
-  readonly property bool humanControl: presentation.humanControl
+  readonly property var presentationState: presentation.item ? presentation.item.state : ({})
+  readonly property bool humanControl: presentation.item ? presentation.item.humanControl : false
   property string selectedWorkspace: "current"
   signal opened()
   signal dismissed()
   function open(json) {
+    if (!service || !service.available) return
     const next = json || "{}"
     if (next !== payloadJson || !isOpen) selectedWorkspace = "current"
     payloadJson = next; isOpen = true
@@ -29,7 +29,7 @@ Item {
     if (service) service.selectedDesktop = ""
     dismissed()
   }
-  function takeControl(enabled) { presentation.takeControl(enabled) }
+  function takeControl(enabled) { if (presentation.item) presentation.item.takeControl(enabled) }
   function browseWorkspace(workspace) {
     if (humanControl) return "end-takeover-first"
     selectedWorkspace = workspace
@@ -37,19 +37,35 @@ Item {
   }
   onServiceChanged: if (service && !DesktopSession.agentShell) service.observer = root
   Component.onCompleted: if (service && !DesktopSession.agentShell) service.observer = root
-  DesktopPresentation {
+  // Ordinary Cornice installs do not include the optional native module.
+  // Load this control object only when its real desktop service is available.
+  Loader {
     id: presentation
     active: root.isOpen && root.service && root.service.available
-    socketPath: root.service ? root.service.socketPath : ""
-    desktop: root.desktopName
-    workspace: root.selectedWorkspace
-    onReturned: root.close()
+    source: active ? "Presentation.qml" : ""
+    onLoaded: {
+      item.socketPath = root.service.socketPath
+      item.desktop = root.desktopName
+      item.workspace = root.selectedWorkspace
+      item.active = true
+    }
+    onStatusChanged: if (status === Loader.Error) root.close()
+  }
+  Connections {
+    target: presentation.item
+    function onReturned() { root.close() }
+  }
+  Connections {
+    target: root
+    function onSelectedWorkspaceChanged() { if (presentation.item) presentation.item.workspace = root.selectedWorkspace }
+    function onDesktopNameChanged() { if (presentation.item) presentation.item.desktop = root.desktopName }
+    function onServiceChanged() { if (presentation.item) presentation.item.socketPath = root.service ? root.service.socketPath : "" }
   }
   ShellIpc {
     target: "desktopObserver"
     function status(): string {
-      return JSON.stringify({open:root.isOpen,native:true,name:root.desktopName,workspace:presentation.state.following ? "current" : presentation.state.workspace || root.selectedWorkspace,
-        readonly:!root.humanControl,humanControl:root.humanControl,presentation:presentation.state,error:presentation.error})
+      return JSON.stringify({open:root.isOpen,native:true,name:root.desktopName,workspace:root.presentationState.following ? "current" : root.presentationState.workspace || root.selectedWorkspace,
+        readonly:!root.humanControl,humanControl:root.humanControl,presentation:root.presentationState,error:presentation.item ? presentation.item.error : ""})
     }
     function controls(): string {
       const reply = IpcRegistry.dispatch("bar", "geometry", [])
@@ -60,6 +76,6 @@ Item {
     }
     function takeover(enabled: string): string { root.takeControl(enabled === "true"); return "requested" }
     function browse(workspace: string): string { return root.browseWorkspace(workspace) }
-    function follow(): string { if (root.selectedWorkspace === "current") presentation.refreshView(); else root.selectedWorkspace = "current"; return "ok" }
+    function follow(): string { if (root.selectedWorkspace === "current") { if (presentation.item) presentation.item.refreshView() } else root.selectedWorkspace = "current"; return "ok" }
   }
 }
