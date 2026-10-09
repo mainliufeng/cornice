@@ -49,7 +49,11 @@ Cornice 日常锁选择允许继续集合，实体输入仍锁住；睡眠前升
 - scoped/full lock：真实 Chrome CDP 撤权、未知/热插拔输出、客户端与守护者故障、native PAM UI、睡眠 inhibitor/secure 时序、恢复认证与私有输出失效均通过。睡眠使用隔离的 logind 测试服务，未让真实机器睡眠。
 - Hyprvoice：实际编译的 seat probe 和 App；UTF-8 输入、剪贴板、只读/过期目标拒绝、F8 录音停止、结果保留重试、原生 overlay 输入通过。App 测试使用私有 PipeWire 与测试 ASR，未声称测过真人麦克风识别准确率。
 - 会话试运行、回退、不可变 manifest、故障退出和原配置保留通过。
-- 上游完整 hyprtester 和 fresh install/package：正在完成，最终结果在交付前补录。
+- 全新 copy 安装和 Arch 包分别执行完整 shell 检查，通过；另从提交重新编译 `--desktop` 原生模块到临时前缀，用安装后的真实 MCP/浏览器/权限路径完成回归。
+- 上游完整 hyprtester：新版 220/267，改造前匹配版本 221/267。共享失败 39 项，结果不同 15 项在相同顺序单独重测，两版均 15/15。全套门禁没有通过，不能将单测、针对性回归或基线失败当作上游兼容证明；后续须在上游测试环境继续调查完整套件状态与时序敏感项。
+- 独立 controller 实际 GTK 用例完成输入、PNG 截图、只读打字拒绝及原生点击输入框后接管。接管撤销旧焦点，验收使用真实点击动作，未用强制 focus 命令替代指针命中。
+
+完整失败清单、对照提交、二进制校验和及日志位置见 [机器可读记录](verification/generic-seat-integration-20261009.json)。产品历史文档和截图已从 Hyprland 迁到 [Cornice 历史归档](research/hyprland-history/README.md)，原内容保留并标为历史资料。
 
 本机未安装 Nix，Nix/portal CI 尚未验证。以上通过不等于上游已接受本协议或整个多 seat 补丁；仍需上游 API/安全审查、portal 及应用生态检查和按职责拆分 PR。
 
