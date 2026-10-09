@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell.Hyprland
 import qs.Commons
 
 Item {
@@ -50,6 +51,14 @@ Item {
       item.active = true
     }
     onStatusChanged: if (status === Loader.Error) root.close()
+  }
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      if (!root.isOpen || !presentation.item) return
+      if ((event.name === "seatworkspace" || event.name === "seatpresentation") && event.data.split(",")[0] === root.desktopName)
+        presentation.item.refreshStatus()
+    }
   }
   Connections {
     target: presentation.item

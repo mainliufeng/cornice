@@ -85,3 +85,44 @@ Launcher 搜索及主 seat 回车启动 Chrome，检查独立 profile、Agent Wo
 
 本次更改继续留在两库特性分支；本地新快照供下一次登录使用。当前会话不强制退出。
 是否已生效以新会话中的 Hyprland 版本及快照路径为准，真机观感仍需新会话验证。
+
+
+## 工作区同步与 F8 语音路由（同日追加）
+
+这轮真机反馈是 Agent 工作区和 bar 切换慢，以及 F8 需输入正在接管的 Agent 应用。
+
+工作区切换此前只改 seat 的当前工作区，没有通知原生观察端与 Agent shell；
+主 bar 等 500 ms、Agent shell 等 1000 ms 定时查询。现在 Hyprland 发布
+`seatworkspace` / `seatpresentation`，Cornice 立即读取真实状态，请求处理中发生的
+更新合并排队。定时器仅保留心跳和断线兜底。切换同时补齐输出损伤，不激活人的
+workspace，也不改变只读独立浏览的 Agent 当前 workspace。
+
+新增 `workspace-response-verify.py`，使用实际主 seat Super+数字及真实 shell IPC，
+核对观察状态、两套 shell 状态和两套 bar 控件。旧封存快照同步耗时 840–972 ms，
+修改后 22–40 ms；只读浏览旧版 182–491 ms，修改后 11–19 ms。
+请求处理中连续切换后的收敛为 13 ms。数值为嵌套隔离环境的状态同步耗时，
+不代表物理输入到屏幕发光的延迟；bar 原有颜色动画仍与人的桌面相同。
+
+Hyprvoice 的常驻服务以前只查询主 seat `activewindow`，并用主 seat 剪贴板及
+快捷键。现在通过 `human-input-target-v1` 查询人当前实际操作的 seat 与应用，
+以焦点令牌校验后向对应 seat 发快捷键；每个 seat 保留独立剪贴板 owner。
+只读、锁屏或 Launcher/任务面板焦点不会回落到隐藏应用。焦点、workspace 或接管
+变化会撤销旧目标；普通听写的明确确认允许重新绑定原 seat、原窗口的当前光标，
+原有密码、选区和最终粘贴检查保留。Hyprvoice 悬浮层也由原生显示和命中测试处理。
+
+`voice-seat-verify.py` 使用长驻生产 Desktop、真实主 seat F8、GTK、Agent Launcher
+和 Wayland 剪贴板验证人 → Agent 1 → Agent 2 → 人的输入路由、剪贴板保留、只读及
+过期拒绝、明确重试。固定文本只代表测试中的识别结果，不替代生产 ASR。
+完整 App 的录音状态、F8 释放被模式切换吞掉后的停止与结果保留，以及真实语音
+悬浮层，由 `voice-session-verify.py` 另行验证；其零音源和识别器为隔离测试替身。
+完整 App 测试还发现：主 seat 的语音浮层关闭后会恢复隐藏的人类应用焦点，导致
+下一次 F8 被拒绝。现在原生显示期间浮层关闭或放弃键盘焦点时保留 Agent 输入路径，
+退出观察才恢复人的应用。恢复接管后的结果按钮只刷新可用性，不更新旧目标令牌或
+自动提交；实际点击“输入”后重新核验并提交一次。隔离测试中，只读切换和任务面板
+抢占时停止并保留结果分别约 220 / 131 ms；后续 F8 与原生浮层“结束录音”按钮均通过。
+这些测试不声称已测真实麦克风、ASR 准确率或新版本的物理按键观感。
+
+Hyprvoice 使用独立 `codex/cornice-seat-input` 分支；Cornice 与 Hyprland 延续原特性
+分支。无 main 合并，无 dotfiles 改动。当前使用中的会话不重启；下一次登录使用新
+封存快照和已备份安装的 Hyprvoice，待启动版本可用 `cornice session-trial cancel`
+撤销，旧语音二进制备份记录在本地交付证据中。

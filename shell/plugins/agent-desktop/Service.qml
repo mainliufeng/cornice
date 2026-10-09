@@ -52,6 +52,7 @@ Item {
     target:Hyprland
     function onRawEvent(event) {
       if (event.name === "seatshortcut" && event.data === DesktopSession.name + ",prompt") root.prompt(DesktopSession.agentShell ? DesktopSession.name : root.selectedDesktop)
+      if (event.name === "seatworkspace" || event.name === "seatpresentation" || event.name === "seatcontrol") root.refresh()
     }
   }
   property bool available: false
@@ -60,9 +61,15 @@ Item {
   property string error: ""
   property var pending: []
   property var bootstrapped: ({})
+  property bool refreshPending: false
   readonly property bool busy: action.running || pending.length > 0
 
-  function refresh() { if (enabled && !poll.running && !action.running) poll.running = true }
+  function refresh() {
+    if (!enabled) return
+    if (poll.running || action.running) { refreshPending = true; return }
+    refreshPending = false
+    poll.running = true
+  }
   function operate(args) {
     if (!enabled || instance === "") { error = "Enable Agent desktops in this compositor session first"; return }
     pending = pending.concat([args]); dispatch()
@@ -108,6 +115,7 @@ Item {
       }
     }
     stderr: StdioCollector { onStreamFinished: if (text.trim() !== "") root.error = text.trim() }
+    onExited: if (root.refreshPending) root.refresh()
   }
   Process {
     id: action
@@ -116,7 +124,7 @@ Item {
     onExited: { root.refresh(); root.dispatch() }
   }
   onEnabledChanged: {
-    if (!enabled) { available = false; desktops = []; pending = [] }
+    if (!enabled) { available = false; desktops = []; pending = []; refreshPending = false }
     else refresh()
   }
   ShellIpc {

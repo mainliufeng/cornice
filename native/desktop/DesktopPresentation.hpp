@@ -22,6 +22,7 @@ class DesktopPresentation : public QObject {
     bool humanControl() const { return m_state["humanControl"].toBool(); }
     Q_INVOKABLE void takeControl(bool enabled);
     Q_INVOKABLE void refreshView();
+    Q_INVOKABLE void refreshStatus();
   signals:
     void targetChanged();
     void stateChanged();
@@ -36,5 +37,5 @@ class DesktopPresentation : public QObject {
                                      m_connectedPath;
     QJsonObject m_state;
     QByteArray m_input;
-    bool m_active = false, m_pending = false, m_present = true;
+    bool m_active = false, m_pending = false, m_present = true, m_refresh = false;
 };

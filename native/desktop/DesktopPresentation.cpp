@@ -44,12 +44,12 @@ DesktopPresentation::DesktopPresentation(QObject *parent) : QObject(parent) {
                 emit returned();
                 return;
             }
-            if (m_present || !m_control.isEmpty())
+            if (m_present || !m_control.isEmpty() || m_refresh)
                 QTimer::singleShot(0, this, &DesktopPresentation::request);
         }
     });
     m_poll.setInterval(500);
-    connect(&m_poll, &QTimer::timeout, this, &DesktopPresentation::request);
+    connect(&m_poll, &QTimer::timeout, this, &DesktopPresentation::refreshStatus);
     m_timeout.setSingleShot(true);
     m_timeout.setInterval(3000);
     connect(&m_timeout, &QTimer::timeout, this, [this] {
@@ -73,6 +73,7 @@ void DesktopPresentation::reset() {
     m_socket.abort();
     m_input.clear();
     m_pending = false;
+    m_refresh = false;
     m_present = true;
     m_control.clear();
     m_state = {};
@@ -92,6 +93,7 @@ void DesktopPresentation::request() {
         m_present = false;
     else
         m_control.clear();
+    m_refresh = false;
     m_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const QJsonObject request{{"id", m_id},
                               {"method", m_method},
@@ -107,5 +109,10 @@ void DesktopPresentation::takeControl(bool enabled) {
 
 void DesktopPresentation::refreshView() {
     m_present = true;
+    request();
+}
+
+void DesktopPresentation::refreshStatus() {
+    m_refresh = true;
     request();
 }

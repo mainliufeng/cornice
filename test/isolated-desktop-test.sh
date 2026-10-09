@@ -9,12 +9,21 @@ export CORNICE_TEST_HYPRLAND=${CORNICE_TEST_HYPRLAND:-$CORNICE_TEST_HYPRLAND_SOU
 [[ -x $CORNICE_TEST_HYPRLAND ]] || { echo 'Built fork missing' >&2; exit 1; }
 suite=${1:-desktop-recovery-verify.py}
 case "$suite" in
-  agent-model-verify.py|agent-product-verify.py|desktop-switcher-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py) ;;
+  agent-model-verify.py|agent-product-verify.py|desktop-switcher-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|voice-session-verify.py) ;;
   *) echo 'Unknown isolated suite' >&2; exit 2 ;;
 esac
 product_mount=()
 if [[ -n ${CORNICE_TEST_PRODUCT:-} ]]; then
   product_mount=(--ro-bind "$CORNICE_TEST_PRODUCT" "$CORNICE_TEST_PRODUCT")
+fi
+voice_mount=()
+if [[ $suite == voice-seat-verify.py ]]; then
+  : "${CORNICE_TEST_VOICE_PROBE:?Set the built Hyprvoice seat_input_probe}"
+  voice_mount=(--ro-bind "$CORNICE_TEST_VOICE_PROBE" /tmp/voice-seat-probe --setenv CORNICE_TEST_VOICE_PROBE /tmp/voice-seat-probe)
+fi
+if [[ $suite == voice-session-verify.py ]]; then
+  : "${CORNICE_TEST_VOICE_APP:?Set the built Hyprvoice application}"
+  voice_mount=(--ro-bind "$CORNICE_TEST_VOICE_APP" /tmp/voice-app --setenv CORNICE_TEST_VOICE_APP /tmp/voice-app)
 fi
 network=()
 if [[ $suite == agent-model-verify.py ]]; then
@@ -33,7 +42,7 @@ echo "Isolated artifacts: $artifacts"
 exec nice -n 15 bwrap --unshare-all "${network[@]}" --die-with-parent --new-session \
   --ro-bind / / --dev /dev --proc /proc --tmpfs /run --tmpfs /tmp \
   --dir /dev/dri --dev-bind /dev/dri/renderD128 /dev/dri/renderD128 \
-  --bind "$artifacts" /tmp/t "${product_mount[@]}" \
+  --bind "$artifacts" /tmp/t "${product_mount[@]}" "${voice_mount[@]}" \
   --setenv HOME /tmp/t/home --setenv TMPDIR /tmp/t \
   --setenv XDG_RUNTIME_DIR /tmp/t \
   --unsetenv LIBGL_ALWAYS_SOFTWARE --unsetenv GALLIUM_DRIVER \
