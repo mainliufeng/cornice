@@ -270,9 +270,12 @@ try:
     # that late wl_seat. Preserve this evidence as an unresolved capability,
     # while asserting the compositor never substitutes the human keyboard.
     late = launch('late-gtk-client')
-    cli('create', 'agent3', '--workspace', '13', '--virtual-output', '1280x800')
+    cli('create', 'agent3', '--virtual-output', '1280x800')
     cli('resume', 'agent3')
     state3 = cli('state', 'agent3')
+    initial_workspace = state3['workspaceName']
+    assert initial_workspace == 'cornice-agent-agent3-ws-1'
+    assert not [window for window in ctl('clients', True) if window['workspace']['name'] == initial_workspace]
     env3 = ENV | {'WAYLAND_DISPLAY': state3['display']}
     third_keyboard = process('input', 'agent3-input', ('agent3', state3['output']), env3)
     third_foreign = process('foreign-helper', 'agent3-foreign', env=env3)
@@ -292,6 +295,33 @@ try:
     assert observation['nativeFocus'], observation
     assert observation['receivedText'] == ('lateseat' if observation['clientBoundAgent3'] else ''), observation
     print('PASS' if observation['clientBoundAgent3'] else 'LIMITATION', json.dumps(observation), flush=True)
+    dispatch('hl.dsp.focus({workspace=' + json.dumps('name:' + initial_workspace) + '})', 'agent3')
+    wait(lambda: cli('state', 'agent3')['workspaceName'] == initial_workspace)
+    before = snapshot()
+    own = launch('dynamic-agent3-app', 'agent3')
+    binding3 = bind('agent3')
+    frame = tool(binding3, 'capture')
+    tool(binding3, 'input', {'frameId': frame['frameId'], 'action': 'text', 'text': 'newseatworks'})
+    wait(lambda: (BASE/'dynamic-agent3-app.txt').read_text() == 'newseatworks')
+    bounds = wait(lambda: json.loads((BASE/'dynamic-agent3-app.geometry').read_text()))['button']
+    position = cli('state', 'agent3')['position']
+    frame = tool(binding3, 'capture')
+    tool(binding3, 'input', {'frameId': frame['frameId'], 'action': 'click',
+          'x': own['at'][0] - position[0] + bounds[0] + bounds[2] / 2,
+          'y': own['at'][1] - position[1] + bounds[1] + bounds[3] / 2})
+    wait(lambda: (BASE/'dynamic-agent3-app.click').read_text() == '1')
+    frame = tool(binding3, 'capture')
+    (BASE/'dynamic-new-seat-app.png').write_bytes(base64.b64decode(frame['pngBase64']))
+    after = snapshot()
+    result = {'newSeat': 'agent3', 'initialWorkspace': initial_workspace, 'initialApplicationCount': 0,
+              'newApplicationText': (BASE/'dynamic-agent3-app.txt').read_text(),
+              'newApplicationClickCount': int((BASE/'dynamic-agent3-app.click').read_text()),
+              'otherSeatsUnchanged': all(after[name] == before[name] for name in ('human','agent1','agent2')) and
+                  all(after['windowModes'].get(name) == mode for name,mode in before['windowModes'].items()),
+              'before': before, 'after': after}
+    (BASE/'dynamic-new-seat.json').write_text(json.dumps(result, indent=2))
+    check('dynamic Agent starts empty and its newly launched GTK app receives independent text and clicks',
+          [result['otherSeatsUnchanged'], own['workspace']['name'] == initial_workspace], {}, result)
     assert not failures, failures
     record('real foreign-toplevel requests preserve requested-seat focus/input, shared windows, pause and full-lock isolation')
 finally:

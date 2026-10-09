@@ -47,6 +47,12 @@ Workspace/bar 响应测量属于嵌套环境，不是笔记本物理输出的延
   保存 late-seat-observation.json。已有部署先创建三个 seat，再启动应用，支持的
   共享窗口输入在该真实顺序下另行验证。这里没有通过重启旧应用伪装成动态支持，
   任意时刻新建 seat 接管旧 GTK3 应用仍需解决客户端协议能力。
+- **动态新增空 Agent 不受上述 GTK 边界限制。** 同一真实套件在人和两个 Agent 的
+  应用运行期间新增 agent3，默认独立 Workspace 的应用窗口数为 0；随后在它的
+  seat 启动新 GTK 应用，实际输入 newseatworks、点击按钮成功，人和原两个 Agent
+  的完整状态及已有窗口全屏模式保持不变。实现没有固定两个或三个 seat 的数量
+  上限；三个只是当前部署的预创建数量。显式选择已有 Workspace 会共享已有窗口，
+  不能把“新建 seat”误解为“复制或清空已有应用”。
 - `changeWorkspace(string)` 的 seat 路径仍只处理已有工作区、数字和 name，尚未
   全面接入原生 previous/empty/back-and-forth/相对切换历史。本轮修复的是相对
   **移动窗口**的解析起点，不能把它说成已完成所有相对 Workspace 切换。
