@@ -164,6 +164,7 @@ Item {
 
   MenuPopup {
     id: menu
+    anchorWindow: root.openAnchor ? root.openAnchor.QsWindow.window : null
     anchorX: root.openAnchor ? root.openAnchor.mapToItem(null, 0, 0).x : 0
     onEntryChosen: root.closeMenu()
     onOpenedChanged: {

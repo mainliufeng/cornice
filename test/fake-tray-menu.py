@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""DBusMenu fixture with nested rows at the same pointer position.
+"""Private-bus DBusMenu fixture for native cascading-menu regressions.
 
-Used only on the verification suite's private session bus. The first submenu's
-first child is another submenu: with the back row, it lands where the pointer
-was, reproducing unwanted hover cascades with real Quickshell menu entries.
+Consecutive first-child submenus reproduce unwanted event reuse. Repeated leaf
+labels across branches, disabled/separator/checked items and a tall sixth level
+verify actual activation, navigation and scrolling through Quickshell.
 """
 from gi.repository import Gio, GLib
 
@@ -38,13 +38,27 @@ properties = {
     "Menu": GLib.Variant("o", "/Menu"),
     "ItemIsMenu": GLib.Variant("b", True),
 }
-nodes = {0: ("", [1, 2]), 1: ("Leaf", []), 2: ("First submenu", [3, 4]),
-         3: ("Nested submenu", [5]), 4: ("Other leaf", []), 5: ("Deep leaf", [])}
+nodes = {0: ("", [1, 2, 6, 12, 13]), 1: ("Leaf", []), 2: ("First submenu", [3, 4]),
+         3: ("Nested submenu", [7]), 4: ("Other leaf", []), 5: ("Deep leaf", []),
+         6: ("Second submenu", [9]), 7: ("Third submenu", [8]),
+         8: ("Fourth submenu", [5, 10]), 9: ("Other leaf", []),
+         10: ("Tall submenu", list(range(20, 55))),
+         12: ("Disabled", []), 13: ("Separator", [])}
+for ident in range(20, 55):
+    nodes[ident] = (f"Tall leaf {ident}", [])
+
 
 
 def layout(ident, depth):
     label, children = nodes[ident]
     props = {"label": GLib.Variant("s", label), "enabled": GLib.Variant("b", True)}
+    if ident == 12:
+        props["enabled"] = GLib.Variant("b", False)
+    if ident == 13:
+        props["type"] = GLib.Variant("s", "separator")
+    if ident == 5:
+        props["toggle-type"] = GLib.Variant("s", "checkmark")
+        props["toggle-state"] = GLib.Variant("i", 1)
     if children:
         props["children-display"] = GLib.Variant("s", "submenu")
     return (ident, props, [GLib.Variant("(ia{sv}av)", layout(child, depth - 1))
@@ -58,6 +72,7 @@ def method(_bus, _sender, _path, _iface, name, params, invocation):
     elif name == "AboutToShow":
         invocation.return_value(GLib.Variant("(b)", (False,)))
     elif name == "Event":
+        print("event " + str(params.unpack()[0]) + " " + params.unpack()[1], flush=True)
         invocation.return_value(GLib.Variant("()", ()))
 
 
