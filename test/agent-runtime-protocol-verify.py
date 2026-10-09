@@ -199,6 +199,16 @@ class RuntimeProtocol(unittest.TestCase):
             self.assertNotIn(SECRET,text,name)
             self.assertNotIn('query-secret',text,name)
 
+    def test_finished_task_blocks_browser_and_exposes_terminal_state(self):
+        accepted = self.start('success')
+        self.assertEqual(self.terminal(accepted)['phase'], 'completed')
+        self.env['CORNICE_AGENT_JOB'] = str(self.directory)
+        state = self.call('bridge', 'state', input='{}')
+        self.assertTrue(state['taskFinished'])
+        result = self.call('bridge', 'browser', input='{}', succeeds=False)
+        self.assertIn('Task already finished', result['error'])
+        self.assertFalse(any(r['method'] == 'desktop.browser' for r in self.requests))
+
     def test_model_retries_exhaust_with_actual_error(self):
         accepted = self.start('retry-failed')
         self.wait(lambda:(self.directory/'fixture.retry').exists())

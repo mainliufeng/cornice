@@ -159,6 +159,7 @@ try {
     assert.equal(calls.length,before);
   });
   for (const [name,change] of [
+    ["finished task",{taskFinished:true}],
     ["human takeover",{controlMode:"human"}],
     ["paused desktop",{controlMode:"paused",paused:true}],
     ["paused flag with agent mode",{paused:true}],

@@ -10,7 +10,7 @@ const TOOLS = ["browser_snapshot", "browser_navigate", "browser_navigate_back", 
   "browser_press_key", "browser_tabs", "browser_wait_for", "browser_handle_dialog"];
 
 type Invoke = (operation: string, params: unknown, signal?: AbortSignal) => Promise<any>;
-const active = (state: any) => !state.paused && !state.agentPaused && state.available && state.controlMode === "agent" &&
+const active = (state: any) => !state.taskFinished && !state.paused && !state.agentPaused && state.available && state.controlMode === "agent" &&
   (!state.humanLocked || (state.lockScope === "human" && state.humanLockPolicy === "continue"));
 
 export function registerBrowserTools(pi: ExtensionAPI, invoke: Invoke) {

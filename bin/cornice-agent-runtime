@@ -157,7 +157,7 @@ def bridge(directory, operation, params):
         private_json(directory/'result.json', dict(outcome=result, reason=params.get('reason', '')))
         return {'outcome': result}
     if operation == 'state':
-        return current
+        return dict(current, taskFinished=(directory/'result.json').exists())
     if operation == 'wait':
         status(directory, phase='waiting', message=params.get('reason', '等待恢复 Agent 控制'))
         end = time.monotonic()+min(300, max(1, params.get('seconds', 30)))
