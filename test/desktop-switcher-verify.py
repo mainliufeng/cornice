@@ -29,7 +29,15 @@ def control(name):
         return row
     row = wait(ready)
     wait(lambda: any(item['namespace'] == 'cornice-desktop-menu' for item in ctl('layers',True)['human']['levels']['3']))
-    time.sleep(.1)
+    send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']+1)}")
+    time.sleep(.6)
+    assert ready(), ('menu closed in gap below icon',name)
+    # Stop inside the popup across multiple service/model polls before clicking.
+    # Pointer ownership must not depend on the lifetime of a row delegate.
+    send(f"motion {round(row['x']+row['width']/2)} {round(row['y']+row['height']/2)}")
+    time.sleep(1.3)
+    row = ready()
+    assert row, ('menu closed while hovering its row',name)
     click(row['x'] + row['width'] / 2, row['y'] + row['height'] / 2)
 
 def entry(name, field="entry"):
@@ -106,7 +114,13 @@ try:
         return next((item for item in widget['controls'] if item['name'] == 'agent1'),None)
     row = wait(bar_agent)
     wait(lambda: any(item['namespace'] == 'cornice-desktop-menu' for item in ctl('layers',True)['human']['levels']['3']))
-    time.sleep(.15)
+    send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']+1)}")
+    time.sleep(.6)
+    assert bar_agent(), 'desktop selector closed in gap below icon'
+    send(f"motion {round(row['x']+row['width']/2)} {round(row['y']+row['height']/2)}")
+    time.sleep(2.2)
+    row = bar_agent()
+    assert row, 'desktop selector closed while pointer remained in the popup'
     subprocess.run(['grim','-o','human',str(BASE/'hover-menu.png')],env=ENV,check=True)
     click(row['x']+row['width']/2,row['y']+row['height']/2)
     wait(lambda: status()['open'] and status()['name'] == 'agent1')

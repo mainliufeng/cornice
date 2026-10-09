@@ -86,5 +86,49 @@ try:
     assert human_state() == human
     record('broker SIGKILL retires its shell children; restart restores exactly one bar per desktop and keeps input paused')
 
+    # Inspect the actual rendered dot, and react to real window lifecycle
+    # changes without switching the human workspace to refresh the bar.
+    config=BASE/'config/cornice'; config.mkdir(parents=True,exist_ok=True)
+    (config/'config.json').write_text(json.dumps({'agentDesktop':{'enabled':True},
+        'bar':{'layout':{'left':['cn.workspaces'],'center':[],'right':[]}},
+        'background':{'enabled':False},'weather':{'intervalMinutes':0},
+        'idle':{'lock':0,'screenOffAc':0,'screenOffBattery':0,'dimAc':0,'dimBattery':0,'lockOnSleep':False}}))
+    start([str(PRODUCT/'bin/cornice-qs'),'-p',str(PRODUCT/'shell')],'human-shell')
+    def workspace_widget(name=''):
+        geometry=json.loads(agent_shell(name,'ipc','bar','geometry') if name else shell('ipc','bar','geometry'))
+        return next((item for item in geometry if item['id']=='cn.workspaces'),{'controls':[]})
+    def slot(number,name=''):
+        controls=workspace_widget(name)['controls']
+        return controls[number-1] if len(controls)>=number else {'dotVisible':False,'occupied':False,'active':False}
+    wait(lambda:len(workspace_widget()['controls'])==10)
+    window=start(['/usr/bin/python3',ROOT/'test/agent-desktop-client.py','human-window',BASE/'dots.txt'],'human-dots')
+    client=wait(lambda:next((w for w in ctl('clients',True) if w['title']=='human-window'),None))
+    wait(lambda:slot(1)['occupied'])
+    assert slot(1)['active'] and not slot(1)['dotVisible']
+    ok('dispatch hl.dsp.window.move({window="address:'+client['address']+'",workspace="3",follow=false})')
+    wait(lambda:slot(3)['dotVisible'] and not slot(1)['occupied'])
+    subprocess.run(['grim','-o','human',str(BASE/'human-workspace-dot.png')],env=ENV,check=True)
+    from PIL import Image
+    def painted_dot(path,widget,number):
+        dot=widget['controls'][number-1]['dot']
+        color=dot['color'].lstrip('#')
+        expected=tuple(int(color[i:i+2],16) for i in (0,2,4))
+        point=(round(widget['x']+dot['x']+dot['width']/2),round(widget['y']+dot['y']+dot['height']/2))
+        actual=Image.open(path).convert('RGB').getpixel(point)
+        assert max(abs(a-b) for a,b in zip(actual,expected))<35,(actual,expected,point)
+    painted_dot(BASE/'human-workspace-dot.png',workspace_widget(),3)
+    ok('dispatch hl.dsp.window.move({window="address:'+client['address']+'",workspace="4",follow=false})')
+    wait(lambda:slot(4)['dotVisible'] and not slot(3)['occupied'])
+    window.terminate();window.wait(timeout=5)
+    wait(lambda:not slot(4)['occupied'])
+    record('human workspace dots paint for occupied inactive slots and follow window open, move and close without changing workspace')
+    cli('view-workspace','agent1','2')
+    wait(lambda:slot(1,'agent1')['dotVisible'])
+    assert not any(item['occupied'] for item in workspace_widget('agent2')['controls'])
+    assert not any(item['occupied'] for item in workspace_widget()['controls'])
+    cli('capture','agent1',BASE/'agent-workspace-dot.png')
+    painted_dot(BASE/'agent-workspace-dot.png',workspace_widget('agent1'),1)
+    record('Agent workspace dots paint from its own live toplevel list; human and other Agent occupancy stay isolated')
+
 finally:
     cleanup()

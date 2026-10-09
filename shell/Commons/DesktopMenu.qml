@@ -8,6 +8,10 @@ Item {
   property string description: "桌面"
   property var entries: []
   property bool opened: false
+  // Extend the popup's hit area through the gap below the icon. Its visible
+  // content still starts at the bar edge, so slow pointer travel stays inside.
+  readonly property real bridgeHeight: root.QsWindow.window
+    ? Math.max(0, Style.barHeight - root.mapToItem(root.QsWindow.window.contentItem, 0, 0).y - root.height) : 0
   implicitWidth: Style.widgetHeight
   implicitHeight: Style.widgetHeight
   signal chosen(string key)
@@ -15,7 +19,7 @@ Item {
     const out = [{name: "menu", x: root.x, y: root.y, width: root.width, height: root.height}]
     if (opened) for (let i = 0; i < items.count; ++i) {
       const item = items.itemAt(i)
-      out.push({name: item.modelData.key, x: popup.margins.left, y: popup.margins.top + item.y,
+      out.push({name: item.modelData.key, x: popup.margins.left, y: popup.margins.top + column.y + item.y,
         width: item.width, height: item.height, enabled: item.enabled, label: item.modelData.label})
     }
     return out
@@ -31,15 +35,15 @@ Item {
       onClicked: root.opened = true
     }
   }
-  Timer { id: closeDelay; interval: 250; onTriggered: if (!mouse.containsMouse && !popupHover.containsMouse) root.opened = false }
+  Timer { id: closeDelay; interval: 250; onTriggered: if (!mouse.containsMouse && !popupHover.hovered) root.opened = false }
   PanelWindow {
     id: popup
     screen: root.QsWindow.window ? root.QsWindow.window.screen : null
     visible: root.opened
-    implicitWidth: Style.space(29); implicitHeight: column.implicitHeight
-    exclusionMode: ExclusionMode.Ignore; color: Color.panel; focusable: false
+    implicitWidth: Style.space(29); implicitHeight: column.implicitHeight + root.bridgeHeight
+    exclusionMode: ExclusionMode.Ignore; color: "transparent"; focusable: false
     anchors { top: true; left: true }
-    margins.top: Style.barHeight
+    margins.top: Style.barHeight - root.bridgeHeight
     margins.left: {
       if (!root.QsWindow.window) return 0
       const point = root.mapToItem(root.QsWindow.window.contentItem, 0, 0)
@@ -48,13 +52,15 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "cornice-desktop-menu"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    MouseArea {
-      id: popupHover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton
-      onEntered: closeDelay.stop()
-      onExited: closeDelay.restart()
+    Rectangle {y:root.bridgeHeight;width:parent.width;height:column.implicitHeight;color:Color.panel}
+    // Track the whole popup independently of its periodically rebuilt rows.
+    // A sibling MouseArea loses hover to the clickable row MouseAreas.
+    HoverHandler {
+      id: popupHover; parent: popup.contentItem; blocking: false
+      onHoveredChanged: { if (hovered) closeDelay.stop(); else closeDelay.restart() }
     }
     Column {
-      id: column; width: parent.width
+      id: column; y:root.bridgeHeight; width: parent.width
       Repeater {
         id: items; model: root.entries
         delegate: Rectangle {
@@ -69,8 +75,6 @@ Item {
           }
           MouseArea {
             id: rowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-            onEntered: closeDelay.stop()
-            onExited: closeDelay.restart()
             onClicked: { root.opened = false; root.chosen(modelData.key) }
           }
         }

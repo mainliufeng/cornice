@@ -29,8 +29,21 @@ Item {
       const scoped = DesktopSession.selected !== ""
       const name = "cornice-agent-" + DesktopSession.selected + "-ws-" + id
       const current = (workspaces || []).find(ws => scoped ? ws.name === name : ws.id === id)
-      out.push({id: id, label: String(id), occupied: !!current && current.windows > 0,
+      out.push({id: id, label: String(id), occupied: !!current && current.toplevels.values.length > 0,
         active: scoped ? DesktopSession.state.workspaceName === name : id === focusedId})
+    }
+    return out
+  }
+
+  function controls() {
+    const out = []
+    for (let i = 0; i < pills.count; ++i) {
+      const item = pills.itemAt(i)
+      const dot = item.occupiedMarker
+      const point = dot.mapToItem(root, 0, 0)
+      out.push({name: String(item.modelData.id), occupied: item.modelData.occupied,
+        active: item.modelData.active, dotVisible: dot.visible,
+        dot: {x:point.x,y:point.y,width:dot.width,height:dot.height,color:String(dot.color)}})
     }
     return out
   }
@@ -59,12 +72,14 @@ Item {
     spacing: Style.space(0.25)
 
     Repeater {
+      id: pills
       model: root.slots
 
       delegate: Item {
         id: slot
 
         required property var modelData
+        readonly property alias occupiedMarker: dot
 
         implicitWidth: root.slotWidth
         implicitHeight: Style.widgetHeight
@@ -100,6 +115,7 @@ Item {
 
         // Occupied marker: makes "has windows" readable without shouting.
         Rectangle {
+          id: dot
           anchors.horizontalCenter: parent.horizontalCenter
           anchors.bottom: parent.bottom
           anchors.bottomMargin: Style.space(0.35)
