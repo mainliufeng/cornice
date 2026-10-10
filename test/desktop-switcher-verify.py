@@ -42,7 +42,7 @@ def control(name):
     icon = next(item for item in menus if item['name'] == 'group')
     send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']/2)}")
     def ready():
-        row = next((item for item in json.loads(shell('ipc', 'desktopObserver', 'controls')) if item['name'] == ('control:' + name if name in ('run','takeover','permission','previews','manage') else 'view:' + name)), None)
+        row = next((item for item in json.loads(shell('ipc', 'desktopObserver', 'controls')) if item['name'] == ('control:' + name if name in ('run','takeover','permission','previews','preview-mode','manage') else 'view:' + name)), None)
         if not row or not row.get('enabled', True): return None
         if name == 'run':
             expected = '恢复 Agent 输入' if cli('state', status()['name'])['paused'] else '暂停 Agent 输入'
@@ -182,13 +182,19 @@ try:
     except Exception:
         print('PREVIEW DIAGNOSTICS',previews(),shell('ipc','desktop','status'),cli('state','agent3'),preview_errors,flush=True)
         raise
-    wait(lambda:len(previews()['cards'])==3 and all(item['frames']>=3 for item in previews()['cards']))
+    wait(lambda:{item['name'] for item in previews()['cards']}=={'agent2','agent3'} and all(item['frames']>=3 for item in previews()['cards']))
     assert cli('state','agent3')['harness']=='codex' and cli('state','agent2')['harness']=='pi'
     assert previews()['readonly'] and previews()['visible']
     assert not (BASE/'human.txt').exists() and not (BASE/'agent3.txt').exists()
     subprocess.run(['grim','-o','human',str(BASE/'floating-preview.png')],env=ENV,check=True)
-    # Idle desktops are previewed even before a Harness takes ownership.
-    assert next(c for c in previews()['cards'] if c['name']=='agent1')['hasFrame']
+    assert not json.loads(shell('ipc','desktop','status'))['alwaysShowPreviews']
+    assert 'agent1' not in previews()['desktops']
+    control('preview-mode')
+    wait(lambda:json.loads(shell('ipc','desktop','status'))['alwaysShowPreviews'] and len(previews()['cards'])==3 and all(item['hasFrame'] for item in previews()['cards']))
+    saved=json.loads((config/'config.json').read_text())
+    assert saved['agentDesktop']['alwaysShowPreviews'] and saved['bar']['layout']['left'][0]['id']=='cn.agent-desktop'
+    assert (config/'config.json.previous').exists()
+    record('previews default to occupied desktops; the real Always switch persists with a backup and displays idle desktops without losing bar settings')
     group=next(item for item in next(item for item in json.loads(shell('ipc','bar','geometry')) if item['id']=='cn.agent-desktop')['controls'] if item['name']=='group')
     send(f"motion {round(group['x']+group['width']/2)} {round(group['y']+group['height']/2)}")
     rows=wait(lambda:json.loads(shell('ipc','desktopObserver','controls')) if any(item['name']=='control:all-heading' for item in json.loads(shell('ipc','desktopObserver','controls'))) else None)
@@ -202,6 +208,23 @@ try:
     control('previews');wait(lambda:previews()['visible'] and len(previews()['cards'])==3)
     send('motion 650 300')
     record('grouped menu separates switching, named current-desktop actions and global previews; idle desktops render and global hide/restore affects every card')
+    # Invoke the actual selection grab from a Super+P binding while the menu is
+    # hovered, then capture the physical output just as grim does in production.
+    capture_command='slurp > '+shlex.quote(str(BASE/'selected-region.txt'))
+    ok('eval hl.bind("SUPER + P", hl.dsp.exec_cmd('+json.dumps(capture_command)+'), {})')
+    send(f"motion {round(group['x']+group['width']/2)} {round(group['y']+group['height']/2)}")
+    menu_row=wait(lambda:next((row for row in json.loads(shell('ipc','desktopObserver','controls')) if row['name']=='view:main'),None))
+    send(f"motion {round(menu_row['x']+100)} {round(menu_row['y']+menu_row['height']/2)}")
+    send('key 125 1');send('key 25 1');send('key 25 0');send('key 125 0')
+    wait(lambda:any(layer['namespace']=='selection' for level in ctl('layers',True)['human']['levels'].values() for layer in level))
+    time.sleep(.7)
+    assert any(row['name']=='control:preview-mode' for row in json.loads(shell('ipc','desktopObserver','controls'))),'Super+P closed the menu'
+    subprocess.run(['grim','-o','human',str(BASE/'menu-during-slurp.png')],env=ENV,check=True)
+    send('motion 600 200');send('button 272 1');send('motion 800 400');send('button 272 0')
+    wait(lambda:(BASE/'selected-region.txt').exists() and (BASE/'selected-region.txt').stat().st_size>0)
+    wait(lambda:not any(layer['namespace']=='selection' for level in ctl('layers',True)['human']['levels'].values() for layer in level))
+    wait(lambda:not any(row['name']=='view:main' for row in json.loads(shell('ipc','desktopObserver','controls'))))
+    record('real Super+P/slurp pointer grab preserves the menu during selection and normal hover dismissal resumes afterward')
     def release_and_check_previews():
         previous_frames={c['name']:c['frames'] for c in previews()['cards']}
         preview_stop.set();preview_thread.join(timeout=5);pi_thread.join(timeout=5);preview_owner.close();pi_owner.close()
@@ -210,8 +233,51 @@ try:
         retained=wait(lambda:previews() if previews()['visible'] and len(previews()['cards'])==3 and all(c['frames']>previous_frames[c['name']] for c in previews()['cards'] if c['y']<previews()['bounds']['y']+previews()['bounds']['height']) else None)
         assert {c['name'] for c in retained['cards']}=={'agent1','agent2','agent3'},retained
         subprocess.run(['grim','-o','human',str(BASE/'preview-after-task.png')],env=ENV,check=True)
-        record('completed Harness leases leave desktop previews visible with fresh frames and retained applications')
+        record('Always mode keeps completed Harness previews visible with fresh frames and retained applications')
+        shell('ipc','desktop','previewMode','active')
+        wait(lambda:not json.loads(shell('ipc','desktop','status'))['alwaysShowPreviews'] and not previews()['visible'])
+        shell('ipc','desktop','previewMode','always')
+        wait(lambda:json.loads(shell('ipc','desktop','status'))['alwaysShowPreviews'] and len(previews()['cards'])==3)
+        record('switching back to the default hides released desktops; Always restores their retained applications')
     if os.getenv('CORNICE_TEST_DESKTOP_PREVIEW_ONLY') == '1':
+        # Many independent absolute pointer moves expose feedback from changing
+        # local window coordinates that a single two-point drag cannot catch.
+        first=previews()['cards'][0]
+        px=round(first['x']+80);py=round(first['y']+20)
+        send(f'motion {px} {py}');send('button 272 1')
+        samples=[]
+        for delta in list(range(15,271,15))+list(range(255,-1,-15)):
+            send(f'motion {px-delta} {py}')
+            target=first['x']-delta
+            wait(lambda:abs(previews()['bounds']['x']-target)<=3,timeout=3)
+            time.sleep(.04)
+            actual=previews()['bounds']['x'];samples.append((delta,actual))
+            assert abs(actual-target)<=3,(delta,actual,target)
+        send('button 272 0')
+        time.sleep(.15)
+        assert abs(previews()['bounds']['x']-first['x'])<=3,previews()
+        assert all(b[1]<=a[1]+1 for a,b in zip(samples[:18],samples[1:18])),samples
+        assert all(b[1]>=a[1]-1 for a,b in zip(samples[18:],samples[19:])),samples
+        # The fullscreen transparent hosting surface must never block the app.
+        click(650,300)
+        assert not status()['open'] and human_state()['window'],cli('state','main')
+        record('36 physical drag samples track the pointer within 3 logical pixels in both directions with no rebound; clicks outside previews reach the primary application')
+        # Make room at the right edge, then resize using physical pointer input.
+        bounds=previews()['bounds']
+        px=round(bounds['x']+80);py=round(bounds['y']+20)
+        send(f'motion {px} {py}');send('button 272 1');send(f'motion {px-180} {py-60}');send('button 272 0')
+        wait(lambda:previews()['bounds']['x'] < bounds['x']-170)
+        bounds=previews()['bounds'];px=round(bounds['x']+bounds['width']-10);py=round(bounds['y']+bounds['height']-10)
+        send(f'motion {px} {py}');send('button 272 1');send(f'motion {px+100} {py+30}');send('button 272 0')
+        resized=wait(lambda:previews() if abs(previews()['preferredWidth']-420)<=3 and abs(previews()['cardHeight']-230)<=3 else None)
+        wait(lambda:json.loads((config/'config.json').read_text())['agentDesktop'].get('previewWidth')==420)
+        assert abs(resized['bounds']['x']-bounds['x'])<=3 and abs(resized['bounds']['y']-bounds['y'])<=3,resized
+        assert json.loads((config/'config.json').read_text())['bar']['layout']['left'][0]['id']=='cn.agent-desktop'
+        qs.terminate();qs.wait(timeout=5)
+        qs=start([str(PRODUCT/'bin/cornice-qs'),'-p',str(PRODUCT/'shell')],'cornice-resized')
+        wait(lambda:previews()['visible'] and previews()['preferredWidth']==420 and previews()['cardHeight']==230)
+        subprocess.run(['grim','-o','human',str(BASE/'preview-resized.png')],env=ENV,check=True)
+        record('real corner drag resizes preview width and card height without shifting the origin; atomic settings preserve bar configuration and survive a shell restart')
         # Exercise a real drag before changing the output and visible card count.
         first=previews()['cards'][0]
         send(f"motion {round(first['x']+80)} {round(first['y']+20)}");send('button 272 1')
@@ -314,7 +380,7 @@ try:
     assert heading['detail'].startswith(cli('state','agent1')['label']) and '只读观察' in heading['detail'],heading
     assert all(row['target']=='agent1' for row in json.loads(shell('ipc','desktopObserver','controls')) if row.get('scope')=='desktop')
     subprocess.run(['grim','-o','human',str(BASE/'menu-scope-secondary.png')],env=ENV,check=True)
-    send('motion 650 300');time.sleep(.35)
+    send('motion 650 300');time.sleep(.5)
     send(f"motion {human['cursor']['x']} {human['cursor']['y']}")
     record('native desktop selection updates the named current-desktop heading and every local action target together')
     assert view['native'] and view['readonly'], view

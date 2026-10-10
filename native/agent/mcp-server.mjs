@@ -39,7 +39,7 @@ async function credential() {
   if (c.identity && (c.identity.name !== value.name || c.identity.seatId !== value.seatId || c.identity.instance !== value.instance))
     throw new Error("Assigned desktop changed. Start a new task; no action was sent.");
   c.identity ||= {name:value.name,seatId:value.seatId,instance:value.instance};
-  secrets.add(value.token); c.binding = value;
+  secrets.add(value.token); if(value.taskToken)secrets.add(value.taskToken); c.binding = value;
   return value;
 }
 async function brokerEndpoint() {
@@ -75,7 +75,7 @@ async function acquire(params) {
       });
     });
     if(lease.socket!==endpoint.socket || lease.instance!==endpoint.instance || !lease.token)throw new Error("Allocation identity mismatch");
-    c.binding=lease; secrets.add(lease.token);
+    c.binding=lease; secrets.add(lease.token); if(lease.taskToken)secrets.add(lease.taskToken);
     const state=await current.run(c,()=>invoke("state"));
     contexts.set(reference,c);
     return {...state,desktop:reference,created:lease.created};
@@ -113,6 +113,13 @@ async function invoke(operation,params={},extra={}) {
     finally {c.finished=true;c.reservation?.destroy();}
     return {outcome:params.outcome,reason:params.reason};
   }
+  if (operation === "handoff" || (operation === "state" && c.automatic && value.taskToken && !c.finished)) {
+    if (!value.taskToken) throw new Error("Updated Cornice Broker and task-owned acquisition are required for cooperation requests");
+    const result = await rpc({...value, token:value.taskToken}, "desktop.handoff", operation === "state" ? {action:"status"} : params, extra.requestId);
+    if (result.binding) { c.binding=result.binding;secrets.add(c.binding.token);await closeBrowser(); }
+    verifyState(result.state);
+    return operation === "state" ? result.state : {control:result.state,request:result.state.handoff || null,history:result.state.handoffs || []};
+  }
   const result=await rpc(value,"desktop."+(operation==="browser_connect"?"browser":operation),params,extra.requestId);
   if(operation==="state")verifyState(result);
   return result;
@@ -144,6 +151,7 @@ async function connectBrowser(extra) {
 const object = (properties={},required=[])=>({type:"object",properties,required,additionalProperties:false});
 const string={type:"string"}, number={type:"number"};
 const nativeTools=[
+  {name:"desktop_handoff",description:"Request human takeover with precise instructions; read the task/status history; resolve completed or cancelled at the user's request, including remotely releasing this request's human takeover; resume only after resolution. Requests pause input. Keep the desktop reference and requestId; never reacquire. UI completion does not wake the harness automatically: read status or desktop_wait, then resume and observe afresh.",inputSchema:{...object({action:{enum:["request","status","resolve","resume"]},title:{type:"string",minLength:1,maxLength:160},instructions:{type:"string",minLength:1,maxLength:4000},requestId:string,outcome:{enum:["completed","cancelled"]},note:{type:"string",minLength:1,maxLength:2000}},["action"]),oneOf:[{properties:{action:{const:"status"}}},{properties:{action:{const:"request"}},required:["title","instructions"]},{properties:{action:{const:"resolve"}},required:["requestId","outcome","note"]},{properties:{action:{const:"resume"}},required:["requestId"]}]}},
   {name:"desktop_state",description:"Read the assigned desktop's identity, permissions, controller and workspace. Begin here; no default desktop fallback.",inputSchema:object(),annotations:{readOnlyHint:true}},
   {name:"desktop_capture",description:"Capture this desktop only. Use pixelSize coordinates and the returned fresh frameId for native input. Prefer browser trees for browser tasks.",inputSchema:object(),annotations:{readOnlyHint:true}},
   {name:"desktop_windows",description:"List windows on this desktop's current workspace.",inputSchema:object(),annotations:{readOnlyHint:true}},
@@ -165,7 +173,7 @@ const acquireTool={name:"desktop_acquire",description:"Acquire an allowed, idle 
 const allTools=[acquireTool,...nativeTools,...browserTools].map(tool=>({...tool,inputSchema:{...tool.inputSchema,properties:{...tool.inputSchema.properties,...(tool.name==="desktop_acquire"?{}:{desktop:{type:"string",minLength:1,maxLength:128}})}}}));
 const validator=new AjvJsonSchemaValidator();
 const validators=new Map(allTools.map(tool=>[tool.name,validator.getValidator(tool.inputSchema)]));
-const server=new Server({name:"cornice-desktop",version:"0.3.0"},{capabilities:{tools:{}},instructions:"Begin a desktop task with desktop_acquire. Retain its desktop reference and include it in every native and browser tool call. Each task has independent control. Primary desktop requires pre-enabled permission and explicit selection. On interruption stop input; do not reacquire to escape pause, human takeover or lock. Finish after verifying the requested result."});
+const server=new Server({name:"cornice-desktop",version:"0.4.0"},{capabilities:{tools:{}},instructions:"Begin a desktop task with desktop_acquire. Retain its desktop reference and include it in every native and browser tool call. Each task has independent control. Primary desktop requires pre-enabled permission and explicit selection. On interruption stop input; do not reacquire to escape pause, human takeover or lock. Finish after verifying the requested result."});
 function harnessName() {
   const name=process.env.CORNICE_HARNESS || server.getClientVersion()?.name || "external";
   if (/codex/i.test(name)) return "codex";

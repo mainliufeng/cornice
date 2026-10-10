@@ -95,16 +95,23 @@ void DesktopPresentation::request() {
         m_control.clear();
     m_refresh = false;
     m_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto handoffId = m_method == "takeover" ? m_handoffId : QString{};
+    if (m_method == "takeover") m_handoffId.clear();
     const QJsonObject request{{"id", m_id},
                               {"method", m_method},
-                              {"params", QJsonObject{{"name", m_desktop}, {"workspace", m_workspace}}}};
+                              {"params", QJsonObject{{"name", m_desktop}, {"workspace", m_workspace}, {"requestId", handoffId}}}};
     m_pending = true;
     m_timeout.start();
     m_socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
 }
 void DesktopPresentation::takeControl(bool enabled) {
+    m_handoffId.clear();
     m_control = enabled ? "takeover" : "release";
     request();
+}
+
+void DesktopPresentation::takeHandoff(const QString &requestId) {
+    m_handoffId = requestId;m_control = "takeover";request();
 }
 
 void DesktopPresentation::refreshView() {

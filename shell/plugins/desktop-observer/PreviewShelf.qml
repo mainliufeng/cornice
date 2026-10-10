@@ -12,13 +12,27 @@ Item {
     const names = previews.map(item => item.name)
     if (JSON.stringify(names) !== JSON.stringify(previewNames)) previewNames = names
   }
-  Component.onCompleted: previewNames = previews.map(item => item.name)
   property real offsetX:Style.space(2)
   property real offsetY:Style.space(2)
   function clampOffsets() {
-    offsetX = Math.max(0, Math.min(offsetX, Math.max(0, (shelf.screen ? shelf.screen.width : 1280) - shelf.width)))
-    offsetY = Math.max(0, Math.min(offsetY, Math.max(0, (shelf.screen ? shelf.screen.height : 1080) - shelf.height - Style.barHeight)))
+    if (resizing) return
+    offsetX = Math.max(0, Math.min(offsetX, Math.max(0, (shelf.screen ? shelf.screen.width : 1280) - shelfContent.width)))
+    offsetY = Math.max(0, Math.min(offsetY, Math.max(0, (shelf.screen ? shelf.screen.height : 1080) - shelfContent.height - Style.barHeight)))
   }
+  property bool dragging: false
+  property bool resizing: false
+  property point resizeOrigin:Qt.point(0,0)
+  property real preferredWidth: 320
+  property real cardHeight: 220
+  property bool sizeLoaded: false
+  function loadSize() {
+    if (sizeLoaded || !service) return
+    preferredWidth = Math.max(240, Math.min(1600, Number(service.options.previewWidth) || 320))
+    cardHeight = Math.max(160, Math.min(1000, Number(service.options.previewCardHeight) || 220))
+    sizeLoaded = true
+  }
+  onServiceChanged: loadSize()
+  Component.onCompleted: {previewNames = previews.map(item => item.name);loadSize()}
   readonly property bool visibleHere: !DesktopSession.agentShell && !DesktopSession.secondary
   PanelWindow {
     id:shelf
@@ -30,36 +44,40 @@ Item {
       return physical.find(item => primary && item.name === primary.output) || physical[0] || null
     }
     onScreenChanged: Qt.callLater(root.clampOffsets)
-    onWidthChanged: Qt.callLater(root.clampOffsets)
-    onHeightChanged: Qt.callLater(root.clampOffsets)
     Connections {
       target:shelf.screen
       function onWidthChanged() {Qt.callLater(root.clampOffsets)}
       function onHeightChanged() {Qt.callLater(root.clampOffsets)}
     }
     visible:root.visibleHere && root.previews.length > 0
-    anchors {right:true;bottom:true}
-    margins {
-      right:Math.max(0, Math.min(root.offsetX, (screen ? screen.width : 1280) - implicitWidth))
-      bottom:Math.max(0, Math.min(root.offsetY, (screen ? screen.height : 1080) - implicitHeight - Style.barHeight))
-    }
-    implicitWidth:Math.min(320, screen ? screen.width : 1280)
-    implicitHeight:Math.max(0, Math.min(stack.implicitHeight, (screen ? screen.height : 1080) - Style.barHeight - Style.space(6)))
+    // Keep the Wayland surface stationary during a drag. The input region
+    // contains only the visible shelf; everything else passes through.
+    anchors {top:true;left:true;right:true;bottom:true}
+    mask: Region { item:shelfContent }
     exclusionMode:ExclusionMode.Ignore
     focusable:false
     color:"transparent"
     WlrLayershell.layer:WlrLayer.Overlay
     WlrLayershell.namespace:"cornice-desktop-previews"
     WlrLayershell.keyboardFocus:WlrKeyboardFocus.None
+    Item {
+      id:shelfContent
+      x:root.resizing ? root.resizeOrigin.x : (shelf.screen ? shelf.screen.width : 1280)-width-root.offsetX
+      y:root.resizing ? root.resizeOrigin.y : (shelf.screen ? shelf.screen.height : 1080)-height-root.offsetY
+      width:Math.min(root.preferredWidth, shelf.screen ? shelf.screen.width : 1280)
+      height:Math.max(0, Math.min(stack.implicitHeight, (shelf.screen ? shelf.screen.height : 1080) - Style.barHeight - Style.space(6)))
+      onWidthChanged:Qt.callLater(root.clampOffsets)
+      onHeightChanged:Qt.callLater(root.clampOffsets)
     Flickable {
       id:shelfScroll
+      interactive:!root.dragging && !root.resizing
       anchors.fill:parent
       clip:true
       contentHeight:stack.implicitHeight
       boundsBehavior:Flickable.StopAtBounds
       Column {
         id:stack
-        width:shelf.width
+        width:shelfContent.width
         spacing:Style.space(1)
         Repeater {
           id:cards
@@ -69,11 +87,11 @@ Item {
             required property string modelData
             readonly property var desktopState:root.service.desktops.find(item => item.name === modelData) || ({})
             function geometry() {
-              return {name:modelData,x:shelf.screen.width-shelf.margins.right-shelf.width,y:shelf.screen.height-shelf.margins.bottom-shelf.height+card.y-shelfScroll.contentY,
+              return {name:modelData,x:shelfContent.x,y:shelfContent.y+card.y-shelfScroll.contentY,
                 width:width,height:height,frames:frame.frameCount,hasFrame:frame.hasFrame,invalidations:frame.invalidations,error:frame.error}
             }
             width:stack.width
-            height:220
+            height:root.cardHeight
             radius:Style.radius
             color:Color.panel
             border.color:Color.muted
@@ -83,14 +101,23 @@ Item {
               color:"transparent"
               MouseArea {
                 anchors {left:parent.left;right:hide.left;top:parent.top;bottom:parent.bottom}
-                property real lastX:0
-                property real lastY:0
+                property point pressPoint:Qt.point(0,0)
+                property real startOffsetX:0
+                property real startOffsetY:0
+                preventStealing:true
                 cursorShape:pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
-                onPressed:mouse => {lastX=mouse.x;lastY=mouse.y}
+                onPressed:mouse => {
+                  pressPoint=mapToItem(shelf.contentItem, mouse.x, mouse.y)
+                  startOffsetX=root.offsetX;startOffsetY=root.offsetY
+                  root.dragging=true
+                }
+                onReleased:root.dragging=false
+                onCanceled:root.dragging=false
                 onPositionChanged:mouse => {
                   if (!pressed) return
-                  root.offsetX=Math.max(0,Math.min((shelf.screen ? shelf.screen.width : 1280)-shelf.width,root.offsetX-(mouse.x-lastX)))
-                  root.offsetY=Math.max(0,Math.min((shelf.screen ? shelf.screen.height : 1080)-shelf.height-Style.barHeight,root.offsetY-(mouse.y-lastY)))
+                  const point=mapToItem(shelf.contentItem, mouse.x, mouse.y)
+                  root.offsetX=Math.max(0,Math.min((shelf.screen ? shelf.screen.width : 1280)-shelfContent.width,startOffsetX-(point.x-pressPoint.x)))
+                  root.offsetY=Math.max(0,Math.min((shelf.screen ? shelf.screen.height : 1080)-shelfContent.height-Style.barHeight,startOffsetY-(point.y-pressPoint.y)))
                 }
               }
               Text {
@@ -116,7 +143,7 @@ Item {
               socketPath:root.service.socketPath
               desktop:card.modelData
               // Hidden previews and the covered/off-screen portion never capture.
-              active:shelf.visible && card.desktopState.available === true && !card.desktopState.humanLocked && card.y < shelfScroll.contentY + shelf.height && card.y + card.height > shelfScroll.contentY
+              active:shelf.visible && card.desktopState.available === true && !card.desktopState.humanLocked && card.y < shelfScroll.contentY + shelfContent.height && card.y + card.height > shelfScroll.contentY
             }
             Text {
               anchors.centerIn:frame
@@ -134,13 +161,47 @@ Item {
         }
       }
     }
+      // Resize in the stationary surface's coordinate system, just like drag.
+      Rectangle {
+        anchors {right:parent.right;bottom:parent.bottom}
+        width:24;height:24;radius:Style.radius
+        color:resizeMouse.containsMouse || root.resizing ? Color.hover : "transparent"
+        Text {anchors.centerIn:parent;text:"◢";color:Color.muted;font.pixelSize:14}
+        MouseArea {
+          id:resizeMouse;anchors.fill:parent;hoverEnabled:true;preventStealing:true
+          cursorShape:Qt.SizeFDiagCursor
+          property point pressPoint:Qt.point(0,0)
+          property real startWidth:0
+          property real startHeight:0
+          property real startLeft:0
+          property real startTop:0
+          onPressed:mouse => {
+            pressPoint=mapToItem(shelf.contentItem,mouse.x,mouse.y)
+            startWidth=root.preferredWidth;startHeight=root.cardHeight
+            startLeft=shelfContent.x;startTop=shelfContent.y;root.resizeOrigin=Qt.point(startLeft,startTop);root.resizing=true
+          }
+          onPositionChanged:mouse => {
+            if(!pressed) return
+            const point=mapToItem(shelf.contentItem,mouse.x,mouse.y)
+            root.preferredWidth=Math.max(240,Math.min(1600,(shelf.screen ? shelf.screen.width : 1280)-startLeft,startWidth+point.x-pressPoint.x))
+            root.cardHeight=Math.max(160,Math.min(1000,startHeight+(point.y-pressPoint.y)/Math.max(1,root.previews.length)))
+          }
+          onReleased:Qt.callLater(() => {
+            root.offsetX=Math.max(0,(shelf.screen ? shelf.screen.width : 1280)-shelfContent.width-startLeft)
+            root.offsetY=Math.max(0,(shelf.screen ? shelf.screen.height : 1080)-shelfContent.height-startTop)
+            root.resizing=false;root.clampOffsets();root.service.savePreviewSize(root.preferredWidth,root.cardHeight)
+          })
+          onCanceled:root.resizing=false
+        }
+      }
+    }
   }
   ShellIpc {
     target:"desktopPreviews"
     function status():string {
       const geometries=[]
       for(let i=0;i<cards.count;++i) geometries.push(cards.itemAt(i).geometry())
-      return JSON.stringify({cards:geometries,output:shelf.screen ? shelf.screen.name : "",bounds:{x:shelf.screen ? shelf.screen.width-shelf.margins.right-shelf.width : 0,y:shelf.screen ? shelf.screen.height-shelf.margins.bottom-shelf.height : 0,width:shelf.width,height:shelf.height},visible:shelf.visible,desktops:root.previews.map(item => item.name),readonly:true})
+      return JSON.stringify({cards:geometries,output:shelf.screen ? shelf.screen.name : "",bounds:{x:shelfContent.x,y:shelfContent.y,width:shelfContent.width,height:shelfContent.height},visible:shelf.visible,preferredWidth:root.preferredWidth,cardHeight:root.cardHeight,desktops:root.previews.map(item => item.name),readonly:true})
     }
   }
 }

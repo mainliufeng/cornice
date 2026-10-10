@@ -21,6 +21,21 @@
 #include <unistd.h>
 
 static void fail(const QString &message) { throw std::runtime_error(message.toStdString()); }
+static QJsonArray recoveredHandoffs(QJsonArray records) {
+    while (records.size() > 20) records.removeFirst();
+    for (int i = 0; i < records.size(); ++i) {
+        auto record = records[i].toObject();
+        if (record["status"] != "requested" && record["status"] != "in_progress") continue;
+        record["status"] = "cancelled";
+        record["note"] = "Desktop service restarted; request owner disconnected";
+        record["updatedAt"] = QDateTime::currentMSecsSinceEpoch();
+        auto events = record["events"].toArray();
+        events.append(QJsonObject{{"status", "cancelled"}, {"note", record["note"]}, {"at", record["updatedAt"]}});
+        while (events.size() > 20) events.removeFirst();
+        record["events"] = events; records[i] = record;
+    }
+    return records;
+}
 static QString uuid() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 static void atom(const QString &value) {
     if (value.isEmpty() || value.size() > 128 || value.contains(QRegularExpression("[\\s/\\x00-\\x1f]")))
@@ -76,9 +91,11 @@ Broker::Broker(QString instance)
             fail("Required compositor capability missing: " + name);
     if (caps["protocol"].toInt() != 1)
         fail("Unsupported compositor seat protocol");
+    QJsonArray mainHandoffs;
     QFile file(m_directory + "/desktops.json");
     if (file.open(QIODevice::ReadOnly)) {
         const auto saved = json(file.readAll()).object();
+        mainHandoffs = recoveredHandoffs(saved["main"].toObject()["handoffs"].toArray());
         for (auto it = saved.begin(); it != saved.end(); ++it) {
             if (it.key() == "main") continue;
             try {
@@ -96,6 +113,7 @@ Broker::Broker(QString instance)
                     m_desktops.at(it.key()).privateOutput = it.value().toObject()["privateOutput"].toString();
                 auto &recovered = m_desktops.at(it.key());
                 recovered.agentAllowed = it.value().toObject()["agentAllowed"].toBool(true);
+                recovered.handoffs = recoveredHandoffs(it.value().toObject()["handoffs"].toArray());
                 recovered.number = it.value().toObject()["number"].toInt(m_nextDesktopNumber);
                 m_nextDesktopNumber = std::max(m_nextDesktopNumber, recovered.number + 1);
                 initializeSlots(it.key(), it.value().toObject()["workspaceSlots"].toObject());
@@ -109,7 +127,7 @@ Broker::Broker(QString instance)
     const auto primary = state("main");
     m_desktops.emplace("main", Desktop{primary["seatId"].toString(), {}, {}, {}, {}});
     auto &main = m_desktops.at("main");
-    main.primary = true; main.number = 1; main.agentAllowed = false;
+    main.primary = true; main.number = 1; main.agentAllowed = false;main.handoffs = mainHandoffs;
     main.configurationOwner = uuid() + uuid();
     pause("main");
     // A fresh session provides exactly one task-ready secondary desktop. Reuse
@@ -119,6 +137,7 @@ Broker::Broker(QString instance)
         perform("create", {{"name", "desktop2"}, {"virtual-output",
             QString("%1x%2").arg(size.at(0).toInt()).arg(size.at(1).toInt())}}, nullptr, nullptr);
     }
+    save();
     m_configurationHeartbeat.start();
     connect(&m_watchdog, &QTimer::timeout, this, [this] {
         if (m_configurationHeartbeat.elapsed() >= 1000) {
@@ -140,6 +159,9 @@ Broker::Broker(QString instance)
             }
         }
         QList<QLocalSocket *> expiredAcquisitions;
+        for (auto it = m_acquisitions.begin(); it != m_acquisitions.end(); ++it)
+            if (QDateTime::currentMSecsSinceEpoch() - it.value()["heartbeatAt"].toVariant().toLongLong() > 5000)
+                expiredAcquisitions.append(it.key());
         for (auto it = m_bindings.begin(); it != m_bindings.end(); ++it) {
             if (it->controller.isEmpty() || !it->heartbeat.isValid() || it->heartbeat.elapsed() <= 5000) continue;
             for (auto owner = m_acquisitions.begin(); owner != m_acquisitions.end(); ++owner)
@@ -248,6 +270,10 @@ QJsonObject Broker::state(const QString &name) {
         workspaceSlots.append(QJsonObject{{"id", i}, {"name", value}, {"active", workspace == QString(value).remove("name:")}});
     }
     if (m_desktops.contains(name)) {
+        QJsonArray records;
+        for (const auto &entry : m_desktops.at(name).handoffs) { auto record = entry.toObject(); record.remove("controller");record.remove("rpcId"); records.append(record); }
+        result["handoffs"] = records;
+        if (!records.isEmpty()) result["handoff"] = records.last();
         result["bindingOverrides"] = m_desktops.at(name).bindingOverrides;
         result["configurationError"] = m_desktops.at(name).configurationError;
     }
@@ -307,7 +333,7 @@ void Broker::save() {
         for (auto it = desktop.workspaceSlots.begin(); it != desktop.workspaceSlots.end(); ++it)
             workspaceMap[QString::number(it.key())] = it.value();
         saved[name] = QJsonObject{{"seatId", desktop.id}, {"privateOutput", desktop.privateOutput},
-                                  {"agentAllowed", desktop.agentAllowed}, {"number", desktop.number}, {"workspaceSlots", workspaceMap}};
+                                  {"agentAllowed", desktop.agentAllowed}, {"number", desktop.number}, {"workspaceSlots", workspaceMap}, {"handoffs", desktop.handoffs}};
     }
     QSaveFile file(m_directory + "/desktops.json");
     if (!file.open(QIODevice::WriteOnly))
@@ -337,6 +363,13 @@ void Broker::endTakeover(const QString &reason) {
     const auto name = m_humanBinding.name;
     m_humanOwner = nullptr;
     m_humanBinding = {};
+    const auto requestId = m_humanRequestId;
+    m_humanRequestId.clear();
+    if (!requestId.isEmpty() && m_desktops.contains(name)) {
+        const auto last = m_desktops.at(name).handoffs.last().toObject();
+        if (last["id"] == requestId && last["status"] == "in_progress")
+            transitionHandoff(name, requestId, "requested", reason);
+    }
     try {
         if (m_presentations.contains(owner)) compositor("seat present-control " + m_presentations[owner] + " no");
         pause(name);
@@ -460,6 +493,14 @@ void Broker::releaseAcquisition(QLocalSocket *owner) {
     if (!m_acquisitions.contains(owner)) return;
     const auto lease = m_acquisitions.take(owner);
     const auto token = lease["token"].toString();
+    const auto name = lease["name"].toString();
+    if (m_desktops.contains(name) && !m_desktops.at(name).handoffs.isEmpty()) {
+        const auto record = m_desktops.at(name).handoffs.last().toObject();
+        if (record["controller"] == lease["controller"] && (record["status"] == "requested" || record["status"] == "in_progress")) {
+            transitionHandoff(name, record["id"].toString(), "cancelled", "Harness disconnected");
+            if (m_humanRequestId == record["id"].toString()) endTakeover("Request owner disconnected");
+        }
+    }
     if (!m_bindings.contains(token)) return;
     m_accessibility.invalidate(m_bindings[token].snapshotId);
     m_bindings.remove(token);
@@ -468,6 +509,110 @@ void Broker::releaseAcquisition(QLocalSocket *owner) {
         if (actual["seatId"] == lease["seatId"] && actual["generation"] == lease["generation"] &&
             actual["controlMode"].toString() == "agent") pause(lease["name"].toString());
     } catch (...) {}
+}
+
+
+void Broker::transitionHandoff(const QString &name, const QString &id, const QString &status, const QString &note) {
+    auto &records = m_desktops.at(name).handoffs;
+    for (int i = 0; i < records.size(); ++i) {
+        auto record = records[i].toObject();
+        if (record["id"] != id) continue;
+        record["status"] = status;
+        record["note"] = note;
+        record["updatedAt"] = QDateTime::currentMSecsSinceEpoch();
+        auto events = record["events"].toArray();
+        events.append(QJsonObject{{"status", status}, {"note", note}, {"at", record["updatedAt"]}});
+        while (events.size() > 20) events.removeFirst();
+        record["events"] = events;
+        records[i] = record;
+        save();
+        return;
+    }
+    fail("Cooperation request no longer exists");
+}
+
+QJsonObject Broker::handoff(const QJsonObject &request) {
+    // The task reservation outlives an input generation. It authorizes only
+    // cooperation records for this task, never input or desktop management.
+    auto lease = m_acquisitions.end();
+    const auto token = request["token"].toString();
+    if (token.isEmpty()) fail("Task cooperation credential required");
+    for (auto it = m_acquisitions.begin(); it != m_acquisitions.end(); ++it)
+        if (it.value()["taskToken"].toString() == token) { lease = it; break; }
+    if (lease == m_acquisitions.end() || lease.value()["controller"] != request["controller"])
+        fail("Unknown or foreign task reservation");
+    const auto name = lease.value()["name"].toString();
+    auto &desktop = managed(name);
+    if (desktop.id != lease.value()["seatId"].toString()) fail("Desktop lifecycle changed");
+    lease.value()["heartbeatAt"] = QDateTime::currentMSecsSinceEpoch();
+    if (m_bindings.contains(lease.value()["token"].toString())) m_bindings[lease.value()["token"].toString()].heartbeat.restart();
+    const auto params = request["params"].toObject();
+    const auto action = params["action"].toString("status");
+    if (action == "status") return {{"state", state(name)}};
+    auto record = desktop.handoffs.isEmpty() ? QJsonObject{} : desktop.handoffs.last().toObject();
+    if (action == "request") {
+        const auto title = params["title"].toString().trimmed();
+        const auto instructions = params["instructions"].toString().trimmed();
+        for (const auto &entry : desktop.handoffs) {
+            const auto previous = entry.toObject();
+            if (previous["rpcId"] == request["id"]) {
+                if (previous["title"] != title || previous["instructions"] != instructions) fail("Request ID reused for different cooperation request");
+                if (previous["status"] == "completed" || previous["status"] == "cancelled") fail("Cooperation request already resolved; inspect history");
+            }
+        }
+        if (title.isEmpty() || title.size() > 160 || instructions.isEmpty() || instructions.size() > 4000)
+            fail("Provide a title (1-160 characters) and human instructions (1-4000 characters)");
+        if (record["status"] == "requested" || record["status"] == "in_progress") {
+            if (record["controller"] == lease.value()["controller"] && record["title"] == title && record["instructions"] == instructions)
+                return {{"state", state(name)}};
+            fail("Resolve the active cooperation request first");
+        }
+        const auto actual = state(name);
+        if (!desktop.agentAllowed || actual["humanLocked"].toBool() || !actual["available"].toBool() || actual["agentPaused"].toBool() || actual["generation"] != lease.value()["generation"] || !m_bindings.contains(lease.value()["token"].toString()))
+            fail("Active desktop control required to request takeover");
+        pause(name);
+        revokeBindings(name);
+        record = {{"id", uuid()}, {"rpcId", request["id"]}, {"controller", lease.value()["controller"]}, {"harness", lease.value()["harness"]},
+                  {"title", title}, {"instructions", instructions}, {"createdAt", QDateTime::currentMSecsSinceEpoch()}};
+        desktop.handoffs.append(record);
+        while (desktop.handoffs.size() > 20) desktop.handoffs.removeFirst();
+        transitionHandoff(name, record["id"].toString(), "requested", "Agent requested human assistance");
+    } else {
+        if (record.isEmpty() || record["id"] != params["requestId"] || record["controller"] != lease.value()["controller"])
+            fail("This task does not own that cooperation request");
+        if (action == "resolve") {
+            const auto outcome = params["outcome"].toString();
+            const auto note = params["note"].toString().trimmed();
+            if ((outcome != "completed" && outcome != "cancelled") || note.isEmpty() || note.size() > 2000)
+                fail("Expected completed or cancelled with an explanation (1-2000 characters)");
+            if (record["status"] == "completed" || record["status"] == "cancelled") {
+                if (record["status"] != outcome) fail("Cooperation request already resolved differently");
+            } else {
+                // Never release unrelated manual control on the same desktop.
+                if (m_humanOwner && m_humanBinding.name == name && m_humanRequestId != record["id"].toString())
+                    fail("This request does not own the current human takeover");
+                transitionHandoff(name, record["id"].toString(), outcome, note);
+                if (m_humanRequestId == record["id"].toString()) endTakeover("Agent resolved cooperation request");
+            }
+        } else if (action == "resume") {
+            if (record["status"] != "completed" && record["status"] != "cancelled") fail("Resolve cooperation before resuming input");
+            if (m_humanOwner && m_humanBinding.name == name) fail("Another human takeover is active");
+            if (record["restored"].toBool()) {
+                const auto actual = state(name);
+                if (!m_bindings.contains(lease.value()["token"].toString()) || actual["generation"] != lease.value()["generation"] || actual["agentPaused"].toBool())
+                    fail("Subsequent interruption requires explicit operator restoration");
+            } else {
+                resume(name); revokeBindings(name);
+                auto binding = perform("bind", {{"name", name}}, nullptr, lease.key());
+                auto &input = m_bindings[binding["token"].toString()];
+                input.controller = lease.value()["controller"].toString(); input.harness = lease.value()["harness"].toString(); input.heartbeat.start();
+                for (auto it = binding.begin(); it != binding.end(); ++it) lease.value()[it.key()] = it.value();
+                record["restored"] = true; desktop.handoffs[desktop.handoffs.size()-1] = record; save();
+            }
+            return {{"state", state(name)}, {"binding", lease.value()}};
+        } else fail("Expected cooperation request, status, resolve or resume");
+    }
+    return {{"state", state(name)}};
 }
 
 QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owner) {
@@ -524,6 +669,9 @@ QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owne
         binding.heartbeat.start();
         lease["created"] = created;
         lease["harness"] = harness;
+        lease["controller"] = controller;
+        lease["taskToken"] = uuid() + uuid();
+        lease["heartbeatAt"] = QDateTime::currentMSecsSinceEpoch();
         m_acquisitions[owner] = lease;
         return lease;
     } catch (...) {
@@ -542,6 +690,8 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
         return {{"ok", true}, {"id", id}, {"result", acquireDesktop(request["params"].toObject(), owner)}};
     }
 
+    if (method == "desktop.handoff")
+        return {{"ok", true}, {"id", id}, {"result", handoff(request)}};
     const auto token = request["token"].toString();
     const bool writing = method == "desktop.input" || method == "desktop.workspace" || method == "desktop.focus" ||
                          method == "desktop.launch" || method == "desktop.browser" || method == "desktop.action";
@@ -571,6 +721,8 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
                 binding->harness = harness;
             }
             binding->heartbeat.restart();
+            for (auto it = m_acquisitions.begin(); it != m_acquisitions.end(); ++it)
+                if (it.value()["token"].toString() == token) it.value()["heartbeatAt"] = QDateTime::currentMSecsSinceEpoch();
         } else if ((writing || releasing) && !binding->controller.isEmpty()) fail("Another harness owns this desktop binding");
         if (writing && (!managed(binding->name).agentAllowed || actual["agentPaused"].toBool() ||
                         (m_humanOwner && m_humanBinding.name == binding->name)))
@@ -944,6 +1096,24 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             fail(QString::fromUtf8(reply));
         return state(name);
     }
+    if (method == "handoff-start" || method == "handoff-complete") {
+        if (desktop.handoffs.isEmpty()) fail("No cooperation request on this desktop");
+        const auto record = desktop.handoffs.last().toObject();
+        const auto requestId = record["id"].toString();
+        if (params["requestId"] != record["id"]) fail("Cooperation request changed; refresh before acting");
+        if (method == "handoff-start") {
+            if (!desktop.primary || m_humanOwner || record["status"] != "requested" || state(name)["humanLocked"].toBool())
+                fail("Use native presentation to take over a secondary desktop");
+            pause(name);
+            transitionHandoff(name, requestId, "in_progress", "Human took control");
+        } else {
+            if (record["status"] != "in_progress" || (!desktop.primary && (m_humanRequestId != requestId || !m_humanOwner)))
+                fail("Take over the requested desktop before completing it");
+            transitionHandoff(name, requestId, "completed", "Human marked the task completed");
+            if (m_humanRequestId == requestId) endTakeover("Cooperation task completed");
+        }
+        return state(name);
+    }
     if (method == "state" || method == "desktop.state")
         return state(name);
     if (method == "pause") {
@@ -1008,6 +1178,9 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         return json(compositor("seat presentation " + m_presentations[owner], true)).object();
     }
     if (method == "takeover") {
+        const auto requestId = params["requestId"].toString();
+        if (!requestId.isEmpty() && (desktop.handoffs.isEmpty() || desktop.handoffs.last().toObject()["id"] != requestId || desktop.handoffs.last().toObject()["status"] != "requested"))
+            fail("Cooperation request changed or resolved; refresh before takeover");
         if (!m_presentations.contains(owner))
             fail("Native presentation required before takeover");
         if (m_humanOwner && m_humanOwner != owner)
@@ -1020,6 +1193,13 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         m_humanBinding = Binding{name, desktop.id, actual["generation"].toString(), {}, {}};
         m_humanOwner = owner;
         m_humanHeartbeat.start();
+        if (!desktop.handoffs.isEmpty()) {
+            const auto record = desktop.handoffs.last().toObject();
+            if (record["status"] == "requested") {
+                m_humanRequestId = record["id"].toString();
+                transitionHandoff(name, m_humanRequestId, "in_progress", "Human took control");
+            }
+        }
         return result;
     }
     if (method == "release") {

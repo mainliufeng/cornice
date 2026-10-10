@@ -21,13 +21,13 @@ assert.deepEqual(loader.getExtensions().errors,[]);
 const server=loader.getExtensions().runtime.mcpServers.list().find(x=>x.name==='cornice');
 assert.ok(server);assert.equal(server.config.command,join(product,'bin/cornice-desktop-mcp'));
 assert.deepEqual(server.config.env,{CORNICE_HARNESS:'pi'});
-assert.equal(JSON.parse(await readFile(join(product,'plugins/pi-cornice/package.json'),'utf8')).version,'0.3.0');
+assert.equal(JSON.parse(await readFile(join(product,'plugins/pi-cornice/package.json'),'utf8')).version,'0.4.0');
 assert.ok(loader.getSkills().skills.some(x=>x.name==='cornice-desktop'));
 const {Client}=await import(pathToFileURL(join(product,'native/agent/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js')).href);
 const {StdioClientTransport}=await import(pathToFileURL(join(product,'native/agent/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js')).href);
 const client=new Client({name:'pi-package-check',version:'1'});
 try{await client.connect(new StdioClientTransport({command:server.config.command,env:{...env,...server.config.env},cwd:base,stderr:'pipe'}));
- const tools=await client.listTools();assert.equal(tools.tools.length,26);assert.ok(['desktop_acquire','desktop_snapshot','desktop_action'].every(name=>tools.tools.some(x=>x.name===name)));
- assert.equal(client.getServerVersion().version,'0.3.0');
- console.log('PASS real Pi local-package install discovers shared skill, registers independent MCP without job bridge, and lists 26 live tools; '+base);
+ const tools=await client.listTools();assert.equal(tools.tools.length,27);assert.ok(['desktop_acquire','desktop_snapshot','desktop_action','desktop_handoff'].every(name=>tools.tools.some(x=>x.name===name)));
+ assert.equal(client.getServerVersion().version,'0.4.0');
+ console.log('PASS real Pi local-package install discovers shared skill, registers independent MCP without job bridge, and lists 27 live tools; '+base);
 }finally{await client.close();}

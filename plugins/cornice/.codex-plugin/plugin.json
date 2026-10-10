@@ -1,6 +1,6 @@
 {
   "name": "cornice",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Acquire an independent desktop for each task and operate it through native input and structured browser tools.",
   "author": {
     "name": "cornice"

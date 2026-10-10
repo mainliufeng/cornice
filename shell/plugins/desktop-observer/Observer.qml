@@ -30,7 +30,7 @@ Item {
     if (service) service.selectedDesktop = "main"
     dismissed()
   }
-  function takeControl(enabled) { if (presentation.item) presentation.item.takeControl(enabled) }
+  function takeControl(enabled, requestId) { if (presentation.item) {if(enabled && requestId) presentation.item.takeHandoff(requestId);else presentation.item.takeControl(enabled)} }
   function browseWorkspace(workspace) {
     if (humanControl) return "end-takeover-first"
     selectedWorkspace = workspace
@@ -57,6 +57,11 @@ Item {
     active: !DesktopSession.agentShell && !!root.service && root.service.available
     source: active ? "PreviewShelf.qml" : ""
     onLoaded:item.service = root.service
+  }
+  Loader {
+    active:!!root.service && root.service.available
+    source:active ? "Cooperation.qml" : ""
+    onLoaded:item.service=root.service
   }
   Connections {
     target: Hyprland

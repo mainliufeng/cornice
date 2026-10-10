@@ -183,7 +183,10 @@ def prepare(args):
             (config_root / "cornice").mkdir()
         config_file = config_root / "cornice/config.json"
         settings = read(config_file) if config_file.exists() else {}
-        settings["agentDesktop"] = {"enabled": True, "desktops": []}
+        settings["agentDesktop"] = {"enabled": True, "desktops": [],
+                                    "alwaysShowPreviews": settings.get("agentDesktop", {}).get("alwaysShowPreviews") is True,
+        "previewWidth": settings.get("agentDesktop", {}).get("previewWidth", 320),
+        "previewCardHeight": settings.get("agentDesktop", {}).get("previewCardHeight", 220)}
         layout = settings.setdefault("bar", {}).setdefault("layout", {})
         # A configured entry in any section already provides both controls.
         found = False

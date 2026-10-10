@@ -21,6 +21,7 @@ class DesktopPresentation : public QObject {
     QJsonObject state() const { return m_state; }
     bool humanControl() const { return m_state["humanControl"].toBool(); }
     Q_INVOKABLE void takeControl(bool enabled);
+    Q_INVOKABLE void takeHandoff(const QString &requestId);
     Q_INVOKABLE void refreshView();
     Q_INVOKABLE void refreshStatus();
   signals:
@@ -34,7 +35,7 @@ class DesktopPresentation : public QObject {
     QLocalSocket m_socket;
     QTimer m_poll, m_timeout;
     QString m_socketPath, m_desktop, m_workspace = "current", m_error, m_control, m_id, m_method,
-                                     m_connectedPath;
+                                     m_connectedPath, m_handoffId;
     QJsonObject m_state;
     QByteArray m_input;
     bool m_active = false, m_pending = false, m_present = true, m_refresh = false;

@@ -44,7 +44,7 @@ try:
  wait(lambda:len(ctl('clients',True))==1);baseline=human_state()
  cli('create','disabled','--virtual-output','1280x800');cli('allow-agent','disabled','off')
  a=MCP('codex-like',True);b=MCP('pi-like')
- tools=a.request('tools/list',{})['tools'];assert len(tools)==26
+ tools=a.request('tools/list',{})['tools'];assert len(tools)==27
  assert 'desktop_acquire' in {x['name'] for x in tools}
  assert 'desktop_acquire first' in str(a.call('desktop_state',success=False))
  assert 'disabled' in str(a.call('desktop_acquire',{'preferredDesktop':'main'},False))

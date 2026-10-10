@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import qs.Commons
 Item {
   id: root
@@ -13,6 +14,18 @@ Item {
   Component.onCompleted: stableEntries = entries
   property bool opened: false
   property int badge: 0
+  property int selectionLayers: 0
+  readonly property bool capturing: selectionLayers > 0
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      // Slurp's selection surface temporarily owns the pointer. Preserve the
+      // menu throughout selection and the following grim frame read.
+      if (event.data !== "selection") return
+      if (event.name === "openlayer") { root.selectionLayers++; closeDelay.stop() }
+      else if (event.name === "closelayer") { root.selectionLayers = Math.max(0, root.selectionLayers - 1); if (!root.capturing) closeDelay.restart() }
+    }
+  }
   // Extend the popup's hit area through the gap below the icon. Its visible
   // content still starts at the bar edge, so slow pointer travel stays inside.
   readonly property real bridgeHeight: root.QsWindow.window
@@ -21,12 +34,12 @@ Item {
   implicitHeight: Style.widgetHeight
   signal chosen(string key)
   function rows() {
-    const out = [{name: "menu", x: root.x, y: root.y, width: root.width, height: root.height}]
+    const out = [{name: "menu", x: root.x, y: root.y, width: root.width, height: root.height, capturing:root.capturing}]
     if (opened) for (let i = 0; i < items.count; ++i) {
       const item = items.itemAt(i)
-      out.push({name: item.modelData.key, x: popup.margins.left, y: popup.margins.top + root.bridgeHeight + item.y - menuScroll.contentY,
+      out.push({name: item.modelData.key, x: popup.margins.left + column.x, y: popup.margins.top + root.bridgeHeight + Style.space(1) + item.y - menuScroll.contentY,
         width: item.width, height: item.height, enabled: item.enabled, label: item.modelData.label, detail:item.modelData.detail || "",
-        kind:item.modelData.kind || "action", scope:item.modelData.scope || "", target:item.modelData.target || "",
+        kind:item.modelData.kind || "action", scope:item.modelData.scope || "", target:item.modelData.target || "", checked:item.modelData.checked,
         detailHeight:item.detailHeight, alert:item.modelData.alert === true})
     }
     return out
@@ -40,16 +53,16 @@ Item {
     MouseArea {
       id: mouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
       onEntered: { closeDelay.stop(); root.opened = true }
-      onExited: closeDelay.restart()
+      onExited: if (!root.capturing) closeDelay.restart()
       onClicked: root.opened = true
     }
   }
-  Timer { id: closeDelay; interval: 250; onTriggered: if (!mouse.containsMouse && !popupHover.hovered) root.opened = false }
+  Timer { id: closeDelay; interval: 400; onTriggered: if (!root.capturing && !mouse.containsMouse && !popupHover.hovered) root.opened = false }
   PanelWindow {
     id: popup
     screen: root.QsWindow.window ? root.QsWindow.window.screen : null
     visible: root.opened
-    implicitWidth: Style.space(38); implicitHeight: Math.min(column.implicitHeight + root.bridgeHeight, (screen ? screen.height : 1080) - Style.barHeight - Style.space(2))
+    implicitWidth: Style.space(40); implicitHeight: Math.min(column.implicitHeight + root.bridgeHeight + Style.space(2), (screen ? screen.height : 1080) - Style.barHeight - Style.space(2))
     exclusionMode: ExclusionMode.Ignore; color: "transparent"; focusable: false
     anchors { top: true; left: true }
     margins.top: Style.barHeight - root.bridgeHeight
@@ -61,21 +74,21 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "cornice-desktop-menu"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    Rectangle {y:root.bridgeHeight;width:parent.width;height:parent.height-root.bridgeHeight;color:Color.panel}
+    Rectangle {y:root.bridgeHeight;width:parent.width;height:parent.height-root.bridgeHeight;color:Color.panel;radius:Style.radius + Style.space(0.5);border.width:1;border.color:Color.surfaceBorder}
     // Track the whole popup independently of its periodically rebuilt rows.
     // A sibling MouseArea loses hover to the clickable row MouseAreas.
     HoverHandler {
       id: popupHover; parent: popup.contentItem; blocking: false
-      onHoveredChanged: { if (hovered) closeDelay.stop(); else closeDelay.restart() }
+      onHoveredChanged: { if (hovered) closeDelay.stop(); else if (!root.capturing) closeDelay.restart() }
     }
     Flickable {
       id:menuScroll
-      y:root.bridgeHeight
-      width:parent.width;height:parent.height-root.bridgeHeight
+      y:root.bridgeHeight + Style.space(1)
+      width:parent.width;height:parent.height-root.bridgeHeight-Style.space(2)
       contentHeight:column.implicitHeight
       clip:true;boundsBehavior:Flickable.StopAtBounds
     Column {
-      id: column; width: parent.width
+      id: column; x:Style.space(1); width: parent.width - Style.space(2)
       Repeater {
         id: items; model: root.stableEntries
         delegate: Rectangle {
@@ -85,13 +98,32 @@ Item {
           property real detailHeight: detailText.visible ? detailText.implicitHeight : 0
           width: column.width; height: section ? (modelData.detail ? labelText.implicitHeight + detailHeight + Style.space(3) : Style.space(4.5)) : modelData.detail ? labelText.implicitHeight + detailHeight + Style.space(2) : Style.space(5)
           enabled: !section && modelData.enabled !== false
-          color: !section && rowMouse.containsMouse ? Color.hover : "transparent"
+          radius:Style.radius
+          color: modelData.selected ? Color.panelAlt : !section && rowMouse.containsMouse ? Color.hover : "transparent"
           Rectangle { visible: parent.section && index > 0; anchors.top:parent.top; width:parent.width; height:1; color:Color.hover }
           Text {
+            anchors {left:parent.left;leftMargin:Style.space(1.5);verticalCenter:parent.verticalCenter}
+            visible:!parent.section && !!modelData.icon
+            text:modelData.icon || "";color:parent.enabled ? Color.foreground : Color.muted
+            font.family:Style.iconFamily;font.pixelSize:Style.fontSize + 1
+          }
+          Text {
+            anchors {right:parent.right;rightMargin:Style.space(1.5);verticalCenter:parent.verticalCenter}
+            visible:modelData.selected === true
+            text:"✓";color:Color.accent;font.pixelSize:Style.fontSize
+          }
+          Rectangle {
+            anchors {right:parent.right;rightMargin:Style.space(1.5);verticalCenter:parent.verticalCenter}
+            visible:modelData.checked !== undefined
+            width:Style.space(3.5);height:Style.space(2);radius:height/2
+            color:modelData.checked ? Color.accent : Color.surfaceBorder
+            Rectangle {width:parent.height-4;height:width;radius:width/2;y:2;x:modelData.checked ? parent.width-width-2 : 2;color:modelData.checked ? Color.background : Color.foreground}
+          }
+          Text {
             id:labelText
-            anchors { left: parent.left; right:parent.right; leftMargin: Style.space(1.5); rightMargin:Style.space(1.5) }
+            anchors { left: parent.left; right:parent.right; leftMargin: Style.space(modelData.icon && !section ? 4.5 : 1.5); rightMargin:Style.space(modelData.selected || modelData.checked !== undefined ? 5 : 1.5) }
             y: modelData.detail ? (section ? Style.space(1.5) : Style.space(1)) : (parent.height - implicitHeight) / 2
-            text: (modelData.selected ? "✓ " : "") + modelData.label; color: modelData.alert ? Color.urgent : parent.enabled ? Color.foreground : Color.muted
+            text: modelData.label; color: modelData.alert ? Color.urgent : parent.enabled ? Color.foreground : Color.muted
             elide:Text.ElideRight
             font.family: Style.fontFamily; font.pixelSize: section ? Style.smallFontSize : Style.fontSize
           }
@@ -105,7 +137,7 @@ Item {
           }
           MouseArea {
             id: rowMouse; anchors.fill: parent; enabled: !parent.section; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-            onClicked: { root.opened = false; root.chosen(modelData.key) }
+            onClicked: { if (!modelData.keepOpen) root.opened = false; root.chosen(modelData.key) }
           }
         }
       }

@@ -56,6 +56,7 @@ Machine
   bar [cmd]           Bar layout: list | show <id> | hide <id> | move <id> up|down|… | edit
   weather [cmd]       Places: list | add <name> [--city C] | set | rename | remove | move | select
   clock [cmd]         World clocks: list | add <name> <zone> | set | rename | remove | move | zones
+  previews [mode]     Floating previews: active (default) | always
   desktop [cmd]       Independent seat-bound desktops (desktop help)
   session-trial [cmd] One-shot login trial with automatic fallback (session-trial --help)
   takeover [--apply]  Take over from mako/hypridle/waybar/polkit-gnome (plan first!)
@@ -243,6 +244,22 @@ case "$command" in
         persist_theme "$1"
         call shell setTheme "$1"
         ;;
+    esac
+    ;;
+
+  previews)
+    . "$bin_dir/cornice-config.sh"
+    case "${1:-}" in
+      "") cornice_config_raw | jq -r 'if .agentDesktop.alwaysShowPreviews == true then "always" else "active" end' ;;
+      active|always)
+        enabled=false; [[ $1 == always ]] && enabled=true
+        cornice_config_edit '.agentDesktop = ((.agentDesktop // {}) + {alwaysShowPreviews: $enabled})' --argjson enabled "$enabled"
+        ;;
+      size)
+        (($# == 3)) && [[ $2 =~ ^[0-9]+$ && $3 =~ ^[0-9]+$ ]] && ((10#$2 >= 240 && 10#$2 <= 1600 && 10#$3 >= 160 && 10#$3 <= 1000)) || { echo 'usage: cornice previews size <width:240-1600> <card-height:160-1000>' >&2; exit 2; }
+        cornice_config_edit '.agentDesktop = ((.agentDesktop // {}) + {previewWidth: $width, previewCardHeight: $height})' --argjson width "$2" --argjson height "$3"
+        ;;
+      *) echo 'usage: cornice previews [active|always|size <width> <card-height>]' >&2; exit 2 ;;
     esac
     ;;
 

@@ -55,7 +55,24 @@ Its extension applies the desktop screenshot-context budget and registers `CORNI
 
 Start `cornice-desktop-mcp` as a local **STDIO** server. There is no HTTP MCP listener or port to configure. It connects to Broker through a user-owned Unix socket. In the desktop session it uses the explicit compositor environment; a GUI App without that environment can use Broker's private runtime `cornice/active.json` endpoint. An old live connection never automatically switches compositors or tasks after a failure.
 
-Expose the bundled skill at `plugins/cornice/skills/cornice-desktop/SKILL.md`. The shared catalog has 26 tools including task acquisition, native desktop operations and allowlisted Playwright browser operations. It does not expose permission changes, arbitrary resume/rebinding, global CDP endpoints or arbitrary JavaScript execution.
+Expose the bundled skill at `plugins/cornice/skills/cornice-desktop/SKILL.md`. The shared catalog has 27 tools including task acquisition, native desktop operations and allowlisted Playwright browser operations. It includes task-owned cooperation requests, completion/cancellation and restoration after that specific request. It does not expose permission changes, arbitrary resume/rebinding, global CDP endpoints or arbitrary JavaScript execution.
+
+## Human cooperation and remote exit
+
+The Codex and Pi 0.4.0 plugins expose `desktop_handoff`. It is part of the existing Broker/MCP, not another service or chat runtime. A task must have acquired its desktop through `desktop_acquire`; legacy explicit bindings cannot issue cooperation requests.
+
+```json
+{"tool":"desktop_handoff","arguments":{"desktop":"task-reference","action":"request","title":"请扫码登录","instructions":"扫描这个桌面的二维码，登录成功后点击“已完成，退出接管”。"}}
+{"tool":"desktop_handoff","arguments":{"desktop":"task-reference","action":"status"}}
+{"tool":"desktop_handoff","arguments":{"desktop":"task-reference","action":"resolve","requestId":"id-from-request","outcome":"cancelled","note":"用户在对话中要求远程退出接管"}}
+{"tool":"desktop_handoff","arguments":{"desktop":"task-reference","action":"resume","requestId":"id-from-request"}}
+```
+
+Requesting immediately pauses and revokes Agent input. The primary desktop shows outstanding requests; the target desktop shows its own request while observed or taken over. “接管并处理” starts native human control; “已完成，退出接管” records completion and releases it. The desktop management panel lists recent requests, human instructions and terminal status. The Broker persists up to 20 records per desktop and 20 transitions per record for that desktop lifecycle. A Broker restart preserves records and cancels pending requests whose reservations were lost; a new compositor session is a new desktop lifecycle.
+
+The task's separate cooperation credential permits only status and resolution for its reserved desktop across input-generation changes. It cannot operate applications, change permissions, or control other reservations. A remote resolution can release only the takeover associated with that request. A later independent human takeover, pause, lock or permission change cannot be overridden by retrying an old resume. After resolution, `resume` explicitly obtains a fresh input generation; reconnect the managed browser and read a fresh tree/frame before continuing.
+
+User replies stay in Codex/Pi. The completion button does **not** automatically wake a new external harness turn. Read status on the user's reply or use bounded `desktop_wait`; never acquire another desktop to escape the pause. During a version transition, 0.4.0 MCP retains ordinary operation against the previous Broker, while cooperation requires the updated Broker and an acquired task reservation.
 
 ## Legacy explicit bindings
 
@@ -65,7 +82,7 @@ Expose the bundled skill at `plugins/cornice/skills/cornice-desktop/SKILL.md`. T
 
 `desktop_state` returns independent fields: `occupied` means a live harness lease, `harness` identifies its owner (Codex/Pi plugins supply `codex`/`pi`), and `activity` is one of `idle`, `running`, `paused`, `takeover`, `locked` or `unavailable`. Open windows do not prove that a harness is working, and releasing a lease preserves those windows.
 
-The primary desktop shows read-only floating thumbnails for occupied secondary desktops. Preview refresh is limited to four frames per second; it never forwards keyboard or pointer input. Hide a thumbnail from its close control and restore it from the desktop menu. A click selects the full native read-only desktop view; human takeover is an explicit separate control. The default bar groups desktop selection and control in one button; `grouped:false` splits them into the two existing buttons. Full desktop presentation remains native Hyprland composition and is not a thumbnail or screenshot viewing loop.
+The primary desktop shows read-only floating thumbnails for occupied secondary desktops. Preview refresh is limited to four frames per second; it never forwards keyboard or pointer input. The “始终显示预览” switch includes idle and finished-task desktops and persists across shell restarts. Drag a title to move the shelf and its bottom-right corner to resize it; size settings persist. Hide a thumbnail from its close control and restore it from the desktop menu. A click selects the full native read-only desktop view; human takeover is an explicit separate control. The default bar groups desktop selection and control in one button; `grouped:false` splits them into the two existing buttons. Full desktop presentation remains native Hyprland composition and is not a thumbnail or screenshot viewing loop.
 
 ## Native element trees
 
@@ -82,3 +99,5 @@ This is same-user desktop coordination, not an OS sandbox. A harness with unrest
 `test/desktop-acquire-verify.py`, through `test/isolated-desktop-test.sh`, runs real headless Hyprland, native Cornice shells, GTK applications, managed Chrome and the native session-lock protocol. It verifies concurrent allocation across harnesses, multiple tasks in one MCP process, fresh empty desktops, application-preserving reuse, task references, native Unicode input, independent browser trees, primary permission, finish/disconnect, heartbeat expiry and stale-owner rejection.
 
 `test/desktop-harness-verify.py` retains explicit-binding regression coverage. `test/codex-plugin-verify.py` installs the actual Codex plugin into a temporary configuration; `test/pi-plugin-verify.mjs` installs the actual Pi package and loads its extension and skill. Both discover the live shared MCP catalog without model credentials. `test/mcp-transport-verify.mjs` checks transport failures and the pinned browser schemas, and `test/native-accessibility-verify.py` verifies real GTK/Qt trees and semantic actions. Removed internal-executor tests are not part of the product.
+
+`test/desktop-handoff-verify.py` verifies real MCP request/resolve/resume, native takeover, physical input, actual completion buttons on secondary and primary desktops, stale grants and request IDs, foreign tasks, unrelated human control, permission revocation and Broker restart history. `test/desktop-preview-verify.py` exercises real screenshot selection, 36 pointer drag samples, physical corner resizing and shell-restart size persistence.

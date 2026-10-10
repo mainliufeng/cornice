@@ -26,7 +26,7 @@ Row {
     description:"桌面"
     badge:root.service ? root.service.activeDesktops.length : 0
     entries: root.service ? [{key:"view-heading",kind:"section",label:"切换桌面",enabled:false}].concat(root.service.desktops.map(desktop => ({
-      key:"view:" + desktop.name,scope:"navigation",target:desktop.name,label:root.service.desktopLabel(desktop.name) + " · " + root.service.stateLabel(desktop),
+      key:"view:" + desktop.name,scope:"navigation",target:desktop.name,icon:"󰍹",label:root.service.desktopLabel(desktop.name),detail:root.service.stateLabel(desktop),
       selected:desktop.name === root.service.selectedDesktop,enabled:desktop.primary === true || (!!desktop.available && !desktop.error)
     }))).concat(control.entries.map(item => Object.assign({},item,{key:"control:"+item.key}))) : []
     onChosen:key => {

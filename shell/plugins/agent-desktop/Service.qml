@@ -40,17 +40,65 @@ Item {
     if (desktop.primary && desktop.controlMode === "human") return prefix + "人工控制"
     if (desktop.error || !desktop.available) return prefix + "不可用"
     if (desktop.controlMode === "human") return prefix + "人工接管"
+    if (desktop.handoff && desktop.handoff.status === "requested") return prefix + "等待你处理"
     if (desktop.occupied === true) return prefix + (desktop.paused ? "已暂停" : "操作中")
     return "空闲"
   }
+  function handoffLabel(status) {
+    return ({requested:"等待处理",in_progress:"处理中",completed:"已完成",cancelled:"已撤回"})[status] || status
+  }
+  property string pendingTakeover: ""
+  property string pendingRequestId: ""
+  function startHandoff(name, requestId) {
+    const state = desktops.find(item => item.name === name)
+    if (!state || !state.handoff || state.handoff.status !== "requested" || (requestId && requestId !== state.handoff.id)) return
+    requestId=state.handoff.id
+    if (state.primary) {operate(["handoff-start",name,requestId]);return}
+    if (DesktopSession.agentShell) {
+      Quickshell.execDetached([prefix + "/bin/cornice-agent-view", name, "--handoff", requestId]);return
+    }
+    pendingRequestId=requestId;pendingTakeover=name;show(name)
+  }
+  Timer {
+    interval:100;repeat:true;running:root.pendingTakeover !== ""
+    onTriggered: {
+      const state=root.desktops.find(item => item.name === root.pendingTakeover)
+      if (!state || !state.handoff || state.handoff.id !== root.pendingRequestId || state.handoff.status !== "requested") {root.pendingTakeover="";return}
+      if (root.observer && root.observer.desktopName === root.pendingTakeover && root.observer.presentationState.active) {
+        root.observer.takeControl(true,root.pendingRequestId);root.pendingTakeover=""
+      }
+    }
+  }
+  function completeHandoff(name, requestId) {operate(["handoff-complete",name,requestId])}
   property var hiddenPreviews: ({})
   property bool previewsEnabled: true
-  readonly property var previewDesktops: desktops.filter(item => !item.primary)
+  readonly property bool alwaysShowPreviews: options.alwaysShowPreviews === true
+  readonly property bool previewModeBusy: previewModeWriter.running
+  readonly property var previewDesktops: desktops.filter(item => !item.primary && (alwaysShowPreviews || item.occupied === true))
   readonly property bool allPreviewsVisible: previewsEnabled && previewDesktops.length > 0 && previewDesktops.every(item => hiddenPreviews[item.name] !== true)
   readonly property var activeDesktops: desktops.filter(item => !item.primary && item.occupied === true)
+  function setPreviewMode(always) {
+    if (previewModeWriter.running) return
+    previewModeWriter.command = [prefix + "/bin/cornice", "previews", always ? "always" : "active"]
+    previewModeWriter.running = true
+  }
+  Process {
+    id: previewModeWriter
+    stderr: StdioCollector { onStreamFinished: if (text.trim() !== "") root.error = text.trim() }
+    onExited: if (root.host) root.host.reloadUserConfig()
+  }
   function harnessLabel(desktop) {
     const name = String(desktop.harness || "")
     return ({codex:"Codex",pi:"Pi"})[name.toLowerCase()] || name || "外部 Agent"
+  }
+  function savePreviewSize(width, height) {
+    sizeWriter.command = [prefix + "/bin/cornice", "previews", "size", String(Math.round(width)), String(Math.round(height))]
+    if (!sizeWriter.running) sizeWriter.running = true
+  }
+  Process {
+    id:sizeWriter
+    stderr:StdioCollector {onStreamFinished:if(text.trim()) root.error = text.trim()}
+    onExited:if(root.host) root.host.reloadUserConfig()
   }
   function previewVisible(name) { return previewsEnabled && hiddenPreviews[name] !== true }
   function hidePreview(name) { hiddenPreviews = Object.assign({}, hiddenPreviews, {[name]:true}) }
@@ -139,9 +187,11 @@ Item {
     target: "desktop"
     function status(): string {
       return JSON.stringify({enabled: root.enabled, available: root.available, desktops: root.desktops,
-        selected: root.selectedDesktop, active: root.activeDesktops.map(item => item.name), hiddenPreviews:root.hiddenPreviews, previewsEnabled:root.previewsEnabled, allPreviewsVisible:root.allPreviewsVisible,
+        selected: root.selectedDesktop, active: root.activeDesktops.map(item => item.name), hiddenPreviews:root.hiddenPreviews, previewsEnabled:root.previewsEnabled, alwaysShowPreviews:root.alwaysShowPreviews, allPreviewsVisible:root.allPreviewsVisible,
         error: root.error, socket: root.socketPath, busy: root.busy})
     }
+    function handoffStart(name: string, requestId: string): string {root.startHandoff(name,requestId);return "requested"}
+    function previewMode(mode: string): string { if (!["always", "active"].includes(mode)) return "invalid-mode"; root.setPreviewMode(mode === "always"); return "requested" }
     function restorePreviews(): string { root.restorePreviews(); return "ok" }
     function hidePreviews(): string { root.hidePreviews(); return "ok" }
     function hidePreview(name: string): string { root.hidePreview(name); return "ok" }

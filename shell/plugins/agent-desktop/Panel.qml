@@ -26,7 +26,7 @@ PanelFrame {
           function controlRect() {
             const point = controlButton.mapToItem(root.window.contentItem, 0, 0)
             return {name: modelData.name, x: point.x, y: point.y,
-              width: controlButton.width, height: controlButton.height}
+              width: controlButton.width, height: controlButton.height, handoffs:Array.from({length:handoffRows.count}, (_,i) => handoffRows.itemAt(i).modelData)}
           }
           width: body.width; height: rowBody.implicitHeight + Style.space(2)
           color: Color.hover; radius: Style.radius
@@ -35,6 +35,17 @@ PanelFrame {
             anchors.top: parent.top; anchors.margins: Style.space(1); spacing: Style.space(0.7)
             Text { text: root.service.desktopLabel(modelData.name) + " · WS " + (modelData.workspace || "?") + " · " + (modelData.error || !modelData.available ? "桌面不可用" : root.service.stateLabel(modelData)); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
             Text { width: parent.width; text: modelData.error || modelData.window || "无焦点窗口"; elide: Text.ElideRight; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
+            Repeater {
+              id:handoffRows
+              model:modelData.handoffs || []
+              delegate:Column {
+                required property var modelData
+                width:rowBody.width;spacing:Style.space(.3)
+                Text {width:parent.width;wrapMode:Text.Wrap;text:root.service.handoffLabel(modelData.status)+" · "+modelData.title;color:Color.accent;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
+                Text {width:parent.width;wrapMode:Text.Wrap;text:modelData.instructions;color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
+                Text {width:parent.width;wrapMode:Text.Wrap;text:new Date(modelData.updatedAt).toLocaleString()+" · "+(modelData.note || "");color:Color.muted;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
+              }
+            }
             Row {
               spacing: Style.space(1)
               PanelButton { label: "允许 Agent · " + (modelData.agentAllowed ? "开" : "关"); enabled: !!root.service && !root.service.busy && !modelData.humanLocked; onClicked: root.service.operate(["allow-agent", modelData.name, modelData.agentAllowed ? "off" : "on"]) }
@@ -46,6 +57,7 @@ PanelFrame {
         }
       }
       PanelButton { label: root.service && root.service.allPreviewsVisible ? "隐藏全部浮动预览" : "显示全部浮动预览"; enabled: !!root.service && root.service.previewDesktops.length > 0; onClicked: root.service.togglePreviews() }
+      PanelButton {label:"始终显示预览 · " + (root.service && root.service.alwaysShowPreviews ? "开" : "关");enabled:!!root.service && !root.service.previewModeBusy;onClicked:root.service.setPreviewMode(!root.service.alwaysShowPreviews)}
       Text { text: "额外桌面由 Agent 按需创建"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
       Text { width: parent.width; wrapMode: Text.Wrap; text: "主桌面默认禁止 Agent 控制。其他桌面默认允许，但由外部 Harness 自动占用。关闭权限立即撤销控制；删除桌面会保留共享窗口。"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
     }

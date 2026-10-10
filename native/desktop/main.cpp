@@ -114,6 +114,8 @@ int main(int argc, char **argv) {
                         throw std::runtime_error("Expected --workspace or --output");
                     params[flag.mid(2)] = take(args);
                 }
+            } else if (command == "handoff-start" || command == "handoff-complete") {
+                params["requestId"] = take(args);
             } else if (command == "view-focus") {
                 params["address"] = take(args);
             } else if (command == "view-workspace") {

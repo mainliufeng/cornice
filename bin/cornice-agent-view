@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 unset CORNICE_SHELL_SOCKET CORNICE_DESKTOP_NAME CORNICE_DESKTOP_OUTPUT
+if [[ ${2:-} == --handoff ]]; then
+  exec "${CORNICE_PATH:?}/bin/cornice" ipc desktop handoffStart "${1:-}" "${3:?Request ID required}"
+fi
 exec "${CORNICE_PATH:?}/bin/cornice" ipc desktop observe "${1:-}"

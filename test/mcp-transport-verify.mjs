@@ -1,6 +1,6 @@
 // Real shared MCP SDK/transport and pinned browser catalog; test-only Unix Broker fixture.
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,readFile,chmod} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,chmod,mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -12,7 +12,8 @@ const dir=await mkdtemp(join(tmpdir(),'cornice-mcp-transport-'));
 // retaining the deleted embedded-executor job bridge in production.
 const {createServer}=await import('node:net');
 let mode='state';
-const socketPath=join(dir,'desktop.sock');
+const runtime=join(dir,'runtime');await mkdir(join(runtime,'cornice/test'),{recursive:true});
+const socketPath=join(runtime,'cornice/test/desktop.sock');
 const fixture=createServer(socket=>{
  let input='';socket.on('data',data=>{
   input+=data;const end=input.indexOf('\n');if(end<0)return;
@@ -20,6 +21,7 @@ const fixture=createServer(socket=>{
   if(mode==='nonzero'){socket.end(JSON.stringify({ok:false,error:'fixture action failed'})+'\n');return;}
   if(mode==='malformed'){socket.end('invalid json\n');return;}
   let result={name:'fixture',seatId:'fixture-id',generation:'1',primary:false,number:2,available:true,paused:false,agentPaused:false,controlMode:'agent',agentAllowed:true};
+  if(request.method==='acquire-desktop') {socket.write(JSON.stringify({ok:true,result:{...result,socket:socketPath,instance:'test',token:'test-old-broker-token'}})+'\n');return;}
   if(mode==='array')result=[];
   if(mode==='interrupted')result={interrupted:true,control:{paused:true}};
   socket.end(JSON.stringify({ok:true,result})+'\n');
@@ -36,7 +38,7 @@ const transport=new StdioClientTransport({command:join(root,'bin/cornice-desktop
 transport.stderr?.on('data',()=>{});
 try{
  await client.connect(transport);
- const tools=await client.listTools();assert.equal(tools.tools.length,26);
+ const tools=await client.listTools();assert.equal(tools.tools.length,27);
  assert.ok(tools.tools.some(tool=>tool.name==='desktop_snapshot'));
  const call=async(name,args={},error=false)=>{const value=await client.callTool({name,arguments:args});assert.equal(!!value.isError,error,JSON.stringify(value));return value;};
  assert.equal((await call('desktop_state')).structuredContent.name,'fixture');
@@ -56,7 +58,18 @@ try{
  await call('desktop_finish',{outcome:'completed',reason:'fixture verified'});
  await call('desktop_launch',{argv:['anything']},true);
  console.log('PASS shared MCP validates native arguments, Broker failures, interruption, environment stripping and terminal control');
-}finally{await client.close();await new Promise(resolve=>fixture.close(resolve));}
+}finally{await client.close();}
+const automatic=new Client({name:'cornice-old-broker-test',version:'1'});
+try {
+ await automatic.connect(new StdioClientTransport({command:join(root,'bin/cornice-desktop-mcp'),env:{PATH:process.env.PATH,XDG_RUNTIME_DIR:runtime,HYPRLAND_INSTANCE_SIGNATURE:'test'},stderr:'pipe'}));
+ const acquired=await automatic.callTool({name:'desktop_acquire',arguments:{}});
+ assert.ok(!acquired.isError,acquired);const desktop=acquired.structuredContent.desktop;
+ assert.ok(!(await automatic.callTool({name:'desktop_state',arguments:{desktop}})).isError);
+ const unsupported=await automatic.callTool({name:'desktop_handoff',arguments:{desktop,action:'status'}});
+ assert.ok(unsupported.isError && unsupported.content[0].text.includes('Updated Cornice Broker'));
+ console.log('PASS updated MCP keeps ordinary automatic desktop operations compatible with the previous Broker and explicitly rejects unavailable cooperation');
+}finally{await automatic.close();await new Promise(resolve=>fixture.close(resolve));}
+
 const catalog=new Client({name:'cornice-browser-catalog-test',version:'1'});
 try{
  await catalog.connect(new StdioClientTransport({command:process.execPath,args:[join(root,'native/agent/node_modules/@playwright/mcp/cli.js'),'--image-responses','omit','--no-webmcp','--codegen','none'],cwd:dir,env:{PATH:process.env.PATH,HOME:dir},stderr:'pipe'}));

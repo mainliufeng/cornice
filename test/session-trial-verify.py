@@ -67,7 +67,7 @@ try:
     profile.write_text(original)
     settings = BASE / "config/cornice/config.json"
     settings.parent.mkdir(parents=True, exist_ok=True)
-    settings.write_text(json.dumps({"agentDesktop": {"enabled": False}, "bar": {"layout": {"left": [], "right": ["cn.agent-desktop", {"id": "cn.agent-desktop"}]}}, "weather": {"intervalMinutes": 0},
+    settings.write_text(json.dumps({"agentDesktop": {"enabled": False,"alwaysShowPreviews": True,"previewWidth":420,"previewCardHeight":230}, "bar": {"layout": {"left": [], "right": ["cn.agent-desktop", {"id": "cn.agent-desktop"}]}}, "weather": {"intervalMinutes": 0},
         "background": {"enabled": False}, "idle": {"lock": 0, "screenOffAc": 0, "screenOffBattery": 0,
         "dimAc": 0, "dimBattery": 0, "lockOnSleep": False, "lockOnLockSignal": False, "lockOnLidClose": False}}))
     configuration = BASE / "trial.lua"
@@ -114,6 +114,8 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     assert configuration.read_text() == original_configuration
     record("prepare converts literal master/dwindle layout shortcuts to native seat-aware Lua without changing source or unrelated shell commands")
     layout = json.loads((release / "config-home/cornice/config.json").read_text())["bar"]["layout"]
+    preferences=json.loads((release / "config-home/cornice/config.json").read_text())["agentDesktop"]
+    assert preferences["alwaysShowPreviews"] and preferences["previewWidth"]==420 and preferences["previewCardHeight"]==230,preferences
     assert layout["left"] == [] and layout["right"] == ["cn.agent-desktop"], layout
     record("prepare preserves an existing right-side Agent control and removes duplicate copies")
     trial_classic = release / "config-home/fcitx5/conf/classicui.conf"
