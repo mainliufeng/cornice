@@ -84,6 +84,9 @@ editor_drag() {
     [[ -n $row ]] || { fail "editor row missing: $id"; return 1; }
     read -r sx sy <<<"$(jq -r '[.drag.x,.drag.y] | join(" ")' <<<"$row")"
     section=$(jq -r '.section' <<<"$row")
+    # Hidden widgets live below the columns and have no column viewport.
+    # Their native drag handle is already visible in the hidden-widget grid.
+    if [[ $section == hidden ]]; then break; fi
     viewport_y=$(jq --arg section "$section" '.columns[] | select(.section == $section) | .viewport.y | floor' <<<"$state")
     viewport_bottom=$(jq --arg section "$section" '.columns[] | select(.section == $section) | .viewport | .y + .height | floor' <<<"$state")
     read -r panel_x panel_y <<<"$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-panel")] | first | [.x,.y] | join(" ")')"
@@ -91,7 +94,7 @@ editor_drag() {
     if (( sy < viewport_y )); then delta=-100; else delta=100; fi
     editor_pointer "$((panel_x + sx + 70))" "$((panel_y + viewport_y + 60))" "scroll:$delta"
   done
-  (( sy >= viewport_y && sy < viewport_bottom )) || { fail "editor drag row could not be scrolled into view: $id"; return 1; }
+  [[ $section == hidden ]] || (( sy >= viewport_y && sy < viewport_bottom )) || { fail "editor drag row could not be scrolled into view: $id"; return 1; }
   if [[ $destination == outside ]]; then dx=30; dy=30
   else
     read -r dx dy <<<"$(jq -r --arg section "$destination" --arg position "$position" '.columns[] | select(.section == $section) | [.viewport.x + 70, (if $position == "start" then .viewport.y + 4 else .viewport.y + .viewport.height - 10 end)] | map(floor) | join(" ")' <<<"$state")"

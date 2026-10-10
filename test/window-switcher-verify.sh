@@ -23,6 +23,12 @@ window_pointer() {
 }
 window_state() { cornice ipc windows state; }
 
+# Establish real pointer focus after the previous suite rebuilt the bar.
+# A virtual pointer's creation alone does not focus the nested output.
+window_pointer "$((pointer_width / 2))" "$((pointer_height / 2))" hover
+hyprctl dispatch workspace 2 >/dev/null
+hyprctl dispatch workspace 1 >/dev/null
+sleep 0.3
 hyprctl dispatch exec 'kitty --override confirm_os_window_close=0 --title Cornice-first sleep 180' >/dev/null
 sleep 0.5
 hyprctl dispatch exec 'kitty --override confirm_os_window_close=0 --title Cornice-second sleep 180' >/dev/null
