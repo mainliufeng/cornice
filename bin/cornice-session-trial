@@ -398,9 +398,11 @@ class Trial:
         version = ipc(self.environment, "version")
         if version.get("commit") != self.version.get("commit"):
             raise RuntimeError("Wrong compositor instance")
-        errors = ipc(self.environment, "configerrors", False)
-        if errors:
-            raise RuntimeError("Hyprland configuration errors: " + errors)
+        # Lua also appends failed runtime dispatch/eval calls to configerrors.
+        # An application command error is diagnostic, not proof that a healthy
+        # desktop must be terminated. Configuration is still required to be
+        # error-free during startup, before any user applications are launched.
+        self.info["configurationErrors"] = ipc(self.environment, "configerrors", False)
         monitors = ipc(self.environment, "monitors")
         if not monitors:
             raise RuntimeError("No visible output")

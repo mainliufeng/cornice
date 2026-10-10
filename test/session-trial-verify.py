@@ -284,6 +284,27 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     record("missing the required default secondary desktop still fails health checks and returns to stable login")
     trial("arm", "--seconds", "60", "--startup-seconds", "30")
     process = login_session(); info = ready(process)
+    # Real Lua dispatcher errors share configerrors with startup diagnostics.
+    # They must not terminate an otherwise working logged-in desktop.
+    runtime_env = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
+    window = start(["/usr/bin/python3", str(ROOT / "test/agent-desktop-client.py"), "runtime-error-window", str(BASE / "runtime-error-window.txt")],
+                   "runtime-error-window", runtime_env)
+    def runtime_window():
+        windows = json.loads(subprocess.check_output(["hyprctl", "-j", "clients"], env=runtime_env, text=True, timeout=5))
+        return next((w for w in windows if w["title"] == "runtime-error-window"), None)
+    wait(runtime_window)
+    invalid = subprocess.run(["hyprctl", "dispatch", 'hl.dsp.window.set_prop({window="title:^runtime-error-window$",prop="not-a-real-property",value="1"})'],
+                             env=runtime_env, capture_output=True, text=True, timeout=5)
+    # hyprctl currently returns "ok" even though Lua records this error.
+    errors = subprocess.check_output(["hyprctl", "configerrors"], env=runtime_env, text=True, timeout=5)
+    assert "Invalid prop name" in errors, (invalid, errors)
+    diagnostic = wait(lambda: status()["current"].get("configurationErrors"), 12)
+    assert "Invalid prop name" in diagnostic, diagnostic
+    time.sleep(2)
+    current = status()
+    assert current["running"] and current["current"]["status"] == "ready" and current["current"]["healthFailures"] == 0, current
+    assert process.poll() is None and human_state() == BASELINE
+    record("real failed Lua runtime command remains diagnostic; healthy desktop stays running past the rollback threshold")
     # One transient failure must be visible and recover without logging out.
     os.kill(info["shellPid"], signal.SIGSTOP)
     try:
