@@ -43,7 +43,7 @@ PanelFrame {
                 width:rowBody.width;spacing:Style.space(.3)
                 Text {width:parent.width;wrapMode:Text.Wrap;text:root.service.handoffLabel(modelData.status)+" · "+modelData.title;color:Color.accent;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
                 Text {width:parent.width;wrapMode:Text.Wrap;text:modelData.instructions;color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
-                Text {width:parent.width;wrapMode:Text.Wrap;text:new Date(modelData.updatedAt).toLocaleString()+" · "+(modelData.note || "");color:Color.muted;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
+                Text {width:parent.width;wrapMode:Text.Wrap;text:Qt.formatDateTime(new Date(modelData.updatedAt),"MM-dd HH:mm")+" · "+root.service.handoffNote(modelData.note);color:Color.muted;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
               }
             }
             Row {

@@ -47,6 +47,9 @@ Item {
   function handoffLabel(status) {
     return ({requested:"等待处理",in_progress:"处理中",completed:"已完成",cancelled:"已撤回"})[status] || status
   }
+  function handoffNote(note) {
+    return ({"Agent requested human assistance":"Agent 请求人工处理","Human took control":"已接管，开始处理","Human marked the task completed":"已完成人工步骤","Harness disconnected":"Agent 连接已断开","Desktop service restarted; request owner disconnected":"桌面服务重启，请求已撤回","Human control ended":"已退出接管","Desktop view changed":"已切换桌面，等待继续处理","Viewer disconnected":"观察连接已断开","Human control revoked":"接管已结束，等待继续处理","Session locked":"桌面已锁定，等待继续处理"})[note] || note || ""
+  }
   property string pendingTakeover: ""
   property string pendingRequestId: ""
   function startHandoff(name, requestId) {
