@@ -39,12 +39,12 @@ pkgname=cornice-git
 pkgver=r1.0000000
 pkgrel=1
 pkgdesc="General-purpose Hyprland shell: bar, panels, notifications, launcher, lock, idle"
-arch=('any')
+arch=('x86_64' 'aarch64')
 url="https://github.com/mainliufeng/cornice"
 license=('MIT')
-depends=('quickshell' 'hyprland' 'jq' 'glib2' 'curl')
+depends=('quickshell' 'hyprland' 'jq' 'glib2' 'curl' 'util-linux' 'socat' 'qt6-base' 'qt6-declarative')
+makedepends=('cmake' 'ninja' 'git')
 optdepends=(
-  'socat: CLI talks to the shell over its own socket'
   'grim: screenshots for `cornice verify`'
   'wireplumber: volume and microphone panels'
   'bluez: bluetooth panel'
@@ -65,6 +65,11 @@ pkgver() {
   printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 
+build() {
+  cmake -S "$srcdir/cornice/native/platform" -B "$srcdir/platform-build" -G Ninja -DCMAKE_BUILD_TYPE=Release
+  cmake --build "$srcdir/platform-build" -j4
+}
+
 package() {
   cd cornice
   install -dm755 "$pkgdir/usr/share/cornice"
@@ -74,6 +79,10 @@ package() {
   find "$pkgdir/usr/share/cornice" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
   find "$pkgdir/usr/share/cornice" -name '*.qmlc' -delete 2>/dev/null || true
 
+  install -dm755 "$pkgdir/usr/share/cornice/native"
+  cp -r native/agent "$pkgdir/usr/share/cornice/native/"
+  cp -r plugins "$pkgdir/usr/share/cornice/"
+  cmake --install "$srcdir/platform-build" --prefix "$pkgdir/usr/share/cornice"
   install -dm755 "$pkgdir/usr/bin"
   local f name
   for f in "$pkgdir"/usr/share/cornice/bin/cornice*; do
@@ -124,6 +133,6 @@ push. Never push a package file — the AUR stores metadata only.
   `$HOME`.
 - `license` must be an SPDX id (`MIT` here) and the licence file must be
   installed to `/usr/share/licenses/$pkgname/`.
-- `arch=('any')` is correct: the payload is QML, shell scripts and images.
+- `arch=('x86_64' 'aarch64')` is correct: the payload is QML, shell scripts and images.
 - Keep `depends` honest — a missing runtime dependency is the most common reason
   a package "does not work" for someone else.

@@ -96,7 +96,7 @@ Item {
 
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "cornice-panel"
-    WlrLayershell.keyboardFocus: root.wantsKeyboard ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: root.wantsKeyboard && !InteractionState.active ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
     MouseArea {
       anchors.right: parent.right
@@ -163,9 +163,20 @@ Item {
     }
   }
 
+  Connections {
+    target:InteractionState
+    function onActiveChanged() {
+      // Drop the old grab before temporary input starts. Re-arm after pending
+      // clear/key events drain, rather than treating them as a fresh click-away.
+      root.grabArmed = false
+      if (InteractionState.active) armTimer.stop()
+      else if (root.isOpen) armTimer.restart()
+    }
+  }
+
   HyprlandFocusGrab {
     windows: [window]
-    active: root.isOpen && root.wantsKeyboard && root.grabArmed
-    onCleared: if (root.grabArmed) root.close()
+    active: root.isOpen && root.wantsKeyboard && root.grabArmed && !InteractionState.active
+    onCleared: if (root.grabArmed && !InteractionState.active) root.close()
   }
 }

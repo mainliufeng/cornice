@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.screenshot",
+  "name": "Screenshot",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Native screen capture and region selection",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Screenshot.qml"
+  }
+}

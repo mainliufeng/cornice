@@ -21,18 +21,18 @@ pkgname=cornice-git
 pkgver=r$(git -C "$startdir" rev-list --count HEAD 2>/dev/null || echo 1).$(git -C "$startdir" rev-parse --short HEAD 2>/dev/null || echo local)
 pkgrel=1
 pkgdesc="General-purpose Hyprland shell: bar, panels, notifications, launcher, lock, idle"
-arch=('any')
+arch=('x86_64' 'aarch64')
 url="https://github.com/mainliufeng/cornice"
 license=('MIT')
 # glib2 provides gdbus (the logind monitor for suspend/lid locking) and curl is
 # what the weather plugin fetches with — both are used by default plugins, so
 # they are hard dependencies, not optional ones.
-depends=('quickshell' 'hyprland' 'jq' 'glib2' 'curl' 'util-linux')
+depends=('quickshell' 'hyprland' 'jq' 'glib2' 'curl' 'util-linux' 'qt6-base' 'qt6-declarative' 'socat')
+makedepends=('cmake' 'ninja')
 optdepends=(
   'at-spi2-core: native application accessibility trees'
   'nodejs: external harness MCP and structured browser tools'
   'npm: install locked optional desktop browser dependencies'
-  'socat: CLI talks to the shell over its own socket (needed for runtime plugins)'
   'grim: screenshots for `cornice verify`'
   'wireplumber: volume/microphone panels'
   'bluez: bluetooth panel'
@@ -50,6 +50,11 @@ conflicts=('cornice')
 # here, because package() copies from $startdir.
 source=()
 options=('!strip')
+
+build() {
+  cmake -S "$startdir/native/platform" -B "$srcdir/platform-build" -G Ninja -DCMAKE_BUILD_TYPE=Release
+  cmake --build "$srcdir/platform-build" -j4
+}
 
 package() {
   install -dm755 "$pkgdir/usr/share/cornice"
@@ -71,6 +76,8 @@ package() {
     chmod 755 "$f"
     ln -s "/usr/share/cornice/bin/$name" "$pkgdir/usr/bin/$name"
   done
+
+  cmake --install "$srcdir/platform-build" --prefix "$pkgdir/usr/share/cornice"
 
   # Documentation and the licence (once the repo has one).
   install -Dm644 "$startdir/README.md" "$pkgdir/usr/share/doc/cornice/README.md"

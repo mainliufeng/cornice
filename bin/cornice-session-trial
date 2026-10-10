@@ -114,6 +114,18 @@ def native_layout_bindings(configuration):
     return re.sub(r'\bhl\.dsp\.exec_cmd\(\s*("(?:[^"\\]|\\.)*")\s*\)', replace, configuration)
 
 
+def native_screenshot_bindings(configuration, product):
+    pipelines = {'grim -g "$(slurp)" - | satty --filename -': 'region', 'grim - | satty --filename -': 'screen'}
+    command = [str(product / "bin/cornice"), "screenshot"]
+    def replace(match):
+        try:
+            previous = json.loads(match[1])
+        except ValueError:
+            return match[0]
+        return "hl.dsp.exec_cmd(" + json.dumps(shlex.join(command + [pipelines[previous]])) + ")" if previous in pipelines else match[0]
+    return re.sub(r'\bhl\.dsp\.exec_cmd\(\s*("(?:[^"\\]|\\.)*")\s*\)', replace, configuration)
+
+
 def prepare(args):
     # No system package, deployment pointer, service or existing configuration is changed.
     with locked():
@@ -140,9 +152,18 @@ def prepare(args):
             shutil.copy2(build / "libcornice_desktop_qml.so", module / "libcornice_desktop_qml.so")
             for library in module.glob("*.so"):
                 run(["patchelf", "--set-rpath", "$ORIGIN", library])
+        platform = source / "native/qml/Cornice/Platform"
+        if not platform.is_dir():
+            platform = source / "native/platform-build/qml/Cornice/Platform"
+        target_module = product / "native/qml/Cornice/Platform"
+        if not target_module.is_dir():
+            shutil.copytree(platform, target_module)
+            shutil.copy2(source / "native/platform-build/libcornice_platform.so", target_module / "libcornice_platform.so")
+            for library in target_module.glob("*.so"):
+                run(["patchelf", "--set-rpath", "$ORIGIN", library])
         shutil.copy2(Path(args.hyprland).resolve(), release / "Hyprland")
         shutil.copy2(__file__, release / "runner")
-        configuration = native_layout_bindings(Path(args.config).read_text())
+        configuration = native_screenshot_bindings(native_layout_bindings(Path(args.config).read_text()), product)
         configuration = configuration.replace(str(source), str(product))
         # The old bootstrap rewrites real config and starts cornice.service. Suppress it.
         # Route existing absolute Cornice shortcuts to this immutable candidate instead.

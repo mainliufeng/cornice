@@ -58,10 +58,14 @@ More, without screenshots:
 - `jq` (or `python3`) to read plugin manifests, `glib2` (the logind monitor),
   `curl` (weather)
 - A Nerd Font for the bar glyphs (`ttf-nerd-fonts-symbols`)
-- Optional, one per feature: `socat` (CLI → runtime plugins), `grim`
+- `socat` for CLI → runtime plugin communication
+- Qt 6 base/declarative for native image persistence and clipboard publication; packaged installs install these dependencies automatically. Source builds also need CMake/Ninja.
+- Optional, one per feature: `grim`
   (screenshots in `cornice verify`), `wpctl`/WirePlumber (audio), `bluez`
   (bluetooth), `brightnessctl` (brightness OSD), `cliphist` (clipboard history),
   `light` (idle dimming), `NetworkManager` (network panel)
+
+Native screenshots stay inside Cornice: `cornice screenshot` selects a region, and `cornice screenshot screen` captures the current monitor. The image is saved to Pictures/Screenshots and copied to the clipboard. Escape/right-click cancels; no editor opens. See [the screenshot module](docs/screenshot.md).
 
 ## Install
 

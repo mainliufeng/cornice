@@ -90,6 +90,9 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     absolute_helper = str(pathlib.Path(ENV["HOME"]) / ".config/hypr/scripts/layoutmsg-active.sh")
     with configuration.open("a") as stream:
         stream.write('hl.bind("SUPER + ALT + i", hl.dsp.exec_cmd(' + json.dumps(absolute_helper + ' mfact exact 0.55') + '), {})\n')
+    with configuration.open("a") as stream:
+        for key, command in [('SUPER + P','grim -g "$(slurp)" - | satty --filename -'),('SUPER + SHIFT + P','grim - | satty --filename -'),('SUPER + O','grim -g "$(slurp)" - | custom-editor')]:
+            stream.write('hl.bind('+json.dumps(key)+', hl.dsp.exec_cmd('+json.dumps(command)+'), {})\n')
     original_configuration = configuration.read_text()
     SDDM = BASE / "wayland-session"
     sentinel_path = BASE / "normal-login"
@@ -113,6 +116,11 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
         assert 'hl.dsp.exec_cmd(' + json.dumps(command) + ')' in trial_configuration, command
     assert configuration.read_text() == original_configuration
     record("prepare converts literal master/dwindle layout shortcuts to native seat-aware Lua without changing source or unrelated shell commands")
+    for mode in ('region','screen'):
+        assert shlex.join([str(release/'cornice/bin/cornice'),'screenshot',mode]) in trial_configuration
+    assert 'custom-editor' in trial_configuration
+    assert (release/'cornice/native/qml/Cornice/Platform/libcornice_platform.so').exists()
+    record("trial ships the independent Qt core module and routes known screenshot bindings to Cornice without modifying custom commands")
     layout = json.loads((release / "config-home/cornice/config.json").read_text())["bar"]["layout"]
     preferences=json.loads((release / "config-home/cornice/config.json").read_text())["agentDesktop"]
     assert preferences["alwaysShowPreviews"] and preferences["previewWidth"]==420 and preferences["previewCardHeight"]==230,preferences
@@ -174,6 +182,14 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
         controls = [entry for entry in geometry if entry["id"] == "cn.agent-desktop"]
         assert len(controls) == 1 and controls[0]["section"] == "right", (name, controls)
     record("both default desktop bars render exactly one configured right-side grouped desktop control")
+    private_image=BASE/'private-desktop-screen.png'
+    private_env=selected | {"CORNICE_PATH":str(release/'cornice'),"CORNICE_DESKTOP_NAME":"desktop2"}
+    assert subprocess.check_output([str(cli_path),"screenshot","screen",str(private_image)],env=private_env,text=True).strip()=="requested"
+    wait(lambda:private_image.exists())
+    private_status=json.loads(subprocess.check_output([str(cli_path),"ipc","screenshot","status"],env=private_env,text=True))
+    assert private_status["clipboardCopied"] and private_status["lastFile"]==str(private_image)
+    assert human_state()==BASELINE
+    record("a secondary shell captures and exports its own private output without affecting the primary desktop")
     command_env = selected | {"CORNICE_PATH": str(release / "cornice")}
     subprocess.run([str(cli_path), "desktop", "create", "dynamic-third", "--virtual-output", "1280x800"],
                    env=command_env, check=True, capture_output=True)

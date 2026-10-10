@@ -67,7 +67,10 @@ def control(name):
 def entry(name, field="entry"):
     state = cli('state', name)
     client = next(c for c in ctl('clients', True) if c['title'] == name + '-window')
-    geometry = json.loads((BASE / (name + '.geometry')).read_text())[field]
+    def client_geometry():
+        try: return json.loads((BASE / (name + '.geometry')).read_text())[field]
+        except (ValueError,KeyError): return None
+    geometry = wait(client_geometry)
     logical = state['logicalSize']
     target = next(m for m in ctl('monitors', True) if m['name']=='human')
     factor = min(target['width']/state['pixelSize'][0], target['height']/state['pixelSize'][1])*state['scale']/target['scale']
@@ -208,23 +211,90 @@ try:
     control('previews');wait(lambda:previews()['visible'] and len(previews()['cards'])==3)
     send('motion 650 300')
     record('grouped menu separates switching, named current-desktop actions and global previews; idle desktops render and global hide/restore affects every card')
-    # Invoke the actual selection grab from a Super+P binding while the menu is
-    # hovered, then capture the physical output just as grim does in production.
-    capture_command='slurp > '+shlex.quote(str(BASE/'selected-region.txt'))
-    ok('eval hl.bind("SUPER + P", hl.dsp.exec_cmd('+json.dumps(capture_command)+'), {})')
-    send(f"motion {round(group['x']+group['width']/2)} {round(group['y']+group['height']/2)}")
-    menu_row=wait(lambda:next((row for row in json.loads(shell('ipc','desktopObserver','controls')) if row['name']=='view:main'),None))
-    send(f"motion {round(menu_row['x']+100)} {round(menu_row['y']+menu_row['height']/2)}")
-    send('key 125 1');send('key 25 1');send('key 25 0');send('key 125 0')
-    wait(lambda:any(layer['namespace']=='selection' for level in ctl('layers',True)['human']['levels'].values() for layer in level))
-    time.sleep(.7)
-    assert any(row['name']=='control:preview-mode' for row in json.loads(shell('ipc','desktopObserver','controls'))),'Super+P closed the menu'
-    subprocess.run(['grim','-o','human',str(BASE/'menu-during-slurp.png')],env=ENV,check=True)
-    send('motion 600 200');send('button 272 1');send('motion 800 400');send('button 272 0')
-    wait(lambda:(BASE/'selected-region.txt').exists() and (BASE/'selected-region.txt').stat().st_size>0)
-    wait(lambda:not any(layer['namespace']=='selection' for level in ctl('layers',True)['human']['levels'].values() for layer in level))
-    wait(lambda:not any(row['name']=='view:main' for row in json.loads(shell('ipc','desktopObserver','controls'))))
-    record('real Super+P/slurp pointer grab preserves the menu during selection and normal hover dismissal resumes afterward')
+    # Cornice owns capture/selection and declares its interaction before any
+    # overlay takes input. No shortcut or third-party namespace is recognized.
+    def screenshot_state():return json.loads(shell('ipc','screenshot','status'))
+    def hover_menu():
+        send(f"motion {round(group['x']+group['width']/2)} {round(group['y']+group['height']/2)}")
+        row=wait(lambda:next((row for row in json.loads(shell('ipc','desktopObserver','controls')) if row['name']=='view:main'),None))
+        send(f"motion {round(row['x']+100)} {round(row['y']+row['height']/2)}")
+        return row
+    # Use a different binding as well, so correctness cannot depend on Super+P.
+    for shortcut,keycode,path in [('SUPER + P',25,BASE/'native-region.png'),('SUPER + O',24,BASE/'other-binding.png')]:
+        command=shlex.join([str(PRODUCT/'bin/cornice'),'screenshot','region',str(path)])
+        ok('eval hl.bind('+json.dumps(shortcut)+', hl.dsp.exec_cmd('+json.dumps(command)+'), {})')
+        hover_menu()
+        reference=BASE/'before-native-screenshot.png'
+        subprocess.run(['grim','-o','human',str(reference)],env=ENV,check=True)
+        send('key 125 1');send(f'key {keycode} 1');send(f'key {keycode} 0');send('key 125 0')
+        wait(lambda:screenshot_state()['selecting'])
+        time.sleep(.7)
+        assert any(row['name']=='control:preview-mode' for row in json.loads(shell('ipc','desktopObserver','controls'))),'native selection closed the menu'
+        assert screenshot_state()['interactionHeld']
+        subprocess.run(['grim','-o','human',str(BASE/'menu-during-native-screenshot.png')],env=ENV,check=True)
+        send('motion 600 200');send('button 272 1');send('motion 800 400');send('button 272 0')
+        wait(lambda:path.exists())
+        wait(lambda:not screenshot_state()['active'])
+        assert not screenshot_state()['interactionHeld'] and screenshot_state()['lastFile']==str(path),screenshot_state()
+        import gi
+        gi.require_version('GdkPixbuf','2.0')
+        from gi.repository import GdkPixbuf
+        pixbuf=GdkPixbuf.Pixbuf.new_from_file(str(path))
+        assert (pixbuf.get_width(),pixbuf.get_height())==(400,400),(pixbuf.get_width(),pixbuf.get_height())
+        assert path.stat().st_mode & 0o777 == 0o600,oct(path.stat().st_mode)
+        assert screenshot_state()['clipboardCopied'],screenshot_state()
+        wait(lambda:subprocess.run(['wl-paste','--type','image/png'],env=ENV,capture_output=True,timeout=3).stdout==path.read_bytes())
+        before=GdkPixbuf.Pixbuf.new_from_file(str(reference))
+        def pixel(image,x,y):
+            at=y*image.get_rowstride()+x*image.get_n_channels()
+            return image.get_pixels()[at:at+3]
+        for x,y in [(40,100),(100,200),(300,300)]:
+            assert pixel(pixbuf,x,y)==pixel(before,1200+x,400+y),(x,y,pixel(pixbuf,x,y),pixel(before,1200+x,400+y))
+        wait(lambda:not any(row['name']=='view:main' for row in json.loads(shell('ipc','desktopObserver','controls'))))
+    record('native ScreencopyView exports real 2x region pixels, preserves the menu under two unrelated shortcuts and releases popup holds after saving')
+    for cancel in ('escape','right-click'):
+        hover_menu();assert shell('screenshot','region',str(BASE/'cancelled.png'))=='requested'
+        wait(lambda:screenshot_state()['selecting'])
+        time.sleep(.7)
+        assert any(row['name']=='view:main' for row in json.loads(shell('ipc','desktopObserver','controls')))
+        if cancel=='escape':send('key 1 1');send('key 1 0')
+        else:send('motion 600 200');send('button 273 1');send('button 273 0')
+        wait(lambda:not screenshot_state()['active'])
+        assert not screenshot_state()['interactionHeld'] and not (BASE/'cancelled.png').exists()
+        send('motion 650 300')
+        wait(lambda:not any(row['name']=='view:main' for row in json.loads(shell('ipc','desktopObserver','controls'))))
+    full=BASE/'native-screen.png';assert shell('screenshot','screen',str(full))=='requested'
+    wait(lambda:full.exists());wait(lambda:not screenshot_state()['active'])
+    pixbuf=GdkPixbuf.Pixbuf.new_from_file(str(full))
+    assert (pixbuf.get_width(),pixbuf.get_height())==(2560,1600),(pixbuf.get_width(),pixbuf.get_height())
+    record('Escape/right-click cancel releases input and menu holds without an image; full-screen capture retains native physical resolution')
+    assert shell('ipc','screenshot','capture','bad','')=='invalid-mode'
+    assert shell('ipc','screenshot','capture','region','relative.png')=='absolute-path-required'
+    for path in (str(BASE/'missing-directory'/'failure.png'),''):
+        assert shell('screenshot','region',path)=='requested'
+        wait(lambda:screenshot_state()['selecting'])
+        assert shell('ipc','screenshot','capture','region','')=='busy'
+        send('motion 600 200');send('button 272 1');send('motion 800 400');send('button 272 0')
+        wait(lambda:not screenshot_state()['active'])
+        if path:
+            assert screenshot_state()['error']=='无法保存截图' and not pathlib.Path(path).exists(),screenshot_state()
+        else:
+            saved=pathlib.Path(screenshot_state()['lastFile'])
+            assert saved.is_relative_to(pathlib.Path(ENV['HOME'])) and saved.parent.name=='Screenshots' and saved.exists(),saved
+            assert screenshot_state()['clipboardCopied'] and saved.stat().st_mode & 0o777 == 0o600
+    assert not any(c['class']=='com.gabm.satty' for c in ctl('clients',True))
+    # A keyboard/grab panel also uses the shared interaction contract.
+    shell('launcher')
+    def launcher_open():return any(w['id']=='cn.launcher' and w['open'] for w in json.loads(shell('ipc','shell','windows')))
+    wait(launcher_open)
+    assert shell('screenshot','region',str(BASE/'launcher-screenshot.png'))=='requested'
+    wait(lambda:screenshot_state()['selecting']);time.sleep(.5)
+    assert launcher_open()
+    subprocess.run(['grim','-o','human',str(BASE/'native-screenshot-launcher.png')],env=ENV,check=True)
+    send('key 1 1');send('key 1 0');wait(lambda:not screenshot_state()['active'])
+    assert launcher_open()
+    send('key 1 1');send('key 1 0');wait(lambda:not launcher_open())
+    record('PNG clipboard data equals the saved private image; default Pictures/Screenshots save, failed-save cleanup, duplicate-request refusal and generic keyboard-panel preservation work without an editor')
     def release_and_check_previews():
         previous_frames={c['name']:c['frames'] for c in previews()['cards']}
         preview_stop.set();preview_thread.join(timeout=5);pi_thread.join(timeout=5);preview_owner.close();pi_owner.close()
@@ -267,11 +337,12 @@ try:
         px=round(bounds['x']+80);py=round(bounds['y']+20)
         send(f'motion {px} {py}');send('button 272 1');send(f'motion {px-180} {py-60}');send('button 272 0')
         wait(lambda:previews()['bounds']['x'] < bounds['x']-170)
+        time.sleep(.2) # let the released drag clamp to the bar before recording the resize origin
         bounds=previews()['bounds'];px=round(bounds['x']+bounds['width']-10);py=round(bounds['y']+bounds['height']-10)
         send(f'motion {px} {py}');send('button 272 1');send(f'motion {px+100} {py+30}');send('button 272 0')
         resized=wait(lambda:previews() if abs(previews()['preferredWidth']-420)<=3 and abs(previews()['cardHeight']-230)<=3 else None)
         wait(lambda:json.loads((config/'config.json').read_text())['agentDesktop'].get('previewWidth')==420)
-        assert abs(resized['bounds']['x']-bounds['x'])<=3 and abs(resized['bounds']['y']-bounds['y'])<=3,resized
+        assert abs(resized['bounds']['x']-bounds['x'])<=3 and abs(resized['bounds']['y']-bounds['y'])<=3,(bounds,resized)
         assert json.loads((config/'config.json').read_text())['bar']['layout']['left'][0]['id']=='cn.agent-desktop'
         qs.terminate();qs.wait(timeout=5)
         qs=start([str(PRODUCT/'bin/cornice-qs'),'-p',str(PRODUCT/'shell')],'cornice-resized')
@@ -296,9 +367,28 @@ try:
         wait(lambda:len(previews()['cards'])==3 and bounded() and all(c['hasFrame'] for c in previews()['cards'] if c['y'] < previews()['bounds']['y'] + previews()['bounds']['height'] and c['y']+c['height'] > previews()['bounds']['y']),timeout=5)
         subprocess.run(['grim','-o','human',str(BASE/'preview-small-output.png')],env=ENV,check=True)
         record('dragged preview stays on primary.output after smaller output and visible card count changes')
+        multiple=BASE/'multi-output-region.png'
+        assert shell('screenshot','region',str(multiple))=='requested'
+        wait(lambda:screenshot_state()['selecting'] and set(screenshot_state()['outputs'])=={'human','extra-physical'})
+        # The absolute fixture is bound to human. Relative motion crosses outputs
+        # like a physical mouse, including the gap before extra-physical.
+        send('motion 400 200');send('relative 1080 0');send('button 272 1')
+        send('relative 200 200');send('button 272 0')
+        wait(lambda:multiple.exists());wait(lambda:not screenshot_state()['active'])
+        img=GdkPixbuf.Pixbuf.new_from_file(str(multiple))
+        assert (img.get_width(),img.get_height())==(200,200)
+        assert shell('screenshot','region',str(BASE/'resize-cancelled.png'))=='requested'
+        wait(lambda:screenshot_state()['selecting'])
+        ok('eval hl.monitor({output="human",mode="1024x768",position="0x0",scale=1})')
+        wait(lambda:not screenshot_state()['active'])
+        assert not screenshot_state()['interactionHeld'] and not (BASE/'resize-cancelled.png').exists()
+        ok('eval hl.monitor({output="human",mode="800x600",position="0x0",scale=1})')
+        record('native selection works on a second physical output; changing output geometry cancels and releases all interaction state')
         release_and_check_previews()
         # The compositor emits an unsolicited event on the real owner sockets.
         # Its counter proves cached frames clear from the event, not service polling.
+        assert shell('screenshot','region',str(BASE/'lock-cancelled.png'))=='requested'
+        wait(lambda:screenshot_state()['selecting'])
         before={c['name']:c['invalidations'] for c in previews()['cards'] if c['hasFrame']}
         assert len(before)>=2,before
         pam=BASE/'preview-pam';pam.mkdir();(pam/'permit').write_text('auth required pam_permit.so\n')
@@ -309,7 +399,10 @@ try:
         cleared=wait(lambda:previews() if all(not c['hasFrame'] and c['invalidations']>before[c['name']] for c in previews()['cards'] if c['name'] in before) else None,timeout=.5)
         assert len(cleared['cards'])==3,cleared
         print('LOCK INVALIDATION',time.monotonic()-began,cleared,flush=True)
-        record('real session-lock notification immediately clears both cached preview images')
+        wait(lambda:not screenshot_state()['active'],timeout=.5)
+        assert not screenshot_state()['interactionHeld'] and not (BASE/'lock-cancelled.png').exists()
+        assert shell('ipc','screenshot','capture','region','')=='locked'
+        record('real session-lock notification immediately clears both cached preview images and cancels frozen screenshot selection')
         locker.stdin.write('emergency-unlock\n');locker.stdin.flush()
         wait(lambda:not ctl('seat lock-state',True)['locked'],timeout=5)
         cli('remove','agent3')
@@ -386,6 +479,23 @@ try:
     assert view['native'] and view['readonly'], view
     assert not any(l['namespace']=='cornice-desktop' for level in ctl('layers',True)['human']['levels'].values() for l in level)
     assert human_state()==human, (human_state(),human)
+    # Capture the native scene currently presented to the viewer, including a
+    # secondary desktop, rather than an unseen primary workspace.
+    presented=BASE/'native-presented-screen.png'
+    assert shell('screenshot','screen',str(presented))=='requested'
+    wait(lambda:presented.exists());wait(lambda:not screenshot_state()['active'])
+    assert displayed_clock(presented) > 0
+    region=BASE/'native-presented-region.png'
+    assert shell('screenshot','region',str(region))=='requested'
+    wait(lambda:screenshot_state()['selecting'])
+    send('motion 600 200');send('button 272 1');send('motion 800 400');send('button 272 0')
+    wait(lambda:region.exists());wait(lambda:not screenshot_state()['active'])
+    assert shell('screenshot','region',str(BASE/'readonly-cancel.png'))=='requested'
+    wait(lambda:screenshot_state()['selecting']);send('key 1 1');send('key 1 0')
+    wait(lambda:not screenshot_state()['active'])
+    send(f"motion {human['cursor']['x']} {human['cursor']['y']}")
+    assert human_state()==human and not (BASE/'agent1.txt').exists()
+    record('Cornice screenshots capture the presented secondary desktop while read-only observation leaves applications and the primary seat untouched')
     subprocess.run(['grim','-o','human',str(BASE/'native-readonly.png')],env=ENV,check=True)
     displayed_clock(BASE/'native-readonly.png')  # Warm the image decoder outside timing.
     ages=[]

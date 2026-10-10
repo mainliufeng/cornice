@@ -109,7 +109,7 @@ Cornice 只提供桌面和工具，Codex、Pi 等外部 Harness 管理模型、�
 | 系统托盘 | waybar 内置 | `Services.SystemTray` |
 | 壁纸（含视频） | hyprpaper / **mpvpaper** | 后期做 layer-shell 背景层（视频壁纸需要单独设计，别急着做） |
 | 空闲/锁屏 | hypridle / hyprlock | **先留 hypridle**；锁屏推迟到 v1 之后 |
-| 截图/录制 | grim / hyprshot | 不做，只提供键位建议 |
+| 截图/录制 | grim / hyprshot | 原生截图模块（见 docs/screenshot.md）；录制暂不做 |
 
 ---
 

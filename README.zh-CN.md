@@ -41,10 +41,13 @@ waybar + mako + hypridle + hyprlock + polkit-gnome + 一个启动器 这一串�
 ## 依赖
 
 - Hyprland（Wayland 会话）
+- Qt 6 base/declarative（核心图片保存与剪贴板模块；系统包自动安装），源码构建还需 CMake/Ninja
 - Quickshell —— `sudo pacman -S quickshell`（Arch `extra`）
-- `jq`（或 `python3`，用于读插件清单）、`glib2`（监听 logind）、`curl`（天气）
+- `jq`（或 `python3`，用于读插件清单）、`glib2`（监听 logind）、`curl`（天气）、`socat`（CLI 与运行时插件通信）
 - 一款 Nerd Font 用于状态栏字形 —— `ttf-nerd-fonts-symbols`
-- 可选（按功能）：`socat`（CLI 访问运行时插件）、`grim`（`cornice verify` 截图）、`wpctl`/WirePlumber（音频）、`bluez`（蓝牙）、`brightnessctl`（亮度 OSD）、`cliphist`（剪贴板历史）、`light`（idle dim）、`NetworkManager`（网络面板）
+- 可选（按功能）：`grim`（`cornice verify` 截图）、`wpctl`/WirePlumber（音频）、`bluez`（蓝牙）、`brightnessctl`（亮度 OSD）、`cliphist`（剪贴板历史）、`light`（idle dim）、`NetworkManager`（网络面板）
+
+原生截图：`cornice screenshot` 选区，`cornice screenshot screen` 截当前屏幕。保存到系统图片目录的 `Screenshots` 并复制到剪贴板；Esc/右键取消，不打开其他应用。[模块设计](docs/screenshot.md)。
 
 ## 安装
 

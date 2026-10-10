@@ -39,6 +39,7 @@ Inspecting the running shell (IPC)
   targets             IPC targets the running shell exposes
   panel <id> [json]   Toggle a panel plugin (e.g. cornice panel cn.audio)
   launcher            Toggle the application launcher
+  screenshot [mode] [path]   Native region (default) or screen capture; optional absolute PNG path
   clipboard           Toggle the clipboard history overlay
   background [cmd]    Wallpaper layer: status | set <path> | next | prev | clear | reload
   emojis              Toggle the emoji picker
@@ -291,6 +292,14 @@ case "$command" in
 
   launcher)
     call shell toggle cn.launcher '{}'
+    ;;
+
+  screenshot)
+    mode=${1:-region}
+    [[ $mode == region || $mode == screen ]] && (($# <= 2)) && [[ ${2:-/} == /* ]] || { echo 'usage: cornice screenshot [region|screen] [absolute-png-path]' >&2; exit 2; }
+    result=$(call screenshot capture "$mode" "${2:-}")
+    [[ $result == requested ]] || { echo "cornice: screenshot: $result" >&2; exit 1; }
+    printf '%s\n' "$result"
     ;;
 
   notifications)

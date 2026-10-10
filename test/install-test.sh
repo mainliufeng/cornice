@@ -6,7 +6,7 @@ sandbox=$(mktemp -d /tmp/cornice-installer-XXXXXX)
 trap 'rm -rf "$sandbox"' EXIT
 tools="$sandbox/tools"
 mkdir -p "$tools" "$sandbox/config/systemd/user"
-for cmd in bash dirname readlink realpath basename mkdir cp chmod find rm mv ln ls wc mktemp grep head install jq flock; do
+for cmd in bash dirname readlink realpath basename mkdir cp chmod find rm mv ln ls wc mktemp grep head install jq flock socat cmake ninja; do
   ln -s "$(command -v "$cmd")" "$tools/$cmd"
 done
 cat >"$tools/quickshell" <<'EOF'

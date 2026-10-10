@@ -1,7 +1,6 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
-import Quickshell.Hyprland
 import qs.Commons
 Item {
   id: root
@@ -14,18 +13,8 @@ Item {
   Component.onCompleted: stableEntries = entries
   property bool opened: false
   property int badge: 0
-  property int selectionLayers: 0
-  readonly property bool capturing: selectionLayers > 0
-  Connections {
-    target: Hyprland
-    function onRawEvent(event) {
-      // Slurp's selection surface temporarily owns the pointer. Preserve the
-      // menu throughout selection and the following grim frame read.
-      if (event.data !== "selection") return
-      if (event.name === "openlayer") { root.selectionLayers++; closeDelay.stop() }
-      else if (event.name === "closelayer") { root.selectionLayers = Math.max(0, root.selectionLayers - 1); if (!root.capturing) closeDelay.restart() }
-    }
-  }
+  readonly property bool capturing: InteractionState.active
+  onCapturingChanged: { if (capturing) closeDelay.stop(); else if (opened) closeDelay.restart() }
   // Extend the popup's hit area through the gap below the icon. Its visible
   // content still starts at the bar edge, so slow pointer travel stays inside.
   readonly property real bridgeHeight: root.QsWindow.window

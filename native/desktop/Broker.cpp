@@ -1461,7 +1461,7 @@ void Broker::configureDesktop(const QString &name) {
     }
     QJsonArray overlays;
     const QStringList shellLayers{"cornice-bar", "cornice-desktop-menu", "cornice-panel",
-                                  "cornice-menu", "cornice-status-tooltip", "cornice-window-tooltip", "cornice-notification-popups"};
+                                  "cornice-menu", "cornice-screenshot", "cornice-screenshot-notice", "cornice-status-tooltip", "cornice-window-tooltip", "cornice-notification-popups"};
     QSet<qint64> shellPids;
     const auto outputs = json(compositor("layers", true)).object();
     for (auto output = outputs.begin(); output != outputs.end(); ++output) {
@@ -1480,8 +1480,8 @@ void Broker::configureDesktop(const QString &name) {
     for (const auto pid : shellPids)
         for (const auto &space : shellLayers)
             overlays.append(QJsonObject{{"name", space}, {"pid", pid},
-                {"keyboard", space == "cornice-panel" || space == "cornice-menu"},
-                {"localInView", space == "cornice-bar" || space == "cornice-desktop-menu"}});
+                {"keyboard", space == "cornice-panel" || space == "cornice-menu" || space == "cornice-screenshot"},
+                {"localInView", space == "cornice-bar" || space == "cornice-desktop-menu" || space == "cornice-screenshot" || space == "cornice-screenshot-notice"}});
     const QJsonObject configuration{{"owner", desktop.configurationOwner}, {"seatName", name}, {"seatId", desktop.id},
         {"bindings", bindings}, {"overlays", overlays}};
     if (configuration == desktop.lastConfiguration) {

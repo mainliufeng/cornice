@@ -115,7 +115,7 @@ command -v hyprctl >/dev/null 2>&1 && ok "hyprctl: $(command -v hyprctl)" \
 command -v flock >/dev/null 2>&1 && ok "flock: serialized window focus" \
   || { bad "flock not found — install util-linux"; missing=1; }
 command -v socat >/dev/null 2>&1 && ok "socat: $(command -v socat)" \
-  || warn "no socat — the CLI falls back to 'qs ipc', which cannot see runtime plugins"
+  || { bad "socat not found — install socat for CLI-to-plugin communication"; missing=1; }
 command -v grim >/dev/null 2>&1 && ok "grim: screenshots for 'cornice verify'" \
   || warn "no grim — 'cornice verify' will skip its visual checks"
 command -v fc-list >/dev/null 2>&1 && {
@@ -130,6 +130,13 @@ fi
 
 # ---------------------------------------------------------------------------
 step "Installing"
+# The core shell module uses Qt already required by Quickshell. Packaged builds
+# ship it; source installs build it independently of optional desktop tooling.
+platform_prebuilt="$repo/native/qml/Cornice/Platform"
+if [[ ! -f $platform_prebuilt/libcornice_platform.so ]]; then
+  cmake -S "$repo/native/platform" -B "$repo/native/platform-build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+  cmake --build "$repo/native/platform-build" -j4
+fi
 if ((desktop)); then
   command -v pkg-config >/dev/null 2>&1 && pkg-config --exists atspi-2 \
     || { bad "at-spi2-core is required for native application trees"; exit 1; }
@@ -160,6 +167,12 @@ if ((copy)); then
   done
   mkdir -p "$staging/native"
   cp -r "$repo/native/agent" "$staging/native/"
+  if [[ -f $platform_prebuilt/libcornice_platform.so ]]; then
+    mkdir -p "$staging/native/qml/Cornice"
+    cp -r "$platform_prebuilt" "$staging/native/qml/Cornice/"
+  else
+    cmake --install "$repo/native/platform-build" --prefix "$staging"
+  fi
   if ((desktop)); then cmake --install "$repo/native/build" --prefix "$staging"; fi
   find "$staging" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
   chmod +x "$staging"/bin/* 2>/dev/null || true

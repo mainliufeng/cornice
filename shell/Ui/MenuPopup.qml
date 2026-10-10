@@ -137,10 +137,21 @@ Item {
   QsMenuOpener { id: opener; menu: root.handle }
   Component { id: submenuFactory; QsMenuOpener {} }
   Timer { id: armTimer; interval: 220; onTriggered: root.grabArmed = true }
+  Connections {
+    target:InteractionState
+    function onActiveChanged() {
+      // Drop the old grab before temporary input starts. Re-arm after pending
+      // clear/key events drain, rather than treating them as a fresh click-away.
+      root.grabArmed = false
+      if (InteractionState.active) armTimer.stop()
+      else if (root.opened) armTimer.restart()
+    }
+  }
+
   HyprlandFocusGrab {
     windows: [window]
-    active: root.opened && root.grabArmed
-    onCleared: if (root.grabArmed) root.close()
+    active: root.opened && root.grabArmed && !InteractionState.active
+    onCleared: if (root.grabArmed && !InteractionState.active) root.close()
   }
   PanelWindow {
     id: window
@@ -177,7 +188,7 @@ Item {
 
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "cornice-menu"
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    WlrLayershell.keyboardFocus: InteractionState.active ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
     MouseArea {
       anchors.fill: parent
       onClicked: root.close()
