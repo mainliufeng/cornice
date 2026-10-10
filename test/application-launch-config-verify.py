@@ -54,10 +54,14 @@ try:
     custom['desktopApplications']['browser']='customChrome'
     custom['desktopApplications']['rules']['chrome']={'enabled':False}
     custom['desktopApplications']['rules']['customChrome']={'executables':['configured-browser'],'backend':'chromium','profile':'custom-browser','arguments':['--user-data-dir={profile}','--ozone-platform=wayland','--no-first-run','--no-default-browser-check'],'environment':{'CORNICE_BROWSER_PROBE':'{desktop}'}}
+    existing=pathlib.Path(ENV['HOME'])/'existing-browser';existing.mkdir()
+    marker=existing/'existing-data-marker';marker.write_text('preserve this profile')
+    custom['desktopApplications']['rules']['customChrome']['profilePaths']={'agent1':'~/existing-browser'}
     configure(custom)
     browser=tool(credential,'browser');cdp=Cdp(browser['cdpUrl']);assert cdp.call('Browser.getVersion')['product'];cdp.close()
     custom_window=wait(lambda:next((w for w in ctl('clients',True) if 'chrome' in w['class'].lower() and w['workspace']['id']==11),None))
-    expected=str(pathlib.Path(ENV['HOME'])/'.local/share/cornice/desktops/agent1/custom-browser')
+    expected=str(existing)
+    assert marker.read_text()=='preserve this profile'
     assert ('--user-data-dir='+expected) in shlex.split(pathlib.Path('/proc',str(custom_window['pid']),'cmdline').read_text().replace('\0',' '))
     # Check this test value at the actual executable launch boundary.
     assert environment_probe.read_text().strip()=='agent1'
@@ -68,6 +72,8 @@ try:
     configure(invalid);assert 'identity' in cli('launch','agent1','--','kitty',succeeds=False)
     invalid=copy.deepcopy(custom);invalid['desktopApplications']['rules']['terminal']['profile']='../shared'
     configure(invalid);assert 'directory name' in cli('launch','agent1','--','kitty',succeeds=False)
+    invalid=copy.deepcopy(custom);invalid['desktopApplications']['rules']['terminal']['profilePaths']={'agent1':'relative/path'}
+    configure(invalid);assert 'absolute or ~/' in cli('launch','agent1','--','kitty',succeeds=False)
     invalid=copy.deepcopy(custom);invalid['desktopApplications']['rules']['duplicate']={'executables':['kitty']}
     configure(invalid);assert 'multiple rules' in cli('launch','agent1','--','kitty',succeeds=False)
     path.write_text('{invalid json');assert 'invalid JSON' in cli('launch','agent1','--','kitty',succeeds=False)

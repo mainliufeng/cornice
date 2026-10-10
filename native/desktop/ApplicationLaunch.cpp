@@ -61,7 +61,7 @@ QJsonObject settings() {
         if (it.value().isNull()) continue;
         if (!it.value().isObject()) invalid(it.key() + " must be an object or null");
         const auto rule = it.value().toObject();
-        const QSet<QString> fields{"executables", "backend", "profile", "arguments", "environment", "reservedArguments", "scope", "enabled"};
+        const QSet<QString> fields{"executables", "backend", "profile", "profilePaths", "arguments", "environment", "reservedArguments", "scope", "enabled"};
         for (auto field = rule.begin(); field != rule.end(); ++field)
             if (!fields.contains(field.key())) invalid(it.key() + ": unknown field " + field.key());
         if (rule.contains("enabled") && !rule["enabled"].isBool()) invalid(it.key() + ".enabled must be boolean");
@@ -78,6 +78,17 @@ QJsonObject settings() {
         if (scope != "all" && scope != "secondary") invalid(it.key() + ": scope must be all or secondary");
         if (rule.contains("profile") && (!rule["profile"].isString() || !segment(rule["profile"].toString())))
             invalid(it.key() + ": profile must be one directory name");
+        if (rule.contains("profilePaths")) {
+            if (!rule.contains("profile") || !rule["profilePaths"].isObject())
+                invalid(it.key() + ": profilePaths requires profile and an object of desktop paths");
+            const auto paths = rule["profilePaths"].toObject();
+            for (auto path = paths.begin(); path != paths.end(); ++path) {
+                const auto value = path.value().toString();
+                if (!segment(path.key()) || !path.value().isString() || value.contains(QChar(0)) ||
+                    !(QDir::isAbsolutePath(value) || value.startsWith("~/")))
+                    invalid(it.key() + ": profilePaths must map desktop names to absolute or ~/ paths");
+            }
+        }
         const auto arguments = strings(rule["arguments"], it.key() + ".arguments", true);
         const auto reserved = strings(rule["reservedArguments"], it.key() + ".reservedArguments", true);
         for (const auto &prefix : reserved) if (prefix.isEmpty() || !prefix.startsWith('-')) invalid(it.key() + ": reserved arguments must be option prefixes");
@@ -122,6 +133,11 @@ ApplicationLaunchPlan build(const QStringList &argv, const QString &desktop, con
     }
     if (rule.contains("profile")) {
         plan.profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/cornice/desktops/" + desktop + "/" + rule["profile"].toString();
+        const auto configured = rule["profilePaths"].toObject()[desktop].toString();
+        if (!configured.isEmpty()) {
+            plan.profile = configured.startsWith("~/") ? QDir::homePath() + configured.mid(1) : configured;
+            plan.profile = QDir::cleanPath(plan.profile);
+        }
         if (!QDir().mkpath(plan.profile)) invalid("cannot create profile directory");
     }
     QStringList arguments;

@@ -50,6 +50,7 @@ folder. `profile` accepts one directory name, not an absolute path or `..` trave
 | `executables` | Exact, case-sensitive executable basenames, including aliases. |
 | `scope` | `all` (default) or `secondary`; primary is skipped for secondary rules. |
 | `profile` | Folder name inside this desktop's data directory. Optional for ordinary apps. |
+| `profilePaths` | Optional desktop-name map of existing absolute or `~/` profile paths; other desktops keep their independent default profiles. |
 | `arguments` | Arguments prepended to the caller's argv; supports the two templates above. |
 | `environment` | String-valued environment additions; supports the same templates. |
 | `reservedArguments` | Option prefixes the caller may not override. |
@@ -115,3 +116,26 @@ inheritance of defaults, live-browser configuration changes, an executable alias
 unknown to the source, forbidden identity/debug/profile overrides, malformed JSON,
 disabling rules and preservation of the primary desktop. Existing real launcher
 and MCP browser regressions cover the shipped default experience.
+
+### Reuse an existing profile on one desktop
+
+Put host-specific paths in `~/.config/cornice/config.json`:
+
+```json
+{
+  "desktopApplications": {
+    "rules": {
+      "chrome": {
+        "profilePaths": { "desktop2": "~/.local/share/chrome-agent" }
+      }
+    }
+  }
+}
+```
+
+Launcher and MCP use the same browser rule. This opens the existing profile in
+place, preserving its website sessions. Close its previous browser before using
+it on this desktop: Chrome profiles belong to one running browser at a time.
+Do not assign one profile to multiple simultaneously running desktops. Other
+desktops continue to use their own profile directories. Changes apply after
+closing and relaunching this desktop's browser.
