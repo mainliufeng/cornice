@@ -44,14 +44,19 @@ Item {
     return "空闲"
   }
   property var hiddenPreviews: ({})
+  property bool previewsEnabled: true
+  readonly property var previewDesktops: desktops.filter(item => !item.primary)
+  readonly property bool allPreviewsVisible: previewsEnabled && previewDesktops.length > 0 && previewDesktops.every(item => hiddenPreviews[item.name] !== true)
   readonly property var activeDesktops: desktops.filter(item => !item.primary && item.occupied === true)
   function harnessLabel(desktop) {
     const name = String(desktop.harness || "")
     return ({codex:"Codex",pi:"Pi"})[name.toLowerCase()] || name || "外部 Agent"
   }
-  function previewVisible(name) { return hiddenPreviews[name] !== true }
+  function previewVisible(name) { return previewsEnabled && hiddenPreviews[name] !== true }
   function hidePreview(name) { hiddenPreviews = Object.assign({}, hiddenPreviews, {[name]:true}) }
-  function restorePreviews() { hiddenPreviews = ({}) }
+  function restorePreviews() { previewsEnabled = true; hiddenPreviews = ({}) }
+  function hidePreviews() { previewsEnabled = false }
+  function togglePreviews() { if (allPreviewsVisible) hidePreviews(); else restorePreviews() }
   Connections {
     target:Hyprland
     function onRawEvent(event) {
@@ -134,10 +139,11 @@ Item {
     target: "desktop"
     function status(): string {
       return JSON.stringify({enabled: root.enabled, available: root.available, desktops: root.desktops,
-        selected: root.selectedDesktop, active: root.activeDesktops.map(item => item.name), hiddenPreviews:root.hiddenPreviews,
+        selected: root.selectedDesktop, active: root.activeDesktops.map(item => item.name), hiddenPreviews:root.hiddenPreviews, previewsEnabled:root.previewsEnabled, allPreviewsVisible:root.allPreviewsVisible,
         error: root.error, socket: root.socketPath, busy: root.busy})
     }
     function restorePreviews(): string { root.restorePreviews(); return "ok" }
+    function hidePreviews(): string { root.hidePreviews(); return "ok" }
     function hidePreview(name: string): string { root.hidePreview(name); return "ok" }
     function observe(name: string): string {
       if (!root.available) return "desktop-unavailable"

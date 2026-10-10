@@ -6,7 +6,7 @@ import qs.Commons
 Item {
   id:root
   property var service:null
-  readonly property var previews: service ? service.activeDesktops.filter(item => service.previewVisible(item.name)) : []
+  readonly property var previews: service ? service.previewDesktops.filter(item => service.previewVisible(item.name)) : []
   property var previewNames:[]
   onPreviewsChanged: {
     const names = previews.map(item => item.name)

@@ -26,6 +26,7 @@ Item {
       const item = items.itemAt(i)
       out.push({name: item.modelData.key, x: popup.margins.left, y: popup.margins.top + root.bridgeHeight + item.y - menuScroll.contentY,
         width: item.width, height: item.height, enabled: item.enabled, label: item.modelData.label, detail:item.modelData.detail || "",
+        kind:item.modelData.kind || "action", scope:item.modelData.scope || "", target:item.modelData.target || "",
         detailHeight:item.detailHeight, alert:item.modelData.alert === true})
     }
     return out
@@ -79,28 +80,31 @@ Item {
         id: items; model: root.stableEntries
         delegate: Rectangle {
           required property var modelData
+          required property int index
+          readonly property bool section: modelData.kind === "section"
           property real detailHeight: detailText.visible ? detailText.implicitHeight : 0
-          width: column.width; height: modelData.detail ? labelText.implicitHeight + detailHeight + Style.space(2) : Style.space(5)
-          enabled: modelData.enabled !== false
-          color: rowMouse.containsMouse ? Color.hover : "transparent"
+          width: column.width; height: section ? (modelData.detail ? labelText.implicitHeight + detailHeight + Style.space(3) : Style.space(4.5)) : modelData.detail ? labelText.implicitHeight + detailHeight + Style.space(2) : Style.space(5)
+          enabled: !section && modelData.enabled !== false
+          color: !section && rowMouse.containsMouse ? Color.hover : "transparent"
+          Rectangle { visible: parent.section && index > 0; anchors.top:parent.top; width:parent.width; height:1; color:Color.hover }
           Text {
             id:labelText
             anchors { left: parent.left; right:parent.right; leftMargin: Style.space(1.5); rightMargin:Style.space(1.5) }
-            y: modelData.detail ? Style.space(1) : (parent.height - implicitHeight) / 2
+            y: modelData.detail ? (section ? Style.space(1.5) : Style.space(1)) : (parent.height - implicitHeight) / 2
             text: (modelData.selected ? "✓ " : "") + modelData.label; color: modelData.alert ? Color.urgent : parent.enabled ? Color.foreground : Color.muted
             elide:Text.ElideRight
-            font.family: Style.fontFamily; font.pixelSize: Style.fontSize
+            font.family: Style.fontFamily; font.pixelSize: section ? Style.smallFontSize : Style.fontSize
           }
           Text {
             id:detailText;visible:!!modelData.detail
             anchors {left:labelText.left;right:labelText.right}
             y:labelText.y + labelText.implicitHeight
             text:modelData.detail || "";wrapMode:Text.Wrap;maximumLineCount:8;elide:Text.ElideRight
-            color:modelData.alert ? Color.urgent : Color.muted
+            color:modelData.alert ? Color.urgent : section ? Color.foreground : Color.muted
             font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize
           }
           MouseArea {
-            id: rowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            id: rowMouse; anchors.fill: parent; enabled: !parent.section; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
             onClicked: { root.opened = false; root.chosen(modelData.key) }
           }
         }

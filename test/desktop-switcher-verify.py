@@ -91,6 +91,9 @@ def rejected(connection, method, params):
 
 try:
     broker = initialize()
+    # This fixture supplies three explicit secondary desktops, replacing the
+    # broker startup default so viewport/card-count checks stay deterministic.
+    cli("remove", "desktop2")
     for index in range(1, 4):
         cli('create', 'agent' + str(index), '--workspace', str(10 + index), '--virtual-output', '1280x800')
         cli('resume', 'agent' + str(index))
@@ -179,11 +182,35 @@ try:
     except Exception:
         print('PREVIEW DIAGNOSTICS',previews(),shell('ipc','desktop','status'),cli('state','agent3'),preview_errors,flush=True)
         raise
-    wait(lambda:len(previews()['cards'])==2 and all(item['frames']>=3 for item in previews()['cards']))
+    wait(lambda:len(previews()['cards'])==3 and all(item['frames']>=3 for item in previews()['cards']))
     assert cli('state','agent3')['harness']=='codex' and cli('state','agent2')['harness']=='pi'
     assert previews()['readonly'] and previews()['visible']
     assert not (BASE/'human.txt').exists() and not (BASE/'agent3.txt').exists()
     subprocess.run(['grim','-o','human',str(BASE/'floating-preview.png')],env=ENV,check=True)
+    # Idle desktops are previewed even before a Harness takes ownership.
+    assert next(c for c in previews()['cards'] if c['name']=='agent1')['hasFrame']
+    group=next(item for item in next(item for item in json.loads(shell('ipc','bar','geometry')) if item['id']=='cn.agent-desktop')['controls'] if item['name']=='group')
+    send(f"motion {round(group['x']+group['width']/2)} {round(group['y']+group['height']/2)}")
+    rows=wait(lambda:json.loads(shell('ipc','desktopObserver','controls')) if any(item['name']=='control:all-heading' for item in json.loads(shell('ipc','desktopObserver','controls'))) else None)
+    assert [row['label'] for row in rows if row.get('kind')=='section']==['切换桌面','当前桌面操作','所有桌面'],rows
+    local=[row for row in rows if row.get('scope')=='desktop']
+    assert local and all(row['target']=='main' for row in local),local
+    assert next(row for row in rows if row['name']=='control:current-heading')['detail'].startswith('桌面 1'),rows
+    assert next(row for row in rows if row['name']=='control:previews')['scope']=='all',rows
+    subprocess.run(['grim','-o','human',str(BASE/'menu-scope-primary.png')],env=ENV,check=True)
+    control('previews');wait(lambda:not previews()['visible'])
+    control('previews');wait(lambda:previews()['visible'] and len(previews()['cards'])==3)
+    send('motion 650 300')
+    record('grouped menu separates switching, named current-desktop actions and global previews; idle desktops render and global hide/restore affects every card')
+    def release_and_check_previews():
+        previous_frames={c['name']:c['frames'] for c in previews()['cards']}
+        preview_stop.set();preview_thread.join(timeout=5);pi_thread.join(timeout=5);preview_owner.close();pi_owner.close()
+        assert not preview_errors,preview_errors
+        wait(lambda:not cli('state','agent3')['occupied'] and not cli('state','agent2')['occupied'])
+        retained=wait(lambda:previews() if previews()['visible'] and len(previews()['cards'])==3 and all(c['frames']>previous_frames[c['name']] for c in previews()['cards'] if c['y']<previews()['bounds']['y']+previews()['bounds']['height']) else None)
+        assert {c['name'] for c in retained['cards']}=={'agent1','agent2','agent3'},retained
+        subprocess.run(['grim','-o','human',str(BASE/'preview-after-task.png')],env=ENV,check=True)
+        record('completed Harness leases leave desktop previews visible with fresh frames and retained applications')
     if os.getenv('CORNICE_TEST_DESKTOP_PREVIEW_ONLY') == '1':
         # Exercise a real drag before changing the output and visible card count.
         first=previews()['cards'][0]
@@ -198,26 +225,31 @@ try:
             return state if state['output']=='human' and bounds['x']>=0 and bounds['y']>=0 and bounds['x']+bounds['width']<=800 and bounds['y']+bounds['height']<=600 else None
         wait(bounded,timeout=5)
         shell('ipc','desktop','hidePreview','agent2')
-        wait(lambda:len(previews()['cards'])==1 and bounded(),timeout=5)
+        wait(lambda:len(previews()['cards'])==2 and bounded(),timeout=5)
         shell('ipc','desktop','restorePreviews')
-        wait(lambda:len(previews()['cards'])==2 and bounded() and all(c['hasFrame'] for c in previews()['cards']),timeout=5)
+        wait(lambda:len(previews()['cards'])==3 and bounded() and all(c['hasFrame'] for c in previews()['cards'] if c['y'] < previews()['bounds']['y'] + previews()['bounds']['height'] and c['y']+c['height'] > previews()['bounds']['y']),timeout=5)
         subprocess.run(['grim','-o','human',str(BASE/'preview-small-output.png')],env=ENV,check=True)
         record('dragged preview stays on primary.output after smaller output and visible card count changes')
+        release_and_check_previews()
         # The compositor emits an unsolicited event on the real owner sockets.
         # Its counter proves cached frames clear from the event, not service polling.
-        before={c['name']:c['invalidations'] for c in previews()['cards']}
+        before={c['name']:c['invalidations'] for c in previews()['cards'] if c['hasFrame']}
+        assert len(before)>=2,before
         pam=BASE/'preview-pam';pam.mkdir();(pam/'permit').write_text('auth required pam_permit.so\n')
         locker=subprocess.Popen([str(PRODUCT/'bin/cornice-human-lock'),'--scope','session','--pam-service','permit','--pam-directory',str(pam),'--allow-emergency'],env=ENV,stdin=subprocess.PIPE,stdout=open(BASE/'preview-lock-events','w'),stderr=open(BASE/'preview-lock.log','w'),start_new_session=True,text=True)
         PROCESSES.append(locker)
         wait(lambda:ctl('seat lock-state',True)['secure'],timeout=5)
         began=time.monotonic()
-        cleared=wait(lambda:previews() if all(not c['hasFrame'] and c['invalidations']>before[c['name']] for c in previews()['cards']) else None,timeout=.5)
-        assert len(cleared['cards'])==2,cleared
+        cleared=wait(lambda:previews() if all(not c['hasFrame'] and c['invalidations']>before[c['name']] for c in previews()['cards'] if c['name'] in before) else None,timeout=.5)
+        assert len(cleared['cards'])==3,cleared
         print('LOCK INVALIDATION',time.monotonic()-began,cleared,flush=True)
         record('real session-lock notification immediately clears both cached preview images')
         locker.stdin.write('emergency-unlock\n');locker.stdin.flush()
         wait(lambda:not ctl('seat lock-state',True)['locked'],timeout=5)
-        preview_stop.set();preview_thread.join(timeout=5);pi_thread.join(timeout=5);preview_owner.close();pi_owner.close()
+        cli('remove','agent3')
+        wait(lambda:{card['name'] for card in previews()['cards']}=={'agent1','agent2'})
+        assert any(client['title']=='agent3-window' for client in ctl('clients',True))
+        record('removing a desktop removes only its preview card and retains shared applications')
         raise SystemExit(0)
     # Dragging only moves the shelf; clicking its close control hides it.
     send(f"motion {round(card['x']+80)} {round(card['y']+20)}");send('button 272 1')
@@ -234,9 +266,7 @@ try:
     wait(lambda:status()['open'] and status()['name']=='agent3' and status()['readonly'])
     wait(lambda:not previews()['visible'])
     shell('ipc','desktop','observe','main');wait(lambda:not status()['open'])
-    preview_stop.set();preview_thread.join(timeout=5);pi_thread.join(timeout=5);preview_owner.close();pi_owner.close()
-    assert not preview_errors,preview_errors
-    wait(lambda:not cli('state','agent3')['occupied'] and not cli('state','agent2')['occupied'])
+    release_and_check_previews()
     send(f"motion {human['cursor']['x']} {human['cursor']['y']}")
     record('real harness preview renders fresh frames, moves, hides/restores from grouped bar and enters native read-only view without editing apps')
     tray = start(['/usr/bin/python3', str(ROOT / 'test/fake-tray-menu.py')], 'tray-fixture')
@@ -278,6 +308,15 @@ try:
     click(row['x']+row['width']/2,row['y']+row['height']/2)
     wait(lambda: status()['open'] and status()['name'] == 'agent1')
     view = wait(lambda: status() if status()['presentation'].get('active') else None)
+    group=next(item for item in json.loads(shell('ipc','desktopObserver','controls')) if item['name']=='group')
+    send(f"motion {round(group['x']+group['width']/2)} {round(group['y']+group['height']/2)}")
+    heading=wait(lambda:next((row for row in json.loads(shell('ipc','desktopObserver','controls')) if row['name']=='control:current-heading' and row['target']=='agent1'),None))
+    assert heading['detail'].startswith(cli('state','agent1')['label']) and '只读观察' in heading['detail'],heading
+    assert all(row['target']=='agent1' for row in json.loads(shell('ipc','desktopObserver','controls')) if row.get('scope')=='desktop')
+    subprocess.run(['grim','-o','human',str(BASE/'menu-scope-secondary.png')],env=ENV,check=True)
+    send('motion 650 300');time.sleep(.35)
+    send(f"motion {human['cursor']['x']} {human['cursor']['y']}")
+    record('native desktop selection updates the named current-desktop heading and every local action target together')
     assert view['native'] and view['readonly'], view
     assert not any(l['namespace']=='cornice-desktop' for level in ctl('layers',True)['human']['levels'].values() for l in level)
     assert human_state()==human, (human_state(),human)

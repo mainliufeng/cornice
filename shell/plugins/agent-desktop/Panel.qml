@@ -45,7 +45,7 @@ PanelFrame {
           }
         }
       }
-      PanelButton { label: "恢复浮动预览"; enabled: !!root.service; onClicked: root.service.restorePreviews() }
+      PanelButton { label: root.service && root.service.allPreviewsVisible ? "隐藏全部浮动预览" : "显示全部浮动预览"; enabled: !!root.service && root.service.previewDesktops.length > 0; onClicked: root.service.togglePreviews() }
       Text { text: "额外桌面由 Agent 按需创建"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
       Text { width: parent.width; wrapMode: Text.Wrap; text: "主桌面默认禁止 Agent 控制。其他桌面默认允许，但由外部 Harness 自动占用。关闭权限立即撤销控制；删除桌面会保留共享窗口。"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
     }

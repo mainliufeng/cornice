@@ -1,7 +1,7 @@
 """Real preview geometry and lock invalidation against an isolated compositor.
 
 Reuse the switcher suite's real shell, Harness leases and physical-input fixture;
-only run the two preview regressions. Launch via isolated-desktop-test.sh.
+only run preview lifecycle, menu scope, geometry and lock regressions. Launch via isolated-desktop-test.sh.
 """
 import os
 import pathlib

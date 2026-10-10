@@ -25,10 +25,10 @@ Row {
     icon:DesktopSession.secondary ? "󰚩" : "󰍹"
     description:"桌面"
     badge:root.service ? root.service.activeDesktops.length : 0
-    entries: root.service ? root.service.desktops.map(desktop => ({
-      key:"view:" + desktop.name,label:root.service.desktopLabel(desktop.name) + " · " + root.service.stateLabel(desktop),
+    entries: root.service ? [{key:"view-heading",kind:"section",label:"切换桌面",enabled:false}].concat(root.service.desktops.map(desktop => ({
+      key:"view:" + desktop.name,scope:"navigation",target:desktop.name,label:root.service.desktopLabel(desktop.name) + " · " + root.service.stateLabel(desktop),
       selected:desktop.name === root.service.selectedDesktop,enabled:desktop.primary === true || (!!desktop.available && !desktop.error)
-    })).concat(control.entries.filter(item => item.key !== "state").map(item => Object.assign({},item,{key:"control:"+item.key}))) : []
+    }))).concat(control.entries.map(item => Object.assign({},item,{key:"control:"+item.key}))) : []
     onChosen:key => {
       if (key.startsWith("view:")) root.service.show(key.slice(5))
       else control.chosen(key.slice(8))
