@@ -95,7 +95,12 @@ try:
     wait(lambda:(BASE/(name+'.txt')).read_text()=='human')
     subprocess.run(['grim','-o','human',str(BASE/'cooperation-in-progress.png')],env=ENV,check=True)
     assert 'changed' in cli('handoff-complete',name,'wrong-request',succeeds=False)
+    waitingId=a.send('tools/call',{'name':'desktop_wait','arguments':target|{'seconds':30,'reason':'等待人工步骤完成'}})
     click_banner(name,agent_env)
+    completedAt=time.monotonic()
+    waited=a.receive(waitingId)
+    assert waited['structuredContent']['cooperationResolved'] and waited['structuredContent']['interrupted'],waited
+    assert time.monotonic()-completedAt<2,'completion did not promptly wake the waiting harness tool'
     wait(lambda:not observer()['humanControl'])
     done=wait(lambda:a.details('desktop_handoff',target|{'action':'status'})['request'] if a.details('desktop_handoff',target|{'action':'status'})['request']['status']=='completed' else None)
     assert [event['status'] for event in done['events']]==['requested','in_progress','completed'],done
@@ -105,8 +110,14 @@ try:
     assert fresh['generation']!=frame['generation']
     a.call('desktop_input',target|{'frameId':fresh['frameId'],'action':'text','text':'-agent'})
     wait(lambda:(BASE/(name+'.txt')).read_text()=='human-agent')
-    record('real MCP request pauses input, actual QML button takes native control, physical typing works, Completed exits takeover, and fresh generations reject old frames')
-    request=a.details('desktop_handoff',target|{'action':'request','title':'请扫码','instructions':'扫描二维码登录；无法在本机操作时，可在对话里撤回。'})['request'];rid=request['id']
+    record('real MCP request pauses input, actual QML button takes native control, physical typing works, Completed exits takeover and wakes the bounded wait, and fresh generations reject old frames')
+    cli('pause',name)
+    assert a.call('desktop_handoff',target|{'action':'resume','requestId':rid},False)['isError']
+    a.call('desktop_finish',target|{'outcome':'blocked','reason':'operator paused after cooperation restoration'})
+    replacement=a.details('desktop_acquire',{'preferredDesktop':name})
+    assert replacement['name']==name
+    target={'desktop':replacement['desktop']}
+    request=a.details('desktop_handoff',target|{'action':'request','title':'请扫码' ,'instructions':'扫描二维码登录；无法在本机操作时，可在对话里撤回。'})['request'];rid=request['id']
     shell('ipc','desktopObserver','takeover','true');wait(lambda:observer()['humanControl'])
     cancelled=a.details('desktop_handoff',target|{'action':'resolve','requestId':rid,'outcome':'cancelled','note':'用户远程要求退出接管'})
     assert cancelled['request']['status']=='cancelled'
@@ -117,14 +128,12 @@ try:
     assert observer()['humanControl']
     assert a.call('desktop_handoff',target|{'action':'resume','requestId':rid},False)['isError']
     shell('ipc','desktopObserver','takeover','false');wait(lambda:not observer()['humanControl'])
-    a.call('desktop_handoff',target|{'action':'resume','requestId':rid})
-    cli('pause',name)
     assert a.call('desktop_handoff',target|{'action':'resume','requestId':rid},False)['isError']
     assert not b.details('desktop_state',{'desktop':other['desktop']})['paused']
     assert len(cli('state',name)['handoffs'])==2
     saved=json.loads((RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktops.json').read_text())
     assert len(saved[name]['handoffs'])==2
-    record('remote chat resolution releases only its request takeover; history is persisted and resume cannot undo a later pause or affect another task')
+    record('remote chat resolution releases only its request takeover; history persists and later manual control or pause blocks resume both before and after initial restoration')
     # Primary uses the same cooperation contract after explicit enabled acquisition.
     shell('ipc','desktop','observe','main');wait(lambda:not observer()['open'])
     wait(lambda:cli('state','main')['available'])

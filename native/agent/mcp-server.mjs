@@ -117,6 +117,7 @@ async function invoke(operation,params={},extra={}) {
     if (!value.taskToken) throw new Error("Updated Cornice Broker and task-owned acquisition are required for cooperation requests");
     const result = await rpc({...value, token:value.taskToken}, "desktop.handoff", operation === "state" ? {action:"status"} : params, extra.requestId);
     if (result.binding) { c.binding=result.binding;secrets.add(c.binding.token);await closeBrowser(); }
+    if(operation === "handoff" && params.action === "request") c.handoffId = result.state.handoff?.id;
     verifyState(result.state);
     return operation === "state" ? result.state : {control:result.state,request:result.state.handoff || null,history:result.state.handoffs || []};
   }
@@ -162,7 +163,7 @@ const nativeTools=[
   {name:"desktop_focus",description:"Focus an exact windowId in this desktop's current workspace, then observe again.",inputSchema:object({windowId:string},["windowId"])},
   {name:"desktop_launch",description:"Launch an application on this desktop. Browser tasks use desktop_browser_connect. This is application launch, not an OS sandbox.",inputSchema:object({argv:{type:"array",items:string,minItems:1,maxItems:128}},["argv"])},
   {name:"desktop_browser_connect",description:"Open or reconnect this desktop's managed browser. Then use browser_tabs and browser_snapshot. Uses only the Broker's authorized CDP grant.",inputSchema:object()},
-  {name:"desktop_wait",description:"Wait for explicit restoration after interruption. Does not resume or obtain control.",inputSchema:object({seconds:{type:"integer",minimum:1,maximum:30},reason:string},["seconds","reason"])},
+  {name:"desktop_wait",description:"Wait for explicit input restoration or completion/cancellation of the current human cooperation request. Does not resume or obtain control.",inputSchema:object({seconds:{type:"integer",minimum:1,maximum:30},reason:string},["seconds","reason"])},
   {name:"desktop_finish",description:"Release task control after verified completion, cancellation or an explained blocker. No more actions can follow.",inputSchema:object({outcome:{enum:["completed","cancelled","blocked"]},reason:string},["outcome","reason"])}
 ];
 const browserSpec=JSON.parse(await readFile(join(root,"native/agent/browser-schema.json"),"utf8"));
@@ -209,10 +210,10 @@ server.setRequestHandler(CallToolRequestSchema,(request,extra)=> {
           const end=Date.now()+params.seconds*1000;
           do {
             if(extra.signal.aborted)throw new Error("Desktop wait cancelled");
-            result=await invoke("state",{},extra);if(active(result))break;
+            result=await invoke("state",{},extra);if(active(result) || (c.handoffId && result.handoff?.id === c.handoffId && ["completed","cancelled"].includes(result.handoff.status) && !result.handoff.restored))break;
             await new Promise(resolve=>setTimeout(resolve,250));
           }while(Date.now()<end);
-          result={control:result,interrupted:!active(result)};
+          result={control:result,interrupted:!active(result),cooperationResolved:!!(c.handoffId && result.handoff?.id === c.handoffId && ["completed","cancelled"].includes(result.handoff.status) && !result.handoff.restored)};
         }else result=await invoke(operation,operation==="capture"?{encoding:"jpeg"}:params,extra);
         if(operation==="finish"){c.finished=true;await closeBrowser();}
         const {imageBase64,pngBase64,mimeType,...details}=result;

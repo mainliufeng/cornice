@@ -41,6 +41,7 @@ class Broker : public QObject {
         QJsonObject lastConfiguration;
         QJsonArray bindingOverrides;
         QJsonArray handoffs;
+        quint64 inputDecision = 0;
 
     };
     struct Binding {
@@ -67,6 +68,7 @@ class Broker : public QObject {
     void releaseAcquisition(QLocalSocket *);
     QJsonObject handoff(const QJsonObject &);
     void transitionHandoff(const QString &name, const QString &id, const QString &status, const QString &note);
+    void sealHandoff(const QString &name, const QString &id);
     QString m_humanRequestId;
     void revokeBindings(const QString &name);
     void startShell(const QString &name);

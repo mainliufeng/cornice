@@ -72,7 +72,7 @@ Requesting immediately pauses and revokes Agent input. The primary desktop shows
 
 The task's separate cooperation credential permits only status and resolution for its reserved desktop across input-generation changes. It cannot operate applications, change permissions, or control other reservations. A remote resolution can release only the takeover associated with that request. A later independent human takeover, pause, lock or permission change cannot be overridden by retrying an old resume. After resolution, `resume` explicitly obtains a fresh input generation; reconnect the managed browser and read a fresh tree/frame before continuing.
 
-User replies stay in Codex/Pi. The completion button does **not** automatically wake a new external harness turn. Read status on the user's reply or use bounded `desktop_wait`; never acquire another desktop to escape the pause. During a version transition, 0.4.0 MCP retains ordinary operation against the previous Broker, while cooperation requires the updated Broker and an acquired task reservation.
+User replies stay in Codex/Pi. The completion button does **not** automatically wake a new external harness turn. An already running `desktop_wait` returns promptly on completion/cancellation without restoring input. Read status on the user's reply or use bounded `desktop_wait`; never acquire another desktop to escape the pause. During a version transition, 0.4.0 MCP retains ordinary operation against the previous Broker, while cooperation requires the updated Broker and an acquired task reservation.
 
 ## Legacy explicit bindings
 

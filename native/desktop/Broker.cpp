@@ -531,6 +531,18 @@ void Broker::transitionHandoff(const QString &name, const QString &id, const QSt
     fail("Cooperation request no longer exists");
 }
 
+void Broker::sealHandoff(const QString &name, const QString &id) {
+    auto &desktop = m_desktops.at(name);
+    auto record = desktop.handoffs.last().toObject();
+    if (record["id"] != id) fail("Cooperation request changed");
+    const auto actual = state(name);
+    record["resumeGeneration"] = actual["generation"];
+    record["resumeLockEpoch"] = actual["lockEpoch"];
+    record["resumeDecision"] = static_cast<qint64>(desktop.inputDecision);
+    desktop.handoffs[desktop.handoffs.size()-1] = record;
+    save();
+}
+
 QJsonObject Broker::handoff(const QJsonObject &request) {
     // The task reservation outlives an input generation. It authorizes only
     // cooperation records for this task, never input or desktop management.
@@ -593,6 +605,7 @@ QJsonObject Broker::handoff(const QJsonObject &request) {
                     fail("This request does not own the current human takeover");
                 transitionHandoff(name, record["id"].toString(), outcome, note);
                 if (m_humanRequestId == record["id"].toString()) endTakeover("Agent resolved cooperation request");
+                sealHandoff(name, record["id"].toString());
             }
         } else if (action == "resume") {
             if (record["status"] != "completed" && record["status"] != "cancelled") fail("Resolve cooperation before resuming input");
@@ -602,6 +615,10 @@ QJsonObject Broker::handoff(const QJsonObject &request) {
                 if (!m_bindings.contains(lease.value()["token"].toString()) || actual["generation"] != lease.value()["generation"] || actual["agentPaused"].toBool())
                     fail("Subsequent interruption requires explicit operator restoration");
             } else {
+                const auto actual = state(name);
+                if (actual["generation"] != record["resumeGeneration"] || actual["lockEpoch"] != record["resumeLockEpoch"] ||
+                    record["resumeDecision"].toVariant().toULongLong() != desktop.inputDecision)
+                    fail("Subsequent interruption requires explicit operator restoration");
                 resume(name); revokeBindings(name);
                 auto binding = perform("bind", {{"name", name}}, nullptr, lease.key());
                 auto &input = m_bindings[binding["token"].toString()];
@@ -1048,6 +1065,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     if (method == "allow-agent") {
         if (state(name)["humanLocked"].toBool()) fail("Unlock session before changing desktop permission");
         if (!params["allowed"].isBool()) fail("Boolean agent permission required");
+        ++desktop.inputDecision;
         desktop.agentAllowed = params["allowed"].toBool();
         if (!desktop.agentAllowed) {
             if (!(m_humanOwner && m_humanBinding.name == name)) pause(name);
@@ -1111,12 +1129,14 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                 fail("Take over the requested desktop before completing it");
             transitionHandoff(name, requestId, "completed", "Human marked the task completed");
             if (m_humanRequestId == requestId) endTakeover("Cooperation task completed");
+            sealHandoff(name, requestId);
         }
         return state(name);
     }
     if (method == "state" || method == "desktop.state")
         return state(name);
     if (method == "pause") {
+        ++desktop.inputDecision;
         pause(name);
         return state(name);
     }
@@ -1234,6 +1254,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     if (m_humanOwner && m_humanBinding.name == name && (method == "resume" || method == "bind" || method == "launch"))
         fail("End human control before granting agent input");
     if (method == "resume") {
+        ++desktop.inputDecision;
         resume(name);
         return state(name);
     }
