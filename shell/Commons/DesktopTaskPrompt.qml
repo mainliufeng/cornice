@@ -51,14 +51,17 @@ Item {
   Connections {target:root.service;function onTasksChanged() {root.updateTasks()}}
   function draft() {
     const button = runButton.mapToItem(null, 0, 0)
-    return {text:editor.text, preedit:editor.preeditText, focused:editor.activeFocus, submitted:submitted, error:error,
+    return {text:editor.text, preedit:editor.preeditText, composing:editor.inputMethodComposing, focused:editor.activeFocus, submitted:submitted, error:error,
       run:{x:button.x,y:button.y,width:runButton.width,height:runButton.height}}
   }
   function submit() {
     if (run.running) return
     // Qt's commit() can turn unconfirmed pinyin into Latin preedit text. Let
     // the user choose the intended candidate instead of submitting it as-is.
-    if (editor.inputMethodComposing) {
+    // Wayland text-input can retain cursor attributes with an empty preedit;
+    // Qt then reports composing even after the candidate was committed.
+    // Only an actual unconfirmed preedit prevents submitting or closing.
+    if (editor.preeditText !== "") {
       error = "请先确认输入法候选词，再提交任务。"
       editor.forceActiveFocus(); return
     }
@@ -114,7 +117,7 @@ Item {
         color:Color.foreground; font.family:Style.fontFamily;font.pixelSize:Style.fontSize
         background: Rectangle {color:Color.background;radius:Style.radius;border.color:Color.surfaceBorder}
         Keys.onPressed: event => {
-          if (event.key === Qt.Key_Escape && !editor.inputMethodComposing) {root.opened = false;event.accepted = true}
+          if (event.key === Qt.Key_Escape && editor.preeditText === "") {root.opened = false;event.accepted = true}
           else if (event.key === Qt.Key_Return && (event.modifiers & Qt.ControlModifier)) {root.submit();event.accepted = true}
         }
       }

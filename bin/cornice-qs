@@ -7,6 +7,12 @@
 set -euo pipefail
 
 prefix=${CORNICE_PATH:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}
+# Our editable layers use the seat's native text-input protocol. A toolkit
+# D-Bus IM module bypasses presentation focus and places candidates offscreen.
+if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+  export QT_IM_MODULE=wayland
+  unset QT_IM_MODULES
+fi
 for modules in "$prefix/native/qml" "$prefix/native/build/qml"; do
   if [[ -d $modules ]]; then export QML_IMPORT_PATH="$modules${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"; fi
 done

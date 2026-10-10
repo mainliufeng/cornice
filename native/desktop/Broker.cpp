@@ -110,13 +110,13 @@ Broker::Broker(QString instance)
     m_desktops.emplace("main", Desktop{primary["seatId"].toString(), {}, {}, {}, {}});
     auto &main = m_desktops.at("main");
     main.primary = true; main.number = 1; main.agentAllowed = false;
+    main.configurationOwner = uuid() + uuid();
     pause("main");
     m_configurationHeartbeat.start();
     connect(&m_watchdog, &QTimer::timeout, this, [this] {
         if (m_configurationHeartbeat.elapsed() >= 1000) {
             m_configurationHeartbeat.restart();
             for (auto &[name, desktop] : m_desktops) {
-                if (desktop.primary) continue;
                 try { configureDesktop(name); desktop.configurationError.clear(); }
                 catch (const std::exception &error) { desktop.configurationError = QString::fromUtf8(error.what()); }
             }
@@ -390,6 +390,7 @@ void Broker::listen() {
                 if (m_presentations.contains(socket)) compositor("seat unpresent " + m_presentations.take(socket));
                 if (m_buffers.contains(socket))
                     QFile::remove(m_buffers.take(socket));
+                m_localVoiceClients.remove(socket);
                 delete input;
                 socket->deleteLater();
             });
@@ -415,6 +416,16 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
     if (id.isEmpty() || id.size() > 128)
         fail("Request ID required");
     const auto method = request["method"].toString();
+    if (method == "register-local-voice") {
+        if (!request["token"].toString().isEmpty() || !owner) fail("Local service connection required");
+        struct ucred peer{}; socklen_t size = sizeof(peer);
+        if (getsockopt(owner->socketDescriptor(), SOL_SOCKET, SO_PEERCRED, &peer, &size) || peer.uid != getuid() || peer.pid <= 0)
+            fail("Local service identity unavailable");
+        m_localVoiceClients[owner] = peer.pid;
+        for (const auto &[name, desktop] : m_desktops) configureDesktop(name);
+        return {{"ok", true}, {"registered", true}};
+    }
+
     const auto token = request["token"].toString();
     const bool writing = method == "desktop.input" || method == "desktop.workspace" || method == "desktop.focus" ||
                          method == "desktop.launch" || method == "desktop.browser";
@@ -973,7 +984,6 @@ void Broker::initializeSlots(const QString &name, const QJsonObject &saved) {
 
 void Broker::configureDesktop(const QString &name) {
     auto &desktop = m_desktops.at(name);
-    if (desktop.primary) return;
     const auto actual = state(name);
     if (actual["seatId"].toString() != desktop.id) fail("Stale configuration target");
     if (actual["humanLocked"].toBool()) {
@@ -981,11 +991,11 @@ void Broker::configureDesktop(const QString &name) {
         return;
     }
     QJsonArray bindings;
-    auto add = [&](const QStringList &keys, const QString &action, const QString &argument, bool readonly) {
+    auto add = [&](const QStringList &keys, const QString &action, const QString &argument, bool readonly, bool release = false) {
         bindings.append(QJsonObject{{"keys", QJsonArray::fromStringList(keys)}, {"action", action},
-            {"argument", argument}, {"viewOnly", readonly}, {"overrideInherited", true}});
+            {"argument", argument}, {"physicalOnly", argument.startsWith("voice-")}, {"release", release}, {"viewOnly", readonly}, {"overrideInherited", true}});
     };
-    for (int i = 1; i <= 10; ++i) {
+    if (!desktop.primary) for (int i = 1; i <= 10; ++i) {
         const auto workspace = desktop.workspaceSlots.value(i);
         if (desktop.lastConfiguration.isEmpty()) m_compositor.ensureWorkspace(name, desktop.id, workspace);
         const auto key = QString::number(i % 10);
@@ -993,8 +1003,19 @@ void Broker::configureDesktop(const QString &name) {
         add({"SUPER", "SHIFT", key}, "move", workspace, false);
         add({"SUPER", key}, "workspace", workspace, true);
     }
-    add({"SUPER", "A"}, "notify", "prompt", false);
-    add({"SUPER", "A"}, "notify", "prompt", true);
+    if (!desktop.primary) {
+        add({"SUPER", "A"}, "notify", "prompt", false);
+        add({"SUPER", "A"}, "notify", "prompt", true);
+    }
+    if (!desktop.primary && !m_localVoiceClients.isEmpty()) for (bool readonly : {false, true}) {
+        add({"F8"}, "notify", "voice-press", readonly);
+        add({"F8"}, "notify", "voice-release", readonly, true);
+        add({"F9"}, "notify", "voice-command", readonly);
+        add({"F9"}, "notify", "voice-stop", readonly, true);
+        add({"SUPER", "ALT", "Return"}, "notify", "voice-commit", readonly);
+        add({"SUPER", "ALT", "O"}, "notify", "voice-raw", readonly);
+        add({"SUPER", "ALT", "Escape"}, "notify", "voice-cancel", readonly);
+    }
     QJsonArray overlays;
     const QStringList shellLayers{"cornice-bar", "cornice-desktop-menu", "cornice-agent-prompt", "cornice-panel",
                                   "cornice-menu", "cornice-status-tooltip", "cornice-window-tooltip", "cornice-notification-popups"};
@@ -1006,10 +1027,9 @@ void Broker::configureDesktop(const QString &name) {
             for (const auto &value : level.value().toArray()) {
                 const auto layer = value.toObject();
                 const auto space = layer["namespace"].toString();
-                if (!shellLayers.contains(space) && space != "hyprvoice") continue;
+                if (!shellLayers.contains(space)) continue;
                 if (layer["pid"].toInteger() <= 0) continue;
-                if (space == "hyprvoice") voicePids.insert(layer["pid"].toInteger());
-                else shellPids.insert(layer["pid"].toInteger());
+                shellPids.insert(layer["pid"].toInteger());
             }
     }
     // The popup shares its shell process with the bar but is created on demand.
@@ -1019,8 +1039,9 @@ void Broker::configureDesktop(const QString &name) {
             overlays.append(QJsonObject{{"name", space}, {"pid", pid},
                 {"keyboard", space == "cornice-agent-prompt" || space == "cornice-panel" || space == "cornice-menu"},
                 {"localInView", space == "cornice-bar" || space == "cornice-desktop-menu"}});
+    for (const auto pid : m_localVoiceClients) voicePids.insert(pid);
     for (const auto pid : voicePids)
-        overlays.append(QJsonObject{{"name", "hyprvoice"}, {"pid", pid}, {"keyboard", true}});
+        overlays.append(QJsonObject{{"name", "hyprvoice"}, {"pid", pid}, {"keyboard", false}});
     const QJsonObject configuration{{"owner", desktop.configurationOwner}, {"seatName", name}, {"seatId", desktop.id},
         {"bindings", bindings}, {"overlays", overlays}, {"callback", m_socketPath}};
     if (configuration == desktop.lastConfiguration) {
@@ -1037,8 +1058,10 @@ void Broker::invokeControllerAction(const QJsonObject &event) {
     if (!m_desktops.contains(name)) return;
     const auto &desktop = m_desktops.at(name);
     const auto actual = state(name);
+    const auto action = event["action"].toString();
+    const bool voice = action.startsWith("voice-") && QStringList{"press", "release", "command", "stop", "commit", "raw", "cancel"}.contains(action.mid(6));
     if (event["owner"].toString() != desktop.configurationOwner || event["seatId"].toString() != desktop.id ||
-        event["generation"] != actual["generation"] || actual["humanLocked"].toBool() || event["action"].toString() != "prompt") return;
+        event["generation"] != actual["generation"] || actual["humanLocked"].toBool() || (action != "prompt" && !voice)) return;
     if (event["mode"].toString() == "readonly") {
         const auto owner = event["viewOwner"].toString();
         if (owner.isEmpty() || !m_presentations.values().contains(owner)) return;
@@ -1049,6 +1072,15 @@ void Broker::invokeControllerAction(const QJsonObject &event) {
     if (actionId.isEmpty()) return;
     const auto validation = json(compositor("seat validate-context " + actionId + " " + desktop.configurationOwner, true)).object();
     if (!validation["valid"].toBool() || validation["seatId"].toString() != desktop.id) return;
+    if (voice) {
+        QProcess process;
+        const auto bundled = qEnvironmentVariable("CORNICE_PATH") + "/bin/hyprvoice";
+        const auto binary = QFileInfo(bundled).isExecutable() ? bundled : QStandardPaths::findExecutable("hyprvoice");
+        if (binary.isEmpty()) return;
+        process.start(binary, {action.mid(6)});
+        if (!process.waitForFinished(1500)) process.kill();
+        return;
+    }
     QProcess process;
     auto environment = QProcessEnvironment::systemEnvironment();
     if (event["mode"].toString() == "readonly" || desktop.privateOutput.isEmpty()) {

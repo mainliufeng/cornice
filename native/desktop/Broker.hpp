@@ -81,6 +81,7 @@ class Broker : public QObject {
     QElapsedTimer m_humanHeartbeat;
     QMap<QLocalSocket *, QString> m_buffers;
     QMap<QLocalSocket *, QString> m_presentations;
+    QMap<QLocalSocket *, qint64> m_localVoiceClients;
     QMap<QString, QJsonObject> m_completed;
     QMap<QString, QByteArray> m_requestHashes;
 };

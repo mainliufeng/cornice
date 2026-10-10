@@ -53,13 +53,17 @@ def heartbeat():
 
 
 def click_entry():
-    window = wait(lambda: next((item for item in ctl('clients', True) if item['title'] == 'voice-agent-window'), None))
-    geometry = wait(lambda: json.loads(agent_path.with_suffix('.geometry').read_text()))['entry']
-    offset = cli('state', 'agent1')['position']
-    send(f"motion {round(window['at'][0] - offset[0] + geometry[0] + geometry[2] / 2)} {round(window['at'][1] - offset[1] + geometry[1] + geometry[3] / 2)}")
-    send('button 272 1')
-    send('button 272 0')
-    wait(lambda: ctl('seat input-target', True).get('window', {}).get('address') == window['address'])
+    # The private bar may still be laying out a just-opened window. Use fresh
+    # client/widget geometry until the physical click actually focuses it.
+    def click():
+        window=next((item for item in ctl('clients',True) if item['title']=='voice-agent-window'),None)
+        if not window:return None
+        geometry=json.loads(agent_path.with_suffix('.geometry').read_text())['entry']
+        offset=cli('state','agent1')['position']
+        send(f"motion {round(window['at'][0]-offset[0]+geometry[0]+geometry[2]/2)} {round(window['at'][1]-offset[1]+geometry[1]+geometry[3]/2)}")
+        send('button 272 1');send('button 272 0')
+        return ctl('seat input-target',True).get('window',{}).get('address')==window['address']
+    wait(click)
 
 
 def contents():
@@ -82,7 +86,7 @@ def start_hold():
     (BASE / 'f8-release.json').unlink(missing_ok=True)
     (BASE / 'f8-press.json').unlink(missing_ok=True)
     send('key 66 1')
-    reply = wait(lambda: json.loads((BASE / 'f8-press.json').read_text()))
+    reply = wait(lambda: {'ok':True} if state()['phase'] in ('starting','recording') else None)
     if not reply['ok']:
         (BASE / 'f8-failed-context.json').write_text(json.dumps({'reply': reply, 'inputTarget': ctl('seat input-target', True), 'presentation': ctl('seat presentation ' + OWNER, True), 'layers': ctl('layers', True), 'primaryWindow': ctl('activewindow', True), 'appState': state()}, ensure_ascii=False, indent=2))
     assert reply['ok'], reply
@@ -173,11 +177,13 @@ def click_overlay_button(name, receipt):
 try:
     ENV['PATH'] = str(FORK / 'build-agent-session/hyprctl') + os.pathsep + ENV['PATH']
     initialize()
+    start(['fcitx5','-D','--disable=vinput,cloudpinyin'],'fcitx')
+    wait(lambda:'true' in subprocess.run(['gdbus','call','--session','--dest','org.freedesktop.DBus','--object-path','/org/freedesktop/DBus','--method','org.freedesktop.DBus.NameHasOwner','org.fcitx.Fcitx5'],env=ENV,capture_output=True,text=True).stdout)
     shell_config = BASE / 'config/cornice'
     shell_config.mkdir(parents=True, exist_ok=True)
     (shell_config / 'config.json').write_text(json.dumps({'agentDesktop': {'enabled': True}, 'background': {'enabled': False}, 'weather': {'intervalMinutes': 0},
         'idle': {'lock': 0, 'screenOffAc': 0, 'screenOffBattery': 0, 'dimAc': 0, 'dimBattery': 0, 'lockOnSleep': False, 'lockOnLockSignal': False, 'lockOnLidClose': False}}))
-    start([str(PRODUCT / 'bin/cornice-qs'), '-p', str(PRODUCT / 'shell')], 'primary-shell')
+    start([str(PRODUCT / 'bin/cornice-qs'), '-p', str(PRODUCT / 'shell')], 'primary-shell',ENV | {'WAYLAND_DEBUG':'client'})
     wait(lambda: 'pong' in shell('ping'))
     for source, name in (('virtual-keyboard-unstable-v1', 'virtual-keyboard'), ('wlr-virtual-pointer-unstable-v1', 'virtual-pointer')):
         for mode, extension in (('client-header', 'h'), ('private-code', 'c')):
@@ -231,7 +237,7 @@ context.objects = [
     models.mkdir()
     for name in ('funasr-encoder-f16.gguf', 'qwen3-0.6b-q8_0.gguf', 'fsmn-vad.gguf'):
         (models / name).touch()
-    transcripts = ['只读切换保留的合成文字。', '提示框切换保留的合成文字。', '新录音自动输入的合成文字。', '界面按钮结束的合成文字。']
+    transcripts = ['只读切换保留的合成文字。', '提示框切换保留的合成文字。', '新录音自动输入的合成文字。', '界面按钮结束的合成文字。', '只读本地任务框语音。']
     (RT / 'transcripts.json').write_text(json.dumps(transcripts, ensure_ascii=False))
     (RT / 'decode-count').write_text('0')
     worker = BASE / 'synthetic-asr-worker'
@@ -265,9 +271,9 @@ for line in sys.stdin:
     wait(lambda: (RT / 'hyprvoice/control.sock').is_socket())
     phase('idle')
     assert state()['model_ready']
-    for action, options in (('press', '{}'), ('release', '{["release"]=true}')):
-        execute = shlex.join([str(APP), action]) + ' > ' + shlex.quote(str(BASE / ('f8-' + action + '.json')))
-        ok('eval hl.bind("F8",hl.dsp.exec_cmd(' + json.dumps(execute) + '),' + options + ')')
+    # Use Cornice's actual registered press/release bindings, rather than
+    # replacing them with test-only compositor commands.
+    wait(lambda:any(item.get('dispatcher')=='notify' and item.get('arg')=='voice-press' for item in ctl('binds',True)), timeout=8)
 
     before = photo('native-agent-before-voice')
     start_hold()
@@ -321,8 +327,6 @@ for line in sys.stdin:
 
     start_hold()
     send('key 66 0')
-    released = wait(lambda: json.loads((BASE / 'f8-release.json').read_text()))
-    assert released['ok'], released
     wait(lambda: contents() == ['', transcripts[0] + transcripts[2]])
     phase('idle')
     check('fresh genuine Agent F8 press-and-release follows real audio capture, production App finalization and automatic seat-scoped paste')
@@ -335,6 +339,31 @@ for line in sys.stdin:
     check('a physical primary-seat pointer click on the actual Hyprvoice overlay stop button reaches the production App above the native Agent desktop and inserts only into its focused Agent input')
     photo('native-agent-final-input')
     assert int((RT / 'decode-count').read_text()) == 4
+    # The broker owns this presentation, so readonly managed callbacks carry
+    # the same real viewer context as the deployed desktop switcher.
+    ctl('seat unpresent ' + OWNER)
+    shell('ipc', 'desktop', 'observe', 'agent1')
+    wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['presentation'].get('active'))
+    send('key 66 1');send('key 66 0')
+    wait(lambda:state()['error']!='' and not state()['busy'])
+    assert not state()['busy'] and contents()==['',transcripts[0]+transcripts[2]+transcripts[3]]
+    bounds=wait(layer);time.sleep(.15)
+    photo('readonly-no-editor-voice-error')
+    check('F8 without a local editor shows a registered native refusal overlay and does not record or write to an observed application')
+    command('cancel')
+    shell('ipc','desktop','prompt','agent1')
+    def prompt(): return json.loads(shell('ipc','desktop','promptDraft'))
+    wait(lambda:prompt()['focused'])
+    wait(lambda:ctl('seat input-target-v2',True).get('kind')=='local-editor')
+    assert not ctl('seat input-target',True)['allowed']
+    start_hold();photo('readonly-prompt-voice-recording')
+    send('key 66 0')
+    wait(lambda:prompt()['text']==transcripts[4],timeout=8)
+    phase('idle')
+    assert contents()==['',transcripts[0]+transcripts[2]+transcripts[3]]
+    photo('readonly-prompt-voice-inserted')
+    check('readonly prompt F8 reaches real audio capture, painted recording UI and production native editor paste; every application remains unchanged')
+    assert int((RT / 'decode-count').read_text()) == 5
     result = {'checks': checks, 'measurements': measurements, 'contents': contents(), 'realProductionApp': True, 'realPipeWire': True,
               'syntheticZeroAudio': True, 'syntheticTestAsr': True, 'realMicrophoneOrAsrAccuracyTested': False}
     (BASE / 'voice-session-result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))

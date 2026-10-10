@@ -10,7 +10,7 @@ def remote(*args):
     return subprocess.check_output(['fcitx5-remote',*args],env=ENV,text=True).strip()
 
 try:
-    ENV.update(QT_IM_MODULE='fcitx', XMODIFIERS='@im=fcitx')
+    ENV.update(QT_IM_MODULE='wayland', XMODIFIERS='@im=fcitx')
     initialize()
     for source,name in (('virtual-keyboard-unstable-v1','virtual-keyboard'),('wlr-virtual-pointer-unstable-v1','virtual-pointer')):
         for mode,ext in (('client-header','h'),('private-code','c')):
@@ -24,7 +24,7 @@ try:
     profile.write_text('[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=pinyin\n\n[Groups/0/Items/0]\nName=keyboard-us\n\n[Groups/0/Items/1]\nName=pinyin\n\n[GroupOrder]\n0=Default\n')
     classic=profile.parent/'conf/classicui.conf';classic.parent.mkdir(parents=True,exist_ok=True)
     classic.write_text('Font="Sans 24"\nForceWaylandDPI=0\n')
-    ENV.update(GTK_IM_MODULE='fcitx',QT_IM_MODULE='fcitx',XMODIFIERS='@im=fcitx')
+    ENV.update(GTK_IM_MODULE='wayland',QT_IM_MODULE='fcitx',XMODIFIERS='@im=fcitx')
     fcitx=start(['fcitx5','-D','--disable=vinput,cloudpinyin'],'fcitx')
     def ime_ready():
         assert fcitx.poll() is None, (BASE/'fcitx.log').read_text()
@@ -104,7 +104,7 @@ try:
     remote('-c')
     # Super+A in the actual read-only fullscreen viewer must focus a native
     # text editor, rather than forwarding pinyin keys into the Agent app.
-    send('mods 64');send('key 30 1');send('key 30 0');send('mods 0')
+    send('mods 64');send('key 125 1');send('key 30 1');send('key 30 0');send('key 125 0');send('mods 0')
     wait(lambda:json.loads(shell('ipc','desktop','status'))['prompt']['open'])
     def prompt_draft(env=None):
         return json.loads(subprocess.check_output([str(PRODUCT/'bin/cornice'),'ipc','desktop','promptDraft'],env=env or ENV,text=True,stderr=subprocess.PIPE))
@@ -118,7 +118,7 @@ try:
     wait(lambda:prompt_draft()['text']=='中文')
     subprocess.run(['grim','-o','human',str(BASE/'task-chinese.png')],env=ENV,check=True)
     record('Super+A task prompt accepts real Fcitx pinyin and Space commits 中文 in the read-only fullscreen viewer')
-    send('mods 4');send('key 28 1');send('key 28 0');send('mods 0')
+    send('mods 4');send('key 29 1');send('key 28 1');send('key 28 0');send('key 29 0');send('mods 0')
     wait(lambda:prompt_draft()['submitted']=='中文')
     wait(lambda:prompt_draft()['error']!='')
     assert prompt_draft()['text']=='中文'
@@ -141,6 +141,25 @@ try:
     send('key 1 1');send('key 1 0')
     wait(lambda:not json.loads(shell('ipc','desktop','status'))['prompt']['open'])
     shell('ipc','desktop','observe','')
+    ok('dispatch hl.dsp.focus({window="title:^human-window$"})')
+    wait(lambda:ctl('seat input-target',True).get('seatName')=='Hyprland' and ctl('seat input-target',True).get('allowed'))
+    remote('-o');send('type nihao')
+    time.sleep(.3)
+    subprocess.run(['grim','-o','human',str(BASE/'returned-main-candidates.png')],env=ENV,check=True)
+    send('key 57 1');send('key 57 0')
+    wait(lambda:destinations[0].read_text()=='你好中文你好')
+    for cycle in range(3):
+        shell('ipc','desktop','observe','private0')
+        wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['presentation'].get('active'))
+        send('type forbidden');send('key 57 1');send('key 57 0')
+        shell('ipc','desktop','observe','')
+        ok('dispatch hl.dsp.focus({window="title:^human-window$"})')
+        wait(lambda:ctl('seat input-target',True).get('seatName')=='Hyprland' and ctl('seat input-target',True).get('allowed'))
+        remote('-o');send('type nihao');send('key 57 1');send('key 57 0')
+        wait(lambda:destinations[0].read_text()=='你好中文'+'你好'*(cycle+2))
+    wait(lambda:destinations[0].read_text()=='你好中文'+'你好'*4)
+    assert not (BASE/'private0.txt').exists()
+    record('native GTK Chinese composition returns after repeated readonly presentation switches; observed application remains untouched')
     cli('resume','private0')
     binding=bind('private0')
     import hashlib
@@ -149,20 +168,56 @@ try:
     tool(binding,'input',{'frameId':shot['frameId'],'action':'chord','keys':['SUPER','a']})
     wait(lambda:prompt_draft(own_env)['focused'])
     time.sleep(.5)
-    remote('-o')
-    for key in 'zhongwen':
-        shot=tool(binding,'capture')
-        tool(binding,'input',{'frameId':shot['frameId'],'action':'chord','keys':[key]})
-    wait(lambda:prompt_draft(own_env)['preedit']!='')
+    # Automation's text action deliberately bypasses IME conversion; native
+    # human takeover below exercises this seat's real pinyin path separately.
     shot=tool(binding,'capture')
-    tool(binding,'input',{'frameId':shot['frameId'],'action':'chord','keys':['space']})
+    tool(binding,'input',{'frameId':shot['frameId'],'action':'text','text':'中文'})
     wait(lambda:prompt_draft(own_env)['text']=='中文')
     shot=tool(binding,'capture')
     (BASE/'agent-task-chinese.png').write_bytes(base64.b64decode(shot['pngBase64']))
-    record('independent Agent shell task prompt also accepts actual Fcitx pinyin; human launcher and prompt remain isolated')
+    record('independent desktop shell receives composed Unicode from the real automation API; primary input remains isolated')
     shot=tool(binding,'capture')
     tool(binding,'input',{'frameId':shot['frameId'],'action':'chord','keys':['Escape']})
     cli('pause','private0')
+    shell('ipc','desktop','observe','private0')
+    wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['presentation'].get('active'))
+    shell('ipc','desktopObserver','takeover','true')
+    wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['humanControl'])
+    def click_private_editor():
+        window=next(c for c in ctl('clients',True) if c['title']=='private0')
+        bounds=json.loads((BASE/'private0.geometry').read_text())['entry']
+        offset=cli('state','private0')['position']
+        send(f"motion {round(window['at'][0]-offset[0]+bounds[0]+bounds[2]/2)} {round(window['at'][1]-offset[1]+bounds[1]+bounds[3]/2)}")
+        send('button 272 1');send('button 272 0')
+        return ctl('seat input-target',True).get('window',{}).get('address')==window['address']
+    wait(click_private_editor)
+    remote('-o');send('type nihao');time.sleep(.3)
+    subprocess.run(['grim','-o','human',str(BASE/'taken-over-desktop-candidates.png')],env=ENV,check=True)
+    send('key 57 1');send('key 57 0')
+    wait(lambda:(BASE/'private0.txt').read_text()=='你好')
+    assert destinations[0].read_text()=='你好中文'+'你好'*4
+    shell('ipc','desktop','observe','')
+    wait(lambda:ctl('seat input-target',True).get('seatName')=='Hyprland' and ctl('seat input-target',True).get('allowed'))
+    record('physical takeover uses the extra seat native Fcitx candidate and GTK input, without changing primary application text')
+    ime_page=BASE/'chrome-ime.html'
+    ime_page.write_text('<meta charset="utf-8"><textarea id="editor" autofocus style="font:20px sans-serif;width:80%;height:200px"></textarea><script>setInterval(()=>document.title="ChromeIme:"+editor.value,50)</script>')
+    chrome=start(['/opt/google/chrome/google-chrome','--user-data-dir='+str(BASE/'chrome-ime'),'--ozone-platform=wayland','--enable-wayland-ime','--wayland-text-input-version=3','--no-first-run','--no-default-browser-check',ime_page.as_uri()],'chrome-ime')
+    chrome_window=wait(lambda:next((c for c in ctl('clients',True) if c['title'].startswith('ChromeIme:')),None))
+    ok('dispatch hl.dsp.focus({window="address:'+chrome_window['address']+'"})')
+    remote('-o');send('type nihao');send('key 57 1');send('key 57 0')
+    wait(lambda:any(c['title'].startswith('ChromeIme:你好') for c in ctl('clients',True)))
+    shell('ipc','desktop','observe','private0')
+    wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['presentation'].get('active'))
+    shell('ipc','desktop','observe','')
+    ok('dispatch hl.dsp.focus({window="address:'+chrome_window['address']+'"})')
+    wait(lambda:ctl('seat input-target',True).get('allowed') and ctl('seat input-target',True).get('seatName')=='Hyprland')
+    remote('-o');send('type zhongwen');time.sleep(.3)
+    subprocess.run(['grim','-o','human',str(BASE/'chrome-returned-candidates.png')],env=ENV,check=True)
+    send('key 57 1');send('key 57 0')
+    wait(lambda:any(c['title'].startswith('ChromeIme:你好中文') for c in ctl('clients',True)))
+    chrome.terminate();chrome.wait(timeout=10)
+    wait(lambda:not any(c['pid']==chrome_window['pid'] for c in ctl('clients',True)))
+    record('real native Chrome editor composes Chinese before and after readonly desktop observation')
     remote('-c')
     ok('eval hl.monitor({output="human",mode="2560x1600",position="0x0",scale=2})')
     page=BASE/'chrome-scale.html'
