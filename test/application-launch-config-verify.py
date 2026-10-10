@@ -40,8 +40,11 @@ try:
     assert any(w['pid']==browser_window['pid'] for w in ctl('clients',True))
     configure(custom);assert tool(credential,'browser')['cdpUrl']==browser['cdpUrl']
     record('changing a live browser policy is rejected without closing its window; restoring settings reconnects')
-    state=cli('state','agent1')
-    ok('seat dispatch agent1 '+state['display']+' '+state['generation']+' hl.dsp.window.close({window="address:'+browser_window['address']+'"})')
+    cdp=Cdp(browser['cdpUrl'])
+    cdp.call('Browser.close');cdp.close()
+    # The window can disappear before the process exits. Policy changes apply
+    # after the actual browser exit, not merely after a surface is unmapped.
+    wait(lambda:not pathlib.Path('/proc',str(browser_window['pid'])).exists())
     wait(lambda:not any(w['pid']==browser_window['pid'] for w in ctl('clients',True)))
     # An executable unknown to Cornice's source can be selected as its browser.
     local=pathlib.Path(ENV['HOME'])/'.local/bin';local.mkdir(parents=True,exist_ok=True)
