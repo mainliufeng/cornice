@@ -12,4 +12,4 @@ Cornice 的普通 launcher/search 控件仍保留正常输入法功能。启动 
 
 Hyprvoice 是独立普通应用，原有人的语音快捷键保留。录音及最终插入校验真实应用目标、seat、上下文和权限，不回退到全局 activewindow。Cornice 不再接受语音编辑内置 prompt，也不配置识别模型或启动语音执行器。
 
-真实 GTK、Chrome 和普通 Cornice launcher 的中文输入由 `test/ime-session-verify.py` 覆盖。正常 Hyprvoice 应用目标校验由 `test/voice-seat-verify.py` 与 `test/voice-session-verify.py` 覆盖；其中私有 PipeWire 零音源和合成识别响应只验证应用生命周期与路由，不代表实体麦克风或识别准确率。
+真实 GTK、Chrome 和普通 Cornice launcher 的中文输入由 `test/ime-session-verify.py` 覆盖。通用 seat 语音目标校验入口保留在 `test/voice-seat-verify.py`。`test/voice-session-verify.py` 是旧 Cornice 专属语音路由的历史套件，依赖已移除的路由，不能作为当前版本验证通过的证据。旧套件中的私有 PipeWire 零音源和合成识别响应只验证应用生命周期与路由，不代表实体麦克风或识别准确率。
