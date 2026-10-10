@@ -21,8 +21,21 @@
 3. **Headless 验证需要嵌套合成器**：Hyprland 无 `--headless` 后端；用 `mutter --headless` 当父合成器 + `LIBSEAT_BACKEND=noop AQ_DRM_DEVICES=/dev/null` 强制走 Wayland 后端（否则它会打开真实 DRM 节点），再 `hyprctl output create headless` 生成输出。缺了 noop seat 时 Hyprland 会认为会话处于 inactive 而完全不提交帧。
 
 **原有 shell 范围（已确认）**：先做一个**通用**的 Hyprland shell——装得上、跑得稳、用得住。
-agent 桌面扩展在独立特性分支实现和验证，见 [agent 桌面对接设计](docs/agent-desktop-design.md)。
+独立桌面扩展在特性分支实现和验证，见 [外部 Harness 对接](docs/desktop-harness.md)。
 该扩展保存在特性分支；[当前实现与测试](docs/agent-desktop.md) 单独记录，不改变 main 的通用 shell 定位。
+
+
+### 独立桌面扩展（特性分支）
+
+Cornice 只提供桌面和工具，Codex、Pi 等外部 Harness 管理模型、任务输入、执行循环与历史。内置 Agent 执行器、模型配置、任务按钮/弹窗、提交快捷键及专属语音输入适配全部移除，普通应用 launcher、输入法和独立 Hyprvoice 功能保留。
+
+新会话默认只有两个桌面：主桌面与一个次桌面。Agent 原子占用空闲次桌面；已有任务占用时或明确需要新空桌面时，Agent 通过共享 MCP 按需创建。打开的应用不算任务占用，结束/断线释放租期但保留应用。主桌面功能一致，区别仅为默认关闭 Agent 控制权限且需要明确选择。
+
+桌面状态分别展示真实 `occupied`、`harness` 与 `activity`（空闲、运行、暂停、接管、锁定、不可用），不把有窗口或 seat 存在当作任务正在执行。Codex/Pi 插件用 STDIO MCP 和同一 skill 接入，桌面引用逐次传给工具，独立会话不能混用引用。
+
+主桌面显示正在被 Harness 占用的次桌面浮动缩略画面：只读，四帧每秒，可隐藏并从桌面菜单恢复；点击进入原生只读观察，接管是另一个明确动作。Bar 默认将选择与控制合为一组，配置 `grouped:false` 可拆分。全屏桌面仍由 Hyprland 原生合成，缩略图仅是主桌面的辅助观察。
+
+原生 `desktop_snapshot` 通过真实 AT-SPI 获取授权窗口的有界控件树，`desktop_action` 以新鲜引用执行 click/setText/focus。窗口映射不唯一或应用不支持无障碍时明确返回 unsupported；真实截图保留为视觉内容的观察工具。浏览器继续用 CDP/Playwright 元素树。所有读写都检查 seat、当前 Workspace、窗口身份、锁定和控制生命周期，接管/暂停后不能重放旧动作。
 
 ---
 

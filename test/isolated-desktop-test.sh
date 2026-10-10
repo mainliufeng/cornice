@@ -9,7 +9,7 @@ export CORNICE_TEST_HYPRLAND=${CORNICE_TEST_HYPRLAND:-$CORNICE_TEST_HYPRLAND_SOU
 [[ -x $CORNICE_TEST_HYPRLAND ]] || { echo 'Built fork missing' >&2; exit 1; }
 suite=${1:-desktop-recovery-verify.py}
 case "$suite" in
-  desktop-acquire-verify.py|generic-seat-controller-verify.py|desktop-harness-verify.py|agent-browser-model-verify.py|agent-model-verify.py|agent-product-verify.py|agent-task-ui-verify.py|desktop-switcher-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|voice-session-verify.py|layout-shortcuts-verify.py|seat-focus-lifecycle-verify.py|seat-action-routing-verify.py|seat-foreign-activation-verify.py) ;;
+  native-accessibility-response-verify.py|native-accessibility-verify.py|desktop-acquire-verify.py|generic-seat-controller-verify.py|desktop-harness-verify.py|agent-product-verify.py|desktop-switcher-verify.py|desktop-preview-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|voice-session-verify.py|layout-shortcuts-verify.py|seat-focus-lifecycle-verify.py|seat-action-routing-verify.py|seat-foreign-activation-verify.py) ;;
   *) echo 'Unknown isolated suite' >&2; exit 2 ;;
 esac
 product_mount=()
@@ -25,21 +25,16 @@ if [[ $suite == voice-session-verify.py ]]; then
   : "${CORNICE_TEST_VOICE_APP:?Set the built Hyprvoice application}"
   voice_mount=(--ro-bind "$CORNICE_TEST_VOICE_APP" /tmp/voice-app --setenv CORNICE_TEST_VOICE_APP /tmp/voice-app)
 fi
-network=()
-if [[ $suite == agent-model-verify.py || $suite == agent-browser-model-verify.py ]]; then
-  # Only this explicit real-provider suite shares networking; input, DRM card,
-  # compositor, bus, PID, HOME and configuration isolation stay intact.
-  : "${CORNICE_TEST_MODEL_CONFIG:?Private real model config required}"
-  export CORNICE_AGENT_CONFIG=$CORNICE_TEST_MODEL_CONFIG
-  network=(--share-net)
-fi
 artifacts=$(mktemp -d /tmp/cornice-agent-test.XXXXXX)
 mkdir -m700 "$artifacts/home"
+if [[ $suite == native-accessibility-verify.py ]]; then
+  c++ -std=c++20 -fPIC -pie "$prefix/test/native-accessibility-qt.cpp" $(pkg-config --cflags --libs Qt6Widgets) -o "$artifacts/native-accessibility-qt"
+fi
 echo "Isolated artifacts: $artifacts"
 # No host /dev/input, DRM card nodes, X11/Wayland sockets, systemd or system D-Bus.
 # Separate PID/network namespaces also isolate abstract sockets and cleanup.
 # Child processes cannot write to the real HOME, even through a legacy path.
-exec nice -n 15 bwrap --unshare-all "${network[@]}" --die-with-parent --new-session \
+exec nice -n 15 bwrap --unshare-all --die-with-parent --new-session \
   --ro-bind / / --dev /dev --proc /proc --tmpfs /run --tmpfs /tmp \
   --dir /dev/dri --dev-bind /dev/dri/renderD128 /dev/dri/renderD128 \
   --bind "$artifacts" /tmp/t "${product_mount[@]}" "${voice_mount[@]}" \

@@ -13,4 +13,3 @@ DesktopSwitcher 1.0 DesktopSwitcher.qml
 singleton DesktopSession 1.0 DesktopSession.qml
 DesktopMenu 1.0 DesktopMenu.qml
 DesktopControl 1.0 DesktopControl.qml
-DesktopTaskPrompt 1.0 DesktopTaskPrompt.qml

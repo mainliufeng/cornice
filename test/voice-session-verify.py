@@ -237,7 +237,7 @@ context.objects = [
     models.mkdir()
     for name in ('funasr-encoder-f16.gguf', 'qwen3-0.6b-q8_0.gguf', 'fsmn-vad.gguf'):
         (models / name).touch()
-    transcripts = ['只读切换保留的合成文字。', '提示框切换保留的合成文字。', '新录音自动输入的合成文字。', '界面按钮结束的合成文字。', '只读本地任务框语音。']
+    transcripts = ['只读切换保留的合成文字。', '新录音自动输入的合成文字。', '界面按钮结束的合成文字。']
     (RT / 'transcripts.json').write_text(json.dumps(transcripts, ensure_ascii=False))
     (RT / 'decode-count').write_text('0')
     worker = BASE / 'synthetic-asr-worker'
@@ -306,39 +306,19 @@ for line in sys.stdin:
     check('restoring the original Agent window shows the actual Input button without automatic insertion; a physical click explicitly rebinds fresh focus and inserts the retained result once')
 
     start_hold()
-    started = time.monotonic()
-    shell('ipc', 'desktop', 'prompt', 'agent1')
-    wait(lambda: json.loads(shell('ipc', 'desktop', 'status'))['prompt']['open'])
-    wait(lambda: not ctl('seat input-target', True)['allowed'])
     send('key 66 0')
-    retained = phase('ready', timeout=3)
-    measurements['promptStopAndRetainMs'] = round((time.monotonic() - started) * 1000, 2)
-    assert retained['raw'] == transcripts[1] and contents() == ['', transcripts[0]], (retained, contents())
-    assert not (BASE / 'f8-release.json').exists(), 'prompt route unexpectedly ran the Agent F8 release binding'
-    photo('native-agent-prompt-retained')
-    command('cancel')
-    send('key 1 1'); send('key 1 0')
-    wait(lambda: not json.loads(shell('ipc', 'desktop', 'status'))['prompt']['open'])
-    phase('idle')
-    ctl('seat present-control ' + OWNER + ' no', True)
-    ctl('seat present-control ' + OWNER + ' yes', True)
-    click_entry()
-    check('actual primary Agent prompt focus also stops held-F8 recording and retains its result without writing to the prompt, human app or Agent app')
-
-    start_hold()
-    send('key 66 0')
-    wait(lambda: contents() == ['', transcripts[0] + transcripts[2]])
+    wait(lambda: contents() == ['', transcripts[0] + transcripts[1]])
     phase('idle')
     check('fresh genuine Agent F8 press-and-release follows real audio capture, production App finalization and automatic seat-scoped paste')
 
     start_hold()
     click_overlay_button('结束录音', 'physical-overlay-stop-button.json')
-    wait(lambda: contents() == ['', transcripts[0] + transcripts[2] + transcripts[3]], timeout=4)
+    wait(lambda: contents() == ['', transcripts[0] + transcripts[1] + transcripts[2]], timeout=4)
     send('key 66 0')
     phase('idle')
     check('a physical primary-seat pointer click on the actual Hyprvoice overlay stop button reaches the production App above the native Agent desktop and inserts only into its focused Agent input')
     photo('native-agent-final-input')
-    assert int((RT / 'decode-count').read_text()) == 4
+    assert int((RT / 'decode-count').read_text()) == 3
     # The broker owns this presentation, so readonly managed callbacks carry
     # the same real viewer context as the deployed desktop switcher.
     ctl('seat unpresent ' + OWNER)
@@ -346,24 +326,11 @@ for line in sys.stdin:
     wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['presentation'].get('active'))
     send('key 66 1');send('key 66 0')
     wait(lambda:state()['error']!='' and not state()['busy'])
-    assert not state()['busy'] and contents()==['',transcripts[0]+transcripts[2]+transcripts[3]]
+    assert not state()['busy'] and contents()==['',transcripts[0]+transcripts[1]+transcripts[2]]
     bounds=wait(layer);time.sleep(.15)
     photo('readonly-no-editor-voice-error')
     check('F8 without a local editor shows a registered native refusal overlay and does not record or write to an observed application')
     command('cancel')
-    shell('ipc','desktop','prompt','agent1')
-    def prompt(): return json.loads(shell('ipc','desktop','promptDraft'))
-    wait(lambda:prompt()['focused'])
-    wait(lambda:ctl('seat input-target-v2',True).get('kind')=='local-editor')
-    assert not ctl('seat input-target',True)['allowed']
-    start_hold();photo('readonly-prompt-voice-recording')
-    send('key 66 0')
-    wait(lambda:prompt()['text']==transcripts[4],timeout=8)
-    phase('idle')
-    assert contents()==['',transcripts[0]+transcripts[2]+transcripts[3]]
-    photo('readonly-prompt-voice-inserted')
-    check('readonly prompt F8 reaches real audio capture, painted recording UI and production native editor paste; every application remains unchanged')
-    assert int((RT / 'decode-count').read_text()) == 5
     result = {'checks': checks, 'measurements': measurements, 'contents': contents(), 'realProductionApp': True, 'realPipeWire': True,
               'syntheticZeroAudio': True, 'syntheticTestAsr': True, 'realMicrophoneOrAsrAccuracyTested': False}
     (BASE / 'voice-session-result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))

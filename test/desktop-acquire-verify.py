@@ -2,6 +2,7 @@
 from desktop_harness import *
 from urllib.parse import quote
 import re
+ENV.pop("NO_AT_BRIDGE",None)
 
 class MCP:
  def __init__(self,label,without_session=False):
@@ -33,11 +34,17 @@ class MCP:
 
 try:
  broker=initialize()
+ defaults=cli('list')['desktops']
+ assert len(defaults)==2 and {d['number'] for d in defaults}=={1,2},defaults
+ initial=next(d for d in defaults if not d['primary'])
+ assert initial['name']=='desktop2' and initial['paused'] and not initial['occupied'] and initial['activity']=='idle'
+ assert cli('windows','desktop2')['windows']==[]
+ record('fresh session initializes exactly primary plus one empty secondary; no extra agent desktops are preallocated')
  start(['/usr/bin/python3',ROOT/'test/agent-desktop-client.py','human-window',BASE/'human.txt'],'human')
  wait(lambda:len(ctl('clients',True))==1);baseline=human_state()
- cli('create','idle','--virtual-output','1280x800');cli('create','disabled','--virtual-output','1280x800');cli('allow-agent','disabled','off')
+ cli('create','disabled','--virtual-output','1280x800');cli('allow-agent','disabled','off')
  a=MCP('codex-like',True);b=MCP('pi-like')
- tools=a.request('tools/list',{})['tools'];assert len(tools)==24
+ tools=a.request('tools/list',{})['tools'];assert len(tools)==26
  assert 'desktop_acquire' in {x['name'] for x in tools}
  assert 'desktop_acquire first' in str(a.call('desktop_state',success=False))
  assert 'disabled' in str(a.call('desktop_acquire',{'preferredDesktop':'main'},False))
@@ -49,13 +56,16 @@ try:
  first=a.receive(ia);second=b.receive(ib)
  assert not first.get('isError') and not second.get('isError'),(first,second)
  first=first['structuredContent'];second=second['structuredContent']
- assert first['name']=='idle' and not first['created']
- assert second['name']!='idle' and second['created'] and not second['primary']
+ assert first['name']=='desktop2' and not first['created']
+ assert second['name']!='desktop2' and second['created'] and not second['primary']
  assert first['pixelSize']==second['pixelSize']==[1280,800]
+ assert first['harness']=='codex' and second['harness']=='pi'
+ assert first['occupied'] and second['occupied'] and first['activity']==second['activity']=='running'
+ assert next(d for d in cli('list')['desktops'] if d['name']==first['name'])['harness']=='codex'
  assert human_state()==baseline and cli('state','disabled')['paused']
  assert not any(key in first for key in ('token','socket'))
  record('simultaneous independent harnesses atomically reuse an idle seat and create a fresh private desktop; GUI-app endpoint works without compositor environment')
- third=a.details('desktop_acquire',{'preferredDesktop':'idle'})
+ third=a.details('desktop_acquire',{'preferredDesktop':'desktop2'})
  assert third['created'] and third['name'] not in (first['name'],second['name'])
  record('an occupied requested desktop creates a new desktop; two tasks in one MCP process retain distinct references')
  for client,state,text in ((a,first,'甲桌面'),(b,second,'乙桌面'),(a,third,'丙桌面')):
@@ -68,6 +78,30 @@ try:
   client.call('desktop_input',{'desktop':ref,'frameId':frame['frameId'],'action':'text','text':text})
   wait(lambda:path.exists() and path.read_text()==text)
  assert human_state()==baseline
+ # Real native trees are exposed through the same MCP and retain task scope.
+ def nodes(tree):
+  yield tree
+  for child in tree.get('children',[]):yield from nodes(child)
+ tree=a.details('desktop_snapshot',{'desktop':first['desktop']})
+ assert tree['source']=='atspi' and tree['nodeCount']>2,tree
+ entry=next(n for n in nodes(tree['tree']) if 'editable' in n.get('states',[]))
+ action={'snapshotId':tree['snapshotId'],'elementRef':entry['elementRef'],'action':'setText','text':'MCP 原生元素输入'}
+ assert a.call('desktop_action',{'desktop':first['desktop'],**{k:v for k,v in action.items() if k!='text'}},False)['isError']
+ assert b.call('desktop_action',{'desktop':second['desktop'],**action},False)['isError']
+ a.call('desktop_action',{'desktop':first['desktop'],**action})
+ wait(lambda:(BASE/(first['name']+'.txt')).read_text()=='MCP 原生元素输入')
+ assert a.call('desktop_action',{'desktop':first['desktop'],**action},False)['isError']
+ tree=a.details('desktop_snapshot',{'desktop':first['desktop']})
+ button=next(n for n in nodes(tree['tree']) if n.get('name')=='Record a click')
+ a.call('desktop_action',{'desktop':first['desktop'],'snapshotId':tree['snapshotId'],'elementRef':button['elementRef'],'action':'click'})
+ wait(lambda:(BASE/(first['name']+'.click')).exists())
+ stale=a.details('desktop_snapshot',{'desktop':first['desktop']})
+ staleEntry=next(n for n in nodes(stale['tree']) if 'editable' in n.get('states',[]))
+ a.call('desktop_workspace',{'desktop':first['desktop'],'slot':2})
+ assert a.call('desktop_action',{'desktop':first['desktop'],'snapshotId':stale['snapshotId'],'elementRef':staleEntry['elementRef'],'action':'setText','text':'wrong workspace'},False)['isError']
+ a.call('desktop_workspace',{'desktop':first['desktop'],'slot':1})
+ assert human_state()==baseline
+ record('real native AT-SPI tree, Unicode setText and click work through MCP; cross-task, mutated and workspace-stale references fail closed')
  assert 'desktop_acquire first' in str(a.call('desktop_capture',success=False))
  assert 'desktop_acquire first' in str(a.call('desktop_capture',{'desktop':second['desktop']},False))
  record('real GTK Unicode input is isolated across all references, and missing or foreign references never fall back')

@@ -1,3 +1,5 @@
+> 历史架构/验收记录：内置任务 prompt 与专属语音适配现已移除；当前产品接口以 desktop-harness.md、agent-desktop-product.md 为准。这里的旧 prompt 验证不属于现行功能。
+
 # Hyprland 通用多 seat 接口与 Cornice 解耦设计
 
 状态：已在独立特性分支实现，2026-10-09；实现契约、验证记录和剩余上游检查见 [交付记录](hyprland-generic-seat-integration-validation.md)。这些接口是本分支新增能力，不表示官方上游已提供。当前会话未替换，未合 main。

@@ -45,15 +45,9 @@ PanelFrame {
           }
         }
       }
-      Text { text: "创建桌面（先创建 seats，再启动 GTK 应用）"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
-      Row {
-        spacing: Style.space(1)
-        TextField { id: name; width: 155; placeholder: "名称，如 writer" }
-        TextField { id: workspace; width: 140; placeholder: "工作区（留空自动）" }
-        TextField { id: output; width: 150; placeholder: "输出，如 eDP-1" }
-        PanelButton { label: "创建"; enabled: !!root.service && root.service.available && !root.service.busy && name.text !== "" && output.text !== ""; onClicked: root.service.operate(["create", name.text, "--output", output.text].concat(workspace.text ? ["--workspace", workspace.text] : [])) }
-      }
-      Text { width: parent.width; wrapMode: Text.Wrap; text: "主桌面默认禁止 Agent 控制。其他桌面默认允许，但仍需启用控制并分配给执行器。关闭权限立即撤销控制；删除桌面会保留共享窗口。"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
+      PanelButton { label: "恢复浮动预览"; enabled: !!root.service; onClicked: root.service.restorePreviews() }
+      Text { text: "额外桌面由 Agent 按需创建"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
+      Text { width: parent.width; wrapMode: Text.Wrap; text: "主桌面默认禁止 Agent 控制。其他桌面默认允许，但由外部 Harness 自动占用。关闭权限立即撤销控制；删除桌面会保留共享窗口。"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
     }
   }
   ShellIpc {

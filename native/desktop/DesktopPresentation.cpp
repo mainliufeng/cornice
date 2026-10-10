@@ -116,3 +116,109 @@ void DesktopPresentation::refreshStatus() {
     m_refresh = true;
     request();
 }
+
+#include <QFile>
+#include <QJsonArray>
+#include <QPainter>
+
+DesktopThumbnail::DesktopThumbnail(QQuickItem *parent) : QQuickPaintedItem(parent) {
+    setAcceptedMouseButtons(Qt::NoButton);
+    connect(this, &DesktopThumbnail::targetChanged, this, &DesktopThumbnail::reset);
+    connect(&m_socket, &QLocalSocket::connected, this, &DesktopThumbnail::request);
+    connect(&m_socket, &QLocalSocket::errorOccurred, this, [this] { unavailable(m_socket.errorString()); });
+    connect(&m_socket, &QLocalSocket::readyRead, this, [this] {
+        m_input += m_socket.readAll();
+        if (m_input.size() > 1024 * 1024) {
+            unavailable("Preview response too large");
+            return;
+        }
+        while (m_input.contains('\n')) {
+            const auto line = m_input.left(m_input.indexOf('\n'));
+            m_input.remove(0, line.size() + 1);
+            const auto reply = QJsonDocument::fromJson(line).object();
+            // Unsolicited lock invalidation has no request ID. Drop cached
+            // pixels immediately and discard any in-flight frame on this socket.
+            if (reply["event"].toString() == "frame-invalidated") {
+                ++m_invalidations;
+                unavailable(reply["reason"].toString());
+                return;
+            }
+            if (reply["id"].toString() != m_id) continue;
+            m_pending = false;
+            m_timeout.stop();
+            if (!reply["ok"].toBool()) {
+                unavailable(reply["error"].toString());
+                return;
+            }
+            const auto frame = reply["result"].toObject();
+            const auto size = frame["pixelSize"].toArray();
+            const int width = size.size() > 0 ? size[0].toInt() : 0, height = size.size() > 1 ? size[1].toInt() : 0;
+            const auto path = frame["buffer"].toString();
+            if (width <= 0 || height <= 0 || width > 16384 || height > 16384 || path.isEmpty()) {
+                unavailable("Invalid preview frame");
+                return;
+            }
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly)) { unavailable("Cannot read preview frame"); return; }
+            const auto bytes = file.readAll();
+            if (bytes.size() != qint64(width) * height * 4) { unavailable("Incomplete preview frame"); return; }
+            const QImage source(reinterpret_cast<const uchar *>(bytes.constData()), width, height, width * 4, QImage::Format_ARGB32);
+            // Store only a thumbnail; the Broker's owner-scoped raw buffer is reused.
+            m_image = source.scaled(640, 400, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            m_error.clear();
+            ++m_frameCount;
+            emit statusChanged();
+            update();
+        }
+    });
+    m_poll.setInterval(250);
+    connect(&m_poll, &QTimer::timeout, this, &DesktopThumbnail::request);
+    m_timeout.setSingleShot(true);
+    m_timeout.setInterval(3000);
+    connect(&m_timeout, &QTimer::timeout, this, [this] { unavailable("Preview unavailable"); });
+}
+void DesktopThumbnail::paint(QPainter *painter) {
+    if (m_image.isNull()) return;
+    const auto size = m_image.size().scaled(boundingRect().size().toSize(), Qt::KeepAspectRatio);
+    const QRectF target((width() - size.width()) / 2, (height() - size.height()) / 2, size.width(), size.height());
+    painter->setRenderHint(QPainter::SmoothPixmapTransform);
+    painter->drawImage(target, m_image);
+}
+void DesktopThumbnail::unavailable(const QString &error) {
+    m_pending = false;
+    m_timeout.stop();
+    m_socket.abort();
+    m_input.clear();
+    m_id.clear();
+    m_image = {};
+    m_error = error;
+    emit statusChanged();
+    update();
+}
+void DesktopThumbnail::reset() {
+    m_poll.stop();
+    m_timeout.stop();
+    m_socket.abort();
+    m_pending = false;
+    m_input.clear();
+    m_image = {};
+    m_error.clear();
+    update();
+    emit statusChanged();
+    if (!m_active || m_desktop.isEmpty() || m_socketPath.isEmpty()) return;
+    m_socket.connectToServer(m_socketPath);
+    m_poll.start();
+}
+void DesktopThumbnail::request() {
+    if (!m_active || m_pending) return;
+    if (m_socket.state() == QLocalSocket::UnconnectedState) {
+        m_socket.connectToServer(m_socketPath);
+        return;
+    }
+    if (m_socket.state() != QLocalSocket::ConnectedState) return;
+    m_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QJsonObject request{{"id",m_id},{"method","frame"},{"params",QJsonObject{{"name",m_desktop},{"workspace","current"}}}};
+    m_pending = true;
+    m_timeout.start();
+    m_socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
+}

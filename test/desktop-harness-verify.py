@@ -4,11 +4,11 @@ from urllib.parse import quote
 
 class MCP:
  def __init__(self, binding=None, title='mcp'):
-  env=dict(ENV)
+  env=dict(ENV,CORNICE_HARNESS='codex')
   if binding: env['CORNICE_MCP_BINDING']=str(binding)
   self.p=subprocess.Popen([str(PRODUCT/'bin/cornice-desktop-mcp')],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=open(BASE/(title+'.log'),'w'),text=True,start_new_session=True)
   PROCESSES.append(self.p);self.number=0
-  self.request('initialize',{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'cornice-integration','version':'1'}})
+  self.info=self.request('initialize',{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'cornice-integration','version':'1'}})
   self.p.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');self.p.stdin.flush()
  def request(self,method,params):
   self.number+=1
@@ -37,35 +37,40 @@ try:
  assert 'disabled' in cli('resume','main',succeeds=False)
  assert 'disabled' in cli('bind','main',BASE/'forbidden.binding',succeeds=False)
  record('desktop 1 is the real primary seat, Agent permission defaults off and cannot be bound')
- for name in ('agent1','agent2'):
-  cli('create',name,'--virtual-output','1280x800');cli('resume',name)
- assert [d['number'] for d in cli('list')['desktops']]==[1,2,3]
+ defaults=cli('list')['desktops']
+ assert len(defaults)==2 and defaults[1]['name']=='desktop2' and defaults[1]['number']==2
+ assert not defaults[1]['occupied'] and defaults[1]['activity']=='idle' and defaults[1]['harness']==''
+ cli('create','agent2','--virtual-output','1280x800')
+ for name in ('desktop2','agent2'):cli('resume',name)
+ assert sorted(d['number'] for d in cli('list')['desktops'])==[1,2,3]
  start(['/usr/bin/python3',ROOT/'test/agent-desktop-client.py','human-window',BASE/'human.txt'],'human')
- for name in ('agent1','agent2'):
+ for name in ('desktop2','agent2'):
   cli('launch',name,'--','/usr/bin/python3',ROOT/'test/agent-desktop-client.py',name+'-window',BASE/(name+'.txt'))
  wait(lambda:len(ctl('clients',True))==3)
  ok('dispatch hl.dsp.focus({window="title:^human-window$"})')
  baseline=human_state()
  no_assignment=MCP(title='unassigned')
+ assert no_assignment.info['serverInfo']['version']=='0.3.0'
  tools=no_assignment.request('tools/list',{})['tools'];names={t['name'] for t in tools}
- assert len(names)==24 and {'desktop_state','desktop_browser_connect','browser_snapshot'} <= names
+ assert len(names)==26 and {'desktop_state','desktop_browser_connect','browser_snapshot','desktop_snapshot','desktop_action'} <= names
  assert not any(name in names for name in ('browser_evaluate','browser_file_upload','browser_run_code_unsafe','desktop_resume','desktop_bind'))
  assert 'Call desktop_acquire first' in str(no_assignment.call('desktop_state',success=False))
  no_assignment.close()
- record('real MCP lists 24 bounded tools and never falls back to any desktop when unassigned')
- assignment=cli('attach','agent1','codex')['bindingFile']
+ record('real MCP lists 26 bounded tools and never falls back to any desktop when unassigned')
+ assignment=cli('attach','desktop2','codex')['bindingFile']
  mcp=MCP(assignment,title='assigned')
- state=mcp.details('desktop_state');assert state['name']=='agent1' and state['number']==2
+ state=mcp.details('desktop_state');assert state['name']=='desktop2' and state['number']==2
+ assert state['occupied'] and state['harness']=='codex' and state['activity']=='running'
  captured=mcp.call('desktop_capture');frame=captured['structuredContent']
  image=next(c for c in captured['content'] if c['type']=='image')
  assert image['mimeType']=='image/jpeg' and base64.b64decode(image['data'])[:2]==b'\xff\xd8'
  assert 'imageBase64' not in frame and frame['pixelSize']==[1280,800]
  mcp.details('desktop_input',{'frameId':frame['frameId'],'action':'text','text':'MCP 中文输入'})
- wait(lambda:(BASE/'agent1.txt').read_text()=='MCP 中文输入')
+ wait(lambda:(BASE/'desktop2.txt').read_text()=='MCP 中文输入')
  assert human_state()==baseline
  other=MCP(assignment,title='competing')
  assert 'Another harness' in str(other.call('desktop_state',success=False));other.close()
- assert mcp.details('desktop_state')['name']=='agent1'
+ assert mcp.details('desktop_state')['name']=='desktop2'
  record('standard MCP image/metadata and Unicode input operate only desktop 2; competing harness rejected')
  mcp.details('desktop_workspace',{'slot':2})
  assert mcp.details('desktop_state')['workspace'].endswith('-ws-2') and human_state()==baseline
@@ -88,10 +93,10 @@ try:
  assert not any(c.get('type')=='image' for c in snapshot['content'])
  assert human_state()==baseline
  record('the same MCP proxies real authorized browser trees, form input and click with no screenshot')
- cli('allow-agent','agent1','off')
+ cli('allow-agent','desktop2','off')
  assert mcp.call('browser_snapshot',success=False)['isError']
  assert mcp.call('desktop_capture',success=False)['isError']
- assert cli('state','agent1')['agentAllowed'] is False
+ assert cli('state','desktop2')['agentAllowed'] is False
  mcp.close()
  cli('allow-agent','main','on')
  main_binding=cli('attach','main','codex')['bindingFile']
@@ -164,7 +169,7 @@ try:
  restarted=start([str(PRODUCT/'bin/cornice'),'desktop','serve'],'desktop-restarted')
  wait(lambda:subprocess.run([str(PRODUCT/'bin/cornice'),'desktop','doctor'],env=ENV,capture_output=True).returncode==0)
  assert cli('state','main')['agentAllowed'] is False
- assert cli('state','agent1')['agentAllowed'] is False
+ assert cli('state','desktop2')['agentAllowed'] is False
  record('Broker restart resets primary permission off and preserves secondary permission choices')
  print('PASS unified desktop MCP integration',flush=True)
 finally:

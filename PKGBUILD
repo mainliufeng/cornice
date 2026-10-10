@@ -29,8 +29,9 @@ license=('MIT')
 # they are hard dependencies, not optional ones.
 depends=('quickshell' 'hyprland' 'jq' 'glib2' 'curl' 'util-linux')
 optdepends=(
-  'nodejs: Agent execution and structured browser tools'
-  'npm: install locked optional Agent browser dependencies'
+  'at-spi2-core: native application accessibility trees'
+  'nodejs: external harness MCP and structured browser tools'
+  'npm: install locked optional desktop browser dependencies'
   'socat: CLI talks to the shell over its own socket (needed for runtime plugins)'
   'grim: screenshots for `cornice verify`'
   'wireplumber: volume/microphone panels'

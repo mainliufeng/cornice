@@ -112,6 +112,13 @@ Broker::Broker(QString instance)
     main.primary = true; main.number = 1; main.agentAllowed = false;
     main.configurationOwner = uuid() + uuid();
     pause("main");
+    // A fresh session provides exactly one task-ready secondary desktop. Reuse
+    // recovered desktops, including ones explicitly created by external tasks.
+    if (m_desktops.size() == 1) {
+        const auto size = primary["pixelSize"].toArray();
+        perform("create", {{"name", "desktop2"}, {"virtual-output",
+            QString("%1x%2").arg(size.at(0).toInt()).arg(size.at(1).toInt())}}, nullptr, nullptr);
+    }
     m_configurationHeartbeat.start();
     connect(&m_watchdog, &QTimer::timeout, this, [this] {
         if (m_configurationHeartbeat.elapsed() >= 1000) {
@@ -220,6 +227,20 @@ QJsonObject Broker::state(const QString &name) {
     }
     result["controlMode"] = human || (primary && result["paused"].toBool()) ? "human" : result["paused"].toBool() ? "paused" : "agent";
     result["agentPaused"] = human || result["paused"].toBool();
+    QString harness;
+    bool occupied = false;
+    for (const auto &lease : m_acquisitions) if (lease["name"].toString() == name) {
+        occupied = true; harness = lease["harness"].toString(); break;
+    }
+    if (!occupied) for (const auto &binding : m_bindings)
+        if (binding.name == name && !binding.controller.isEmpty() && binding.heartbeat.isValid() &&
+            binding.heartbeat.elapsed() <= 5000) { occupied = true; harness = binding.harness; break; }
+    result["harness"] = harness;
+    result["occupied"] = occupied;
+    const bool locked = result["humanLocked"].toBool() &&
+        !(result["lockScope"].toString() == "human" && result["humanLockPolicy"].toString() == "continue");
+    result["activity"] = locked ? "locked" : !result["available"].toBool() ? "unavailable" : human ? "takeover" :
+        !occupied ? "idle" : result["agentPaused"].toBool() ? "paused" : "running";
     QJsonArray workspaceSlots;
     const auto workspace = result["workspace"].toString().remove("name:");
     for (int i = 1; i <= 10; ++i) {
@@ -385,10 +406,18 @@ void Broker::listen() {
                     const auto line = input->left(input->indexOf('\n'));
                     input->remove(0, line.size() + 1);
                     QJsonObject reply;
+                    QString requestId;
                     try {
-                        reply = handle(json(line).object(), socket);
+                        const auto request = json(line).object();
+                        requestId = request["id"].toString();
+                        const auto method = request["method"].toString();
+                        if (method == "desktop.snapshot" || method == "desktop.action") {
+                            handleNative(request, socket);
+                            continue;
+                        }
+                        reply = handle(request, socket);
                     } catch (const std::exception &error) {
-                        reply = {{"ok", false}, {"error", QString::fromUtf8(error.what())}};
+                        reply = {{"ok", false}, {"id", requestId}, {"error", QString::fromUtf8(error.what())}};
                     }
                     socket->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
                 }
@@ -399,7 +428,6 @@ void Broker::listen() {
                 if (m_presentations.contains(socket)) compositor("seat unpresent " + m_presentations.take(socket));
                 if (m_buffers.contains(socket))
                     QFile::remove(m_buffers.take(socket));
-                m_localVoiceClients.remove(socket);
                 releaseAcquisition(socket);
                 delete input;
                 socket->deleteLater();
@@ -417,6 +445,13 @@ void Broker::revokeBindings(const QString &name) {
             m_requestHashes.remove(done.key());
             done = m_completed.erase(done);
         }
+        // Retire a native helper immediately, before its next event-loop turn.
+        // The eventual completion will discard results and will not restore history.
+        if (auto process = m_nativeJobs.value(it.key())) {
+            process->setProperty("corniceCancelReason", "Native task binding revoked or changed");
+            process->kill();
+        }
+        m_accessibility.invalidate(it->snapshotId);
         it = m_bindings.erase(it);
     }
 }
@@ -426,6 +461,7 @@ void Broker::releaseAcquisition(QLocalSocket *owner) {
     const auto lease = m_acquisitions.take(owner);
     const auto token = lease["token"].toString();
     if (!m_bindings.contains(token)) return;
+    m_accessibility.invalidate(m_bindings[token].snapshotId);
     m_bindings.remove(token);
     try {
         const auto actual = state(lease["name"].toString());
@@ -438,6 +474,8 @@ QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owne
     if (m_acquisitions.contains(owner)) return m_acquisitions[owner];
     const auto controller = params["controller"].toString();
     if (!QRegularExpression("^[A-Za-z0-9_-]{1,64}$").match(controller).hasMatch()) fail("Invalid controller identity");
+    const auto harness = params["harness"].toString("external");
+    if (!QRegularExpression("^[A-Za-z0-9_.-]{1,64}$").match(harness).hasMatch()) fail("Invalid harness identity");
     if (state("main")["humanLocked"].toBool()) fail("Unlock session before acquiring a desktop");
     const auto preferred = params["preferredDesktop"].toString();
     if (!preferred.isEmpty()) {
@@ -482,8 +520,10 @@ QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owne
         auto lease = perform("bind", {{"name", name}}, nullptr, owner);
         auto &binding = m_bindings[lease["token"].toString()];
         binding.controller = controller;
+        binding.harness = harness;
         binding.heartbeat.start();
         lease["created"] = created;
+        lease["harness"] = harness;
         m_acquisitions[owner] = lease;
         return lease;
     } catch (...) {
@@ -497,16 +537,6 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
     if (id.isEmpty() || id.size() > 128)
         fail("Request ID required");
     const auto method = request["method"].toString();
-    if (method == "register-local-voice") {
-        if (!request["token"].toString().isEmpty() || !owner) fail("Local service connection required");
-        struct ucred peer{}; socklen_t size = sizeof(peer);
-        if (getsockopt(owner->socketDescriptor(), SOL_SOCKET, SO_PEERCRED, &peer, &size) || peer.uid != getuid() || peer.pid <= 0)
-            fail("Local service identity unavailable");
-        m_localVoiceClients[owner] = peer.pid;
-        for (const auto &[name, desktop] : m_desktops) configureDesktop(name);
-        return {{"ok", true}, {"registered", true}};
-    }
-
     if (method == "acquire-desktop") {
         if (!request["token"].toString().isEmpty() || !owner) fail("Local allocation connection required");
         return {{"ok", true}, {"id", id}, {"result", acquireDesktop(request["params"].toObject(), owner)}};
@@ -514,7 +544,7 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
 
     const auto token = request["token"].toString();
     const bool writing = method == "desktop.input" || method == "desktop.workspace" || method == "desktop.focus" ||
-                         method == "desktop.launch" || method == "desktop.browser";
+                         method == "desktop.launch" || method == "desktop.browser" || method == "desktop.action";
     const bool releasing = method == "desktop.release";
     const auto key = token + ":" + id;
     const auto fingerprint =
@@ -535,6 +565,11 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
             if (!QRegularExpression("^[A-Za-z0-9_-]{1,64}$").match(controller).hasMatch()) fail("Invalid controller identity");
             if (!binding->controller.isEmpty() && binding->controller != controller) fail("Another harness owns this desktop binding");
             binding->controller = controller;
+            if (binding->harness.isEmpty()) {
+                const auto harness = request["harness"].toString("external");
+                if (!QRegularExpression("^[A-Za-z0-9_.-]{1,64}$").match(harness).hasMatch()) fail("Invalid harness identity");
+                binding->harness = harness;
+            }
             binding->heartbeat.restart();
         } else if ((writing || releasing) && !binding->controller.isEmpty()) fail("Another harness owns this desktop binding");
         if (writing && (!managed(binding->name).agentAllowed || actual["agentPaused"].toBool() ||
@@ -571,6 +606,145 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
         m_requestHashes[key] = fingerprint;
     }
     return reply;
+}
+
+// Accessibility calls may wait on an application's event loop. Never run them
+// synchronously on the broker event loop: presentation and input ownership must
+// keep receiving heartbeats while an unrelated window is slow.
+void Broker::handleNative(const QJsonObject &request, QLocalSocket *owner) {
+    const auto token = request["token"].toString();
+    const auto id = request["id"].toString();
+    const auto method = request["method"].toString();
+    const bool writing = method == "desktop.action";
+    const auto key = token + ":" + id;
+    const auto fingerprint = QCryptographicHash::hash(QJsonDocument(request).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
+    // Reuse the normal credential/controller/generation validation and heartbeat
+    // path; this read does not enter mutation retry history.
+    auto validationRequest = request;
+    validationRequest["method"] = "desktop.state";
+    const auto validated = handle(validationRequest, owner);
+    if (!validated["ok"].toBool()) fail(validated["error"].toString());
+    const auto actual = validated["result"].toObject();
+    auto &binding = m_bindings[token];
+    const auto name = binding.name;
+    const auto params = request["params"].toObject();
+    const bool blocked = actual["humanLocked"].toBool() &&
+        !(actual["lockScope"].toString() == "human" && actual["humanLockPolicy"].toString() == "continue");
+    if (!managed(name).agentAllowed || actual["agentPaused"].toBool() || !actual["available"].toBool() || blocked)
+        fail("Native accessibility requires active desktop control");
+    if (writing && request["controller"].toString().isEmpty() && !binding.controller.isEmpty())
+        fail("Another harness owns this desktop binding");
+    if (writing && m_completed.contains(key)) {
+        if (m_requestHashes[key] != fingerprint) fail("Request ID reused for different action");
+        owner->write(QJsonDocument(m_completed[key]).toJson(QJsonDocument::Compact) + '\n');
+        return;
+    }
+    if (writing && m_pendingNativeHashes.contains(key)) {
+        if (m_pendingNativeHashes[key] != fingerprint) fail("Request ID reused for different action");
+        fail("Native action is still in progress; outcome is uncertain, do not duplicate the action");
+    }
+    if (writing && m_completed.size() >= 4096) fail("Request history full; obtain a new binding after resynchronization");
+    if (m_nativeJobs.contains(token)) fail("Another native request is in progress for this task; wait for it to finish");
+    if (m_nativeJobs.size() >= 8) fail("Native accessibility request limit reached; retry after an existing request finishes");
+    auto targetId = params["windowId"].toString(actual["windowId"].toString());
+    QString targetAddress;
+    if (writing) {
+        if (params["snapshotId"].toString().isEmpty() || params["snapshotId"].toString() != binding.snapshotId)
+            fail("Native snapshot expired or belongs to another task; request a fresh tree");
+        for (const QString field : {"seatId", "generation", "workspace", "viewEpoch", "lockEpoch"})
+            if (binding.snapshotState[field] != actual[field]) fail("Native desktop changed; request a fresh tree");
+        targetAddress = m_accessibility.elementWindow(binding.snapshotId, params["elementRef"].toString())["address"].toString();
+        if (params["action"].toString() == "setText" && !params["text"].isString())
+            fail("Native setText requires explicit text, including an explicit empty string to clear");
+    }
+    QJsonObject member;
+    for (const auto &value : json(compositor("seat windows " + name, true)).array()) {
+        const auto window = value.toObject();
+        if (writing ? window["address"].toString() == targetAddress : window["id"].toString() == targetId) member = window;
+    }
+    if (member.isEmpty()) fail("Native window is outside this desktop's current workspace");
+    const auto all = json(compositor("clients", true)).array();
+    QJsonObject window;
+    for (const auto &value : all) if (value.toObject()["address"] == member["address"]) window = value.toObject();
+    if (window.isEmpty()) fail("Native window disappeared; observe again");
+    if (!writing) {
+        m_accessibility.invalidate(binding.snapshotId);
+        binding.snapshotId = uuid();
+        binding.snapshotState = actual;
+    }
+    const auto scope = binding.snapshotId;
+    const auto controller = binding.controller;
+    QPointer<QLocalSocket> weakOwner(owner);
+    auto currentError = [this, token, name, actual, scope, controller, member, weakOwner]() -> QString {
+        if (!weakOwner || weakOwner->state() != QLocalSocket::ConnectedState) return "Native request owner disconnected";
+        const auto currentBinding = m_bindings.constFind(token);
+        if (currentBinding == m_bindings.cend() || currentBinding->name != name || currentBinding->snapshotId != scope || currentBinding->controller != controller)
+            return "Native task binding revoked or changed";
+        if (!m_desktops.contains(name) || !managed(name).agentAllowed) return "Native desktop permission revoked";
+        const auto fresh = state(name);
+        const bool locked = fresh["humanLocked"].toBool() &&
+            !(fresh["lockScope"].toString() == "human" && fresh["humanLockPolicy"].toString() == "continue");
+        if (fresh["agentPaused"].toBool() || !fresh["available"].toBool() || locked) return "Native desktop control interrupted";
+        for (const QString field : {"seatId", "generation", "workspace", "viewEpoch", "lockEpoch"})
+            if (actual[field] != fresh[field]) return "Native desktop identity/view changed";
+        bool stillPresent = false;
+        for (const auto &value : json(compositor("seat windows " + name, true)).array()) {
+            const auto candidate = value.toObject();
+            stillPresent |= candidate["id"] == member["id"] && candidate["address"] == member["address"];
+        }
+        return stillPresent ? QString{} : QString("Native window left the authorized workspace");
+    };
+    auto complete = [this, token, id, key, fingerprint, writing, scope, controller, member, weakOwner, currentError](QJsonObject result, QString error) {
+        m_nativeJobs.remove(token);
+        m_pendingNativeHashes.remove(key);
+        try { const auto changed = currentError(); if (!changed.isEmpty()) error = changed; }
+        catch (const std::exception &exception) { error = QString::fromUtf8(exception.what()); }
+        QJsonObject reply;
+        if (error.isEmpty()) {
+            if (!writing) { result["snapshotId"] = scope; result["windowId"] = member["id"]; }
+            reply = {{"ok", true}, {"id", id}, {"result", result}};
+        } else {
+            m_accessibility.invalidate(scope);
+            if (writing) error += "; native action outcome may be uncertain; inspect state before retrying";
+            reply = {{"ok", false}, {"id", id}, {"error", error}};
+        }
+        // Revocation already retires this token's history. A late completion must
+        // not recreate entries for a revoked or replaced task binding.
+        const auto retained = m_bindings.constFind(token);
+        if (writing && retained != m_bindings.cend() && retained->controller == controller && retained->snapshotId == scope) {
+            m_completed[key] = reply;
+            m_requestHashes[key] = fingerprint;
+        }
+        if (weakOwner && weakOwner->state() == QLocalSocket::ConnectedState)
+            weakOwner->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
+    };
+    QProcess *process;
+    if (writing) {
+        auto authorization = actual;
+        authorization["instance"] = m_instance;
+        authorization["runtimeDirectory"] = qEnvironmentVariable("XDG_RUNTIME_DIR");
+        process = m_accessibility.actAsync(scope, params["elementRef"].toString(), window, all,
+            params["action"].toString(), params["text"].toString(), authorization, this, complete);
+        m_pendingNativeHashes[key] = fingerprint;
+    } else {
+        process = m_accessibility.snapshotAsync(window, all, scope, params["maxNodes"].toInt(160),
+            params["maxDepth"].toInt(12), this, complete);
+    }
+    m_nativeJobs[token] = process;
+    auto *guard = new QTimer(process);
+    guard->setInterval(100);
+    connect(guard, &QTimer::timeout, this, [process, currentError] {
+        QString error;
+        try { error = currentError(); }
+        catch (const std::exception &exception) { error = QString::fromUtf8(exception.what()); }
+        if (!error.isEmpty()) { process->setProperty("corniceCancelReason", error); process->kill(); }
+    });
+    connect(process, &QProcess::finished, guard, &QTimer::stop);
+    connect(owner, &QLocalSocket::disconnected, process, [process] {
+        process->setProperty("corniceCancelReason", "Native request owner disconnected");
+        process->kill();
+    });
+    guard->start();
 }
 
 QJsonObject Broker::capture(const QString &name, const QString &id, const QString &workspace, QLocalSocket *owner,
@@ -638,11 +812,6 @@ void Broker::validateFrame(const Binding &binding, const QString &frame, const Q
 }
 
 QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Binding *binding, QLocalSocket *owner) {
-    if (method == "controller-action") {
-        invokeControllerAction(params);
-        return {{"processed", true}};
-    }
-
     if (method == "doctor")
         return {{"instance", m_instance}, {"capabilities", json(compositor("seat capabilities", true)).object()}};
     if (method == "list") {
@@ -1079,7 +1248,7 @@ void Broker::configureDesktop(const QString &name) {
     QJsonArray bindings;
     auto add = [&](const QStringList &keys, const QString &action, const QString &argument, bool readonly, bool release = false) {
         bindings.append(QJsonObject{{"keys", QJsonArray::fromStringList(keys)}, {"action", action},
-            {"argument", argument}, {"physicalOnly", argument.startsWith("voice-")}, {"release", release}, {"viewOnly", readonly}, {"overrideInherited", true}});
+            {"argument", argument}, {"release", release}, {"viewOnly", readonly}, {"overrideInherited", true}});
     };
     if (!desktop.primary) for (int i = 1; i <= 10; ++i) {
         const auto workspace = desktop.workspaceSlots.value(i);
@@ -1089,23 +1258,10 @@ void Broker::configureDesktop(const QString &name) {
         add({"SUPER", "SHIFT", key}, "move", workspace, false);
         add({"SUPER", key}, "workspace", workspace, true);
     }
-    if (!desktop.primary) {
-        add({"SUPER", "A"}, "notify", "prompt", false);
-        add({"SUPER", "A"}, "notify", "prompt", true);
-    }
-    if (!desktop.primary && !m_localVoiceClients.isEmpty()) for (bool readonly : {false, true}) {
-        add({"F8"}, "notify", "voice-press", readonly);
-        add({"F8"}, "notify", "voice-release", readonly, true);
-        add({"F9"}, "notify", "voice-command", readonly);
-        add({"F9"}, "notify", "voice-stop", readonly, true);
-        add({"SUPER", "ALT", "Return"}, "notify", "voice-commit", readonly);
-        add({"SUPER", "ALT", "O"}, "notify", "voice-raw", readonly);
-        add({"SUPER", "ALT", "Escape"}, "notify", "voice-cancel", readonly);
-    }
     QJsonArray overlays;
-    const QStringList shellLayers{"cornice-bar", "cornice-desktop-menu", "cornice-agent-prompt", "cornice-panel",
+    const QStringList shellLayers{"cornice-bar", "cornice-desktop-menu", "cornice-panel",
                                   "cornice-menu", "cornice-status-tooltip", "cornice-window-tooltip", "cornice-notification-popups"};
-    QSet<qint64> shellPids, voicePids;
+    QSet<qint64> shellPids;
     const auto outputs = json(compositor("layers", true)).object();
     for (auto output = outputs.begin(); output != outputs.end(); ++output) {
         const auto levels = output.value().toObject()["levels"].toObject();
@@ -1123,13 +1279,10 @@ void Broker::configureDesktop(const QString &name) {
     for (const auto pid : shellPids)
         for (const auto &space : shellLayers)
             overlays.append(QJsonObject{{"name", space}, {"pid", pid},
-                {"keyboard", space == "cornice-agent-prompt" || space == "cornice-panel" || space == "cornice-menu"},
+                {"keyboard", space == "cornice-panel" || space == "cornice-menu"},
                 {"localInView", space == "cornice-bar" || space == "cornice-desktop-menu"}});
-    for (const auto pid : m_localVoiceClients) voicePids.insert(pid);
-    for (const auto pid : voicePids)
-        overlays.append(QJsonObject{{"name", "hyprvoice"}, {"pid", pid}, {"keyboard", false}});
     const QJsonObject configuration{{"owner", desktop.configurationOwner}, {"seatName", name}, {"seatId", desktop.id},
-        {"bindings", bindings}, {"overlays", overlays}, {"callback", m_socketPath}};
+        {"bindings", bindings}, {"overlays", overlays}};
     if (configuration == desktop.lastConfiguration) {
         try { m_compositor.renew(desktop.configurationOwner); return; }
         catch (const std::exception &) { /* Reload or expired lease: restore atomically. */ }
@@ -1137,44 +1290,4 @@ void Broker::configureDesktop(const QString &name) {
     const auto configured = m_compositor.configure(configuration);
     desktop.lastConfiguration = configuration;
     desktop.bindingOverrides = configured["inheritedOverrides"].toArray();
-}
-
-void Broker::invokeControllerAction(const QJsonObject &event) {
-    const auto name = event["seat"].toString();
-    if (!m_desktops.contains(name)) return;
-    const auto &desktop = m_desktops.at(name);
-    const auto actual = state(name);
-    const auto action = event["action"].toString();
-    const bool voice = action.startsWith("voice-") && QStringList{"press", "release", "command", "stop", "commit", "raw", "cancel"}.contains(action.mid(6));
-    if (event["owner"].toString() != desktop.configurationOwner || event["seatId"].toString() != desktop.id ||
-        event["generation"] != actual["generation"] || actual["humanLocked"].toBool() || (action != "prompt" && !voice)) return;
-    if (event["mode"].toString() == "readonly") {
-        const auto owner = event["viewOwner"].toString();
-        if (owner.isEmpty() || !m_presentations.values().contains(owner)) return;
-        const auto view = json(compositor("seat presentation " + owner, true)).object();
-        if (view["name"].toString() != name || !view["active"].toBool() || view["humanControl"].toBool()) return;
-    }
-    const auto actionId = event["actionId"].toString();
-    if (actionId.isEmpty()) return;
-    const auto validation = json(compositor("seat validate-context " + actionId + " " + desktop.configurationOwner, true)).object();
-    if (!validation["valid"].toBool() || validation["seatId"].toString() != desktop.id) return;
-    if (voice) {
-        QProcess process;
-        const auto bundled = qEnvironmentVariable("CORNICE_PATH") + "/bin/hyprvoice";
-        const auto binary = QFileInfo(bundled).isExecutable() ? bundled : QStandardPaths::findExecutable("hyprvoice");
-        if (binary.isEmpty()) return;
-        process.start(binary, {action.mid(6)});
-        if (!process.waitForFinished(1500)) process.kill();
-        return;
-    }
-    QProcess process;
-    auto environment = QProcessEnvironment::systemEnvironment();
-    if (event["mode"].toString() == "readonly" || desktop.privateOutput.isEmpty()) {
-        environment.remove("CORNICE_DESKTOP_NAME");
-        environment.remove("CORNICE_SHELL_SOCKET");
-    } else environment.insert("CORNICE_DESKTOP_NAME", name);
-    process.setProcessEnvironment(environment);
-    process.setProgram(qEnvironmentVariable("CORNICE_PATH") + "/bin/cornice");
-    process.setArguments({"ipc", "desktop", "prompt", name});
-    process.startDetached();
 }

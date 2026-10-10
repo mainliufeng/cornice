@@ -52,6 +52,12 @@ Item {
     }
     onStatusChanged: if (status === Loader.Error) root.close()
   }
+  Loader {
+    id:previews
+    active: !DesktopSession.agentShell && !!root.service && root.service.available
+    source: active ? "PreviewShelf.qml" : ""
+    onLoaded:item.service = root.service
+  }
   Connections {
     target: Hyprland
     function onRawEvent(event) {

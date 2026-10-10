@@ -56,7 +56,10 @@ description='missing dependencies never call systemctl'; check test ! -e "$CORNI
 description='missing dependencies never install helpers'; check test ! -d "$sandbox/missing/bin"
 mv "$sandbox/quickshell" "$tools/quickshell"
 
+mkdir -p "$sandbox/install % prefix/bin"
+ln -s "$repo/bin/cornice-agent-runtime" "$sandbox/install % prefix/bin/cornice-agent-runtime"
 PATH="$tools" "$repo/install.sh" --service --prefix "$sandbox/install % prefix" >"$sandbox/service.log" 2>&1
+description='upgrade removes a retired internal-agent helper even when its old symlink is broken'; check test ! -L "$sandbox/install % prefix/bin/cornice-agent-runtime"
 description='the service starts only after the launcher exists'; check grep -q 'enable --now' "$CORNICE_TEST_SYSTEMCTL_LOG"
 description='the service uses the selected prefix and escapes percent signs'; check grep -qF "ExecStart=:/usr/bin/env -- \"$sandbox/install %% prefix/bin/cornice-launch\"" "$unit"
 backups=("$XDG_CONFIG_HOME"/systemd/user/cornice.service.backup.*)

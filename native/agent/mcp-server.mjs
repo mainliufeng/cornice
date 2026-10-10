@@ -5,7 +5,6 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { connect as connectSocket } from "node:net";
-import { spawn } from "node:child_process";
 import { readFile, lstat, mkdtemp, chmod, rm } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,12 +14,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const bindingFile = process.env.CORNICE_MCP_BINDING;
-const job = process.env.CORNICE_AGENT_JOB;
 const contexts = new Map(), current = new AsyncLocalStorage(), secrets = new Set();
 const makeContext=()=>({controller:randomUUID(),finished:false});
-const legacy = (bindingFile || job) ? makeContext() : undefined;
+const legacy = bindingFile ? makeContext() : undefined;
 const context=()=>current.getStore();
-const active = state => state.agentAllowed !== false && !state.taskFinished && !state.paused && !state.agentPaused && state.available && state.controlMode === "agent" &&
+const active = state => state.agentAllowed !== false && !state.paused && !state.agentPaused && state.available && state.controlMode === "agent" &&
   (!state.humanLocked || (state.lockScope === "human" && state.humanLockPolicy === "continue"));
 const sanitize = value => {
   if (typeof value === "string") { for (const secret of secrets) value = value.replaceAll(secret, "[REDACTED]"); return value; }
@@ -58,7 +56,7 @@ async function brokerEndpoint() {
   return endpoint;
 }
 async function acquire(params) {
-  if(job || bindingFile) throw new Error("This session already has an explicit assignment; automatic acquisition is unavailable");
+  if(bindingFile) throw new Error("This session already has an explicit assignment; automatic acquisition is unavailable");
   const endpoint=await brokerEndpoint(), c=makeContext(), reference=randomUUID();
   const socket=connectSocket(endpoint.socket); c.reservation=socket; c.automatic=true;
   try {
@@ -68,7 +66,7 @@ async function acquire(params) {
       function complete(error,result) {if(done)return;done=true;clearTimeout(timer);error?reject(error):resolveReply(result);}
       socket.on("error",error=>complete(error));
       socket.on("end",()=>complete(new Error("Desktop allocation connection ended")));
-      socket.on("connect",()=>socket.write(JSON.stringify({id:reference,method:"acquire-desktop",params:{...params,controller:c.controller}})+"\n"));
+      socket.on("connect",()=>socket.write(JSON.stringify({id:reference,method:"acquire-desktop",params:{...params,controller:c.controller,harness:harnessName()}})+"\n"));
       socket.on("data",chunk=>{
         input=Buffer.concat([input,chunk]);
         if(input.length>16384)return complete(new Error("Desktop allocation exceeded transport budget"));
@@ -91,7 +89,7 @@ function rpc(value, method, params, requestId) {
     function complete(error,result) { if (done) return; done=true; clearTimeout(timer); socket.destroy(); error ? reject(error) : resolveReply(result); }
     socket.on("error", error => complete(error));
     socket.on("end", () => { if (!done) complete(new Error("Desktop service disconnected; action outcome may be uncertain")); });
-    socket.on("connect", () => socket.write(JSON.stringify({id:controller+":"+String(requestId || randomUUID()),method,token:value.token,controller,params})+"\n"));
+    socket.on("connect", () => socket.write(JSON.stringify({id:controller+":"+String(requestId || randomUUID()),method,token:value.token,controller,harness:harnessName(),params})+"\n"));
     socket.on("data", chunk => {
       input = Buffer.concat([input,chunk]);
       if (input.length > 64*1024*1024) return complete(new Error("Desktop response exceeded the transport budget"));
@@ -101,19 +99,6 @@ function rpc(value, method, params, requestId) {
     });
   });
 }
-function bridge(operation, params, signal) {
-  return new Promise((resolveReply,reject) => {
-    const executable = process.env.CORNICE_AGENT_BRIDGE;
-    if (!executable) return reject(new Error("Desktop job bridge is missing"));
-    const child = spawn(executable,["bridge",operation],{stdio:["pipe","pipe","pipe"],signal}); let out="",error="";
-    const timer=setTimeout(()=>{child.kill("SIGKILL");reject(new Error("Desktop job response timed out; action outcome may be uncertain"));},operation==="wait"?(params.seconds || 30)*1000+5000:10000);
-    child.on("error",error=>{clearTimeout(timer);reject(error);});
-    child.stdout.on("data",data=>{out+=data;if(Buffer.byteLength(out)>64*1024*1024){child.kill("SIGKILL");reject(new Error("Desktop response exceeded the transport budget"));}});
-    child.stderr.on("data",data=>{error=(error+data).slice(-8192);});
-    child.on("close",code=> { clearTimeout(timer); if(code!==0) return reject(new Error(error.trim() || "Desktop job bridge failed")); try {const value=JSON.parse(out);if(!value || typeof value!=="object" || Array.isArray(value)) throw new Error("Invalid desktop bridge response");resolveReply(value);} catch(e){reject(e);} });
-    child.stdin.on("error",reject); child.stdin.end(JSON.stringify(params));
-  });
-}
 function verifyState(state) {
   if(typeof state.primary!=="boolean" || typeof state.agentAllowed!=="boolean" || !Number.isInteger(state.number) || state.number<1)
     throw new Error("Updated Cornice Broker is required; desktop permission contract is unavailable. No action was sent.");
@@ -121,7 +106,6 @@ function verifyState(state) {
 async function invoke(operation,params={},extra={}) {
   const c=context();
   if (c.finished && operation !== "state") throw new Error("Task already finished; no further actions allowed");
-  if (job) {const result=await bridge(operation,params,extra.signal);if(operation==="state")verifyState(result);return result;}
   const value=await credential();
   if(operation==="finish") {
     try {await rpc(value,"desktop.release",{},extra.requestId);}
@@ -144,7 +128,7 @@ async function connectBrowser(extra) {
   const endpoint=new URL(connection.cdpUrl);
   if(endpoint.protocol!=="http:" || endpoint.hostname!=="127.0.0.1" || !endpoint.port || endpoint.pathname==="/")throw new Error("Invalid authorized browser endpoint");
   secrets.add(connection.cdpUrl);secrets.add(endpoint.pathname.slice(1));await closeBrowser();
-  c.browserHome ||= await mkdtemp(join(process.env.CORNICE_AGENT_MCP_TMP || tmpdir(),"cornice-mcp-"));await chmod(c.browserHome,0o700);
+  c.browserHome ||= await mkdtemp(join(process.env.CORNICE_MCP_TMPDIR || tmpdir(),"cornice-mcp-"));await chmod(c.browserHome,0o700);
   const client=new Client({name:"cornice-browser-adapter",version:"0.1.0"});
   const transport=new StdioClientTransport({command:join(root,"bin/cornice-desktop-mcp"),args:["--browser"],env:{PATH:process.env.PATH || "/usr/bin:/bin",PLAYWRIGHT_MCP_CDP_ENDPOINT:connection.cdpUrl,CORNICE_MCP_BROWSER_HOME:c.browserHome},cwd:c.browserHome,stderr:"pipe"});
   transport.stderr?.on("data",()=>{});
@@ -163,6 +147,8 @@ const nativeTools=[
   {name:"desktop_state",description:"Read the assigned desktop's identity, permissions, controller and workspace. Begin here; no default desktop fallback.",inputSchema:object(),annotations:{readOnlyHint:true}},
   {name:"desktop_capture",description:"Capture this desktop only. Use pixelSize coordinates and the returned fresh frameId for native input. Prefer browser trees for browser tasks.",inputSchema:object(),annotations:{readOnlyHint:true}},
   {name:"desktop_windows",description:"List windows on this desktop's current workspace.",inputSchema:object(),annotations:{readOnlyHint:true}},
+  {name:"desktop_snapshot",description:"Read the real AT-SPI element tree of a window on this desktop's current workspace (focused window by default). Returns roles, text, states and short-lived element references. Unsupported applications fail explicitly; use capture when visual information is needed.",inputSchema:object({windowId:string,maxNodes:{type:"integer",minimum:1,maximum:300},maxDepth:{type:"integer",minimum:1,maximum:20}}),annotations:{readOnlyHint:true}},
+  {name:"desktop_action",description:"Perform a semantic native click, setText or focus using a fresh desktop_snapshot. One mutation invalidates its references. Desktop/workspace/control changes reject stale actions.",inputSchema:{...object({snapshotId:string,elementRef:string,action:{enum:["click","setText","focus"]},text:{type:"string",maxLength:8192}},["snapshotId","elementRef","action"]),oneOf:[{properties:{action:{enum:["click","focus"]}}},{properties:{action:{const:"setText"}},required:["text"]}]}},
   {name:"desktop_input",description:"Send one native action to this desktop using a fresh frameId. Chord key names use XKB, e.g. CTRL,a or Return.",inputSchema:object({frameId:string,action:{enum:["click","move","text","chord","scroll"]},x:number,y:number,text:{type:"string",maxLength:16384},keys:{type:"array",items:string,minItems:1,maxItems:8},button:{enum:["left","right","middle"]},delta:number,axis:{enum:["vertical","horizontal"]}},["frameId","action"])},
   {name:"desktop_workspace",description:"Switch this desktop's own workspace. Give a workspace identifier or slot 1–10; observe again afterwards.",inputSchema:{...object({workspace:{type:"string",minLength:1,maxLength:128},slot:{type:"integer",minimum:1,maximum:10}}),oneOf:[{required:["workspace"]},{required:["slot"]}]}},
   {name:"desktop_focus",description:"Focus an exact windowId in this desktop's current workspace, then observe again.",inputSchema:object({windowId:string},["windowId"])},
@@ -179,9 +165,15 @@ const acquireTool={name:"desktop_acquire",description:"Acquire an allowed, idle 
 const allTools=[acquireTool,...nativeTools,...browserTools].map(tool=>({...tool,inputSchema:{...tool.inputSchema,properties:{...tool.inputSchema.properties,...(tool.name==="desktop_acquire"?{}:{desktop:{type:"string",minLength:1,maxLength:128}})}}}));
 const validator=new AjvJsonSchemaValidator();
 const validators=new Map(allTools.map(tool=>[tool.name,validator.getValidator(tool.inputSchema)]));
-const server=new Server({name:"cornice-desktop",version:"0.2.0"},{capabilities:{tools:{}},instructions:"Begin a desktop task with desktop_acquire. Retain its desktop reference and include it in every native and browser tool call. Each task has independent control. Primary desktop requires pre-enabled permission and explicit selection. On interruption stop input; do not reacquire to escape pause, human takeover or lock. Finish after verifying the requested result."});
+const server=new Server({name:"cornice-desktop",version:"0.3.0"},{capabilities:{tools:{}},instructions:"Begin a desktop task with desktop_acquire. Retain its desktop reference and include it in every native and browser tool call. Each task has independent control. Primary desktop requires pre-enabled permission and explicit selection. On interruption stop input; do not reacquire to escape pause, human takeover or lock. Finish after verifying the requested result."});
+function harnessName() {
+  const name=process.env.CORNICE_HARNESS || server.getClientVersion()?.name || "external";
+  if (/codex/i.test(name)) return "codex";
+  if (/(^|[ _.\/-])pi($|[ _.\/-])/i.test(name)) return "pi";
+  return name.toLowerCase().replace(/[^a-z0-9_.-]+/g,"-").slice(0,64) || "external";
+}
 server.setRequestHandler(ListToolsRequestSchema,async()=>({tools:allTools}));
-let sequence=Promise.resolve();
+const taskQueues=new Map();
 server.setRequestHandler(CallToolRequestSchema,(request,extra)=> {
   const run=async()=> {
     try {
@@ -205,7 +197,6 @@ server.setRequestHandler(CallToolRequestSchema,(request,extra)=> {
         }
         const operation=name.slice("desktop_".length);let result;
         if(operation==="browser_connect")result=await connectBrowser(extra);
-        else if(operation==="wait" && job)result=await invoke("wait",params,extra);
         else if(operation==="wait") {
           const end=Date.now()+params.seconds*1000;
           do {
@@ -223,12 +214,20 @@ server.setRequestHandler(CallToolRequestSchema,(request,extra)=> {
       });
     }catch(error){return {isError:true,content:[{type:"text",text:sanitize(error.message || String(error))}]};}
   };
-  const pending=sequence.then(run,run);sequence=pending.then(()=>{},()=>{});return pending;
+  // Serialize mutations within one task, while independent desktops keep
+  // responding during a slow native application or browser request.
+  const key=request.params.name === "desktop_acquire" ? Symbol() : request.params.arguments?.desktop || "explicit-binding";
+  const previous=taskQueues.get(key) || Promise.resolve();
+  const pending=previous.then(run,run);
+  const settled=pending.then(()=>{},()=>{});
+  taskQueues.set(key,settled);
+  settled.finally(()=>{if(taskQueues.get(key)===settled)taskQueues.delete(key);});
+  return pending;
 });
 let closing=false;
 const heartbeat=setInterval(()=> {
   for(const c of [...contexts.values(),...(legacy?[legacy]:[])])
-    if((c.binding || job) && !c.finished && !closing)current.run(c,()=>invoke("state").catch(()=>{}));
+    if(c.binding && !c.finished && !closing)current.run(c,()=>invoke("state").catch(()=>{}));
 },1000);
 heartbeat.unref();
 async function close() {
@@ -236,7 +235,7 @@ async function close() {
   for(const c of [...contexts.values(),...(legacy?[legacy]:[])])await current.run(c,async()=> {
     await closeBrowser();
     c.reservation?.destroy();
-    if(!job && c.binding && !c.finished)await rpc(c.binding,"desktop.release",{},"disconnect").catch(()=>{});
+    if(c.binding && !c.finished)await rpc(c.binding,"desktop.release",{},"disconnect").catch(()=>{});
     if(c.browserHome)await rm(c.browserHome,{recursive:true,force:true});
   });
   await server.close().catch(()=>{});

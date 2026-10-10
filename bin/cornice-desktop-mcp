@@ -30,7 +30,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "--browser":
     os.chdir(home)
 else:
     allow = ("PATH", "HOME", "XDG_RUNTIME_DIR", "XDG_STATE_HOME", "HYPRLAND_INSTANCE_SIGNATURE", "CORNICE_PATH",
-             "CORNICE_MCP_BINDING", "CORNICE_AGENT_JOB", "CORNICE_AGENT_BRIDGE", "CORNICE_AGENT_MCP_TMP")
+             "CORNICE_MCP_BINDING", "CORNICE_HARNESS", "CORNICE_MCP_TMPDIR")
     env = {key:os.environ[key] for key in allow if key in os.environ}
     env.setdefault("PATH", os.defpath)
     args = [node, str(root/"native/agent/mcp-server.mjs"), *sys.argv[1:]]

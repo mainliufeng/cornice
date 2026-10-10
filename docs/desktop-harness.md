@@ -1,8 +1,10 @@
 # Desktop allocation and harness integration
 
-Cornice provides independent desktops and shared MCP tools. Codex, Pi and other harnesses own their conversations, models, task history and results. Cornice does not need to launch a Pi job to serve an external harness.
+Cornice provides independent desktops and shared MCP tools. Codex, Pi and other harnesses own their conversations, models, task history and results. Cornice has no embedded executor, model configuration, task prompt, new-task button or task-submission shortcut.
 
 ## Automatic task allocation
+
+A fresh session starts with exactly two desktops: primary `main` and one task-ready secondary `desktop2`. Recovered or explicitly created desktops are preserved; startup does not create a second unused secondary desktop. Additional desktops are created only when a harness needs another one.
 
 Installing a plugin connects tools without granting a desktop. When a user asks the agent to operate a desktop, the agent calls `desktop_acquire`. Broker atomically reserves an allowed, paused, unoccupied secondary desktop; if none is available, it creates a new private display/seat at the primary output's pixel resolution and starts its native Cornice shell. No local confirmation popup or manual attach command is required.
 
@@ -47,17 +49,29 @@ pi install /absolute/path/to/cornice/plugins/pi-cornice
 pi
 ```
 
-Its extension applies the desktop screenshot-context budget and does not require `CORNICE_AGENT_BRIDGE`, a Cornice model configuration, an internal task thread or Magpie. The installed Pi package uses the user's normal model and task interface. Browser tools and native input are implemented once in the shared MCP.
+Its extension applies the desktop screenshot-context budget and registers `CORNICE_HARNESS=pi`. There is no Cornice model configuration, internal task thread or model gateway dependency. The installed Pi package uses the user's normal model and task interface. Browser tools and native input are implemented once in the shared MCP.
 
 ## Other MCP clients and transport
 
 Start `cornice-desktop-mcp` as a local **STDIO** server. There is no HTTP MCP listener or port to configure. It connects to Broker through a user-owned Unix socket. In the desktop session it uses the explicit compositor environment; a GUI App without that environment can use Broker's private runtime `cornice/active.json` endpoint. An old live connection never automatically switches compositors or tasks after a failure.
 
-Expose the bundled skill at `plugins/cornice/skills/cornice-desktop/SKILL.md`. The shared catalog has 24 tools including task acquisition, native desktop operations and allowlisted Playwright browser operations. It does not expose permission changes, arbitrary resume/rebinding, global CDP endpoints or arbitrary JavaScript execution.
+Expose the bundled skill at `plugins/cornice/skills/cornice-desktop/SKILL.md`. The shared catalog has 26 tools including task acquisition, native desktop operations and allowlisted Playwright browser operations. It does not expose permission changes, arbitrary resume/rebinding, global CDP endpoints or arbitrary JavaScript execution.
 
 ## Legacy explicit bindings
 
-`cornice desktop attach NAME HARNESS` / `detach HARNESS` remain management operations. Set `CORNICE_MCP_BINDING` explicitly to use such a private assignment. Those sessions retain their single assigned desktop and cannot acquire others. Default Codex sessions no longer read a global `codex.binding.json`, avoiding accidental cross-conversation assignment. The existing internal Pi task bridge remains an explicit legacy executor; it is not involved in independent Pi or Codex App tasks.
+`cornice desktop attach NAME HARNESS` / `detach HARNESS` remain management operations. Set `CORNICE_MCP_BINDING` explicitly to use such a private assignment. Those sessions retain their single assigned desktop and cannot acquire others. Default Codex sessions do not read a global `codex.binding.json`, avoiding accidental cross-conversation assignment. The former internal Pi bridge and executor have been removed; explicit bindings only serve external clients.
+
+## Desktop state and observation
+
+`desktop_state` returns independent fields: `occupied` means a live harness lease, `harness` identifies its owner (Codex/Pi plugins supply `codex`/`pi`), and `activity` is one of `idle`, `running`, `paused`, `takeover`, `locked` or `unavailable`. Open windows do not prove that a harness is working, and releasing a lease preserves those windows.
+
+The primary desktop shows read-only floating thumbnails for occupied secondary desktops. Preview refresh is limited to four frames per second; it never forwards keyboard or pointer input. Hide a thumbnail from its close control and restore it from the desktop menu. A click selects the full native read-only desktop view; human takeover is an explicit separate control. The default bar groups desktop selection and control in one button; `grouped:false` splits them into the two existing buttons. Full desktop presentation remains native Hyprland composition and is not a thumbnail or screenshot viewing loop.
+
+## Native element trees
+
+`desktop_snapshot` reads a bounded real AT-SPI tree from a window on the task desktop's current workspace (focused window by default). It returns roles, names, text, states, supported actions and short-lived element references. `desktop_action` supports `click`, `setText` and `focus` using the returned `snapshotId`/`elementRef`. It checks desktop control, lifecycle, workspace and window identity, and a mutation invalidates previous element references.
+
+Unsupported applications, ambiguous window mappings and inaccessible application trees return an explicit unsupported error. They are not replaced with fabricated trees; use `desktop_capture` for visual content. Browsers use their existing CDP/Playwright tree and semantic tools. AT-SPI is supplied by the real application toolkit, not inferred from a screenshot.
 
 ## Boundary
 
@@ -67,4 +81,4 @@ This is same-user desktop coordination, not an OS sandbox. A harness with unrest
 
 `test/desktop-acquire-verify.py`, through `test/isolated-desktop-test.sh`, runs real headless Hyprland, native Cornice shells, GTK applications, managed Chrome and the native session-lock protocol. It verifies concurrent allocation across harnesses, multiple tasks in one MCP process, fresh empty desktops, application-preserving reuse, task references, native Unicode input, independent browser trees, primary permission, finish/disconnect, heartbeat expiry and stale-owner rejection.
 
-`test/desktop-harness-verify.py` retains explicit-binding regression coverage. `test/codex-plugin-verify.py` installs the actual Codex plugin into a temporary configuration; `test/pi-plugin-verify.mjs` installs the actual Pi package and loads its extension and skill. Both discover the live shared MCP catalog without model credentials. `test/mcp-transport-verify.mjs` checks transport failures and the pinned browser schemas, while `test/agent-runtime-protocol-verify.py` retains internal-executor protocol regression coverage.
+`test/desktop-harness-verify.py` retains explicit-binding regression coverage. `test/codex-plugin-verify.py` installs the actual Codex plugin into a temporary configuration; `test/pi-plugin-verify.mjs` installs the actual Pi package and loads its extension and skill. Both discover the live shared MCP catalog without model credentials. `test/mcp-transport-verify.mjs` checks transport failures and the pinned browser schemas, and `test/native-accessibility-verify.py` verifies real GTK/Qt trees and semantic actions. Removed internal-executor tests are not part of the product.

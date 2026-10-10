@@ -5,9 +5,22 @@ from desktop_harness import *
 _held_mods = {}
 
 def send(command):
+    if command.startswith('type ') and len(command[5:]) > 1:
+        # Physical typing is asynchronous through Fcitx. Keep individual test
+        # key presses separated so a focus/IME activation round-trip can finish.
+        for char in command[5:]:
+            send('type ' + char)
+            time.sleep(.04)
+        return
     # The virtual-keyboard protocol requires separate modifier events. Real
     # hardware updates this state itself; mirror it rather than testing bare keys.
     words = command.split()
+    if len(words) == 3 and words[0] == 'motion':
+        # The test virtual-pointer fixture caches its output size at startup.
+        # Remap our current logical coordinates after an output mode change;
+        # physical relative mice do not have this fixture-only limitation.
+        monitor=next(item for item in ctl('monitors',True) if item['name']=='human')
+        command='motion ' + str(round(float(words[1])*1280/(monitor['width']/monitor['scale']))) + ' ' + str(round(float(words[2])*800/(monitor['height']/monitor['scale'])))
     if len(words) == 3 and words[0] == 'key' and int(words[1]) in {29:4,42:1,54:1,56:8,125:64}:
         _held_mods[int(words[1])] = {29:4,42:1,54:1,56:8,125:64}[int(words[1])] if int(words[2]) else 0
         send('mods ' + str(sum(set(_held_mods.values()))))
@@ -26,13 +39,13 @@ def click(x, y):
 
 def control(name):
     menus = json.loads(shell('ipc','desktopObserver','controls'))
-    icon = next(item for item in menus if item['name'] == ('status' if name in ('run','takeover','prompt','cancel','permission') else 'switch'))
+    icon = next(item for item in menus if item['name'] == 'group')
     send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']/2)}")
     def ready():
-        row = next((item for item in json.loads(shell('ipc', 'desktopObserver', 'controls')) if item['name'] == name), None)
+        row = next((item for item in json.loads(shell('ipc', 'desktopObserver', 'controls')) if item['name'] == ('control:' + name if name in ('run','takeover','permission','previews','manage') else 'view:' + name)), None)
         if not row or not row.get('enabled', True): return None
         if name == 'run':
-            expected = '运行 Agent' if cli('state', status()['name'])['paused'] else '暂停 Agent'
+            expected = '恢复 Agent 输入' if cli('state', status()['name'])['paused'] else '暂停 Agent 输入'
             if row['label'] != expected: return None
         return row
     row = wait(ready)
@@ -46,6 +59,9 @@ def control(name):
     time.sleep(1.3)
     row = ready()
     assert row, ('menu closed while hovering its row',name)
+    if name == 'permission':
+        print('PERMISSION ROW', row, status(),flush=True)
+        subprocess.run(['grim','-o','human',str(BASE/'permission-before-click.png')],env=ENV,check=True)
     click(row['x'] + row['width'] / 2, row['y'] + row['height'] / 2)
 
 def entry(name, field="entry"):
@@ -59,6 +75,7 @@ def entry(name, field="entry"):
     oy = (target['height']-state['pixelSize'][1]*factor*target['scale']/state['scale'])/target['scale']/2
     click(ox+(client['at'][0]-state['position'][0]+geometry[0]+geometry[2]/2)*factor,
           oy+(client['at'][1]-state['position'][1]+geometry[1]+geometry[3]/2)*factor)
+    time.sleep(.2) # let GTK and the external input method accept pointer focus
 
 
 def rejected(connection, method, params):
@@ -120,6 +137,108 @@ try:
     (applications / 'cornice-overlay-test.desktop').write_text('[Desktop Entry]\nType=Application\nName=Cornice Overlay Target Test\nExec=' + overlay_command + '\n')
     qs = start([str(PRODUCT / 'bin/cornice-qs'), '-p', str(PRODUCT / 'shell')], 'cornice')
     wait(lambda: json.loads(shell('ipc', 'desktop', 'status'))['available'])
+    if os.getenv('CORNICE_TEST_DESKTOP_MENU_ONLY') == '1':
+        shell('ipc','desktop','observe','agent1');wait(lambda:status()['presentation'].get('active'))
+        shell('ipc','desktopObserver','takeover','true');wait(lambda:status()['humanControl'])
+        ok('eval hl.monitor({output="human",mode="3072x1920",position="0x0",scale=2})')
+        time.sleep(1)
+        control('permission')
+        print('SHORT PERMISSION STATE',status(),cli('state','agent1'),flush=True)
+        wait(lambda:not cli('state','agent1')['agentAllowed'])
+        assert status()['humanControl']
+        record('high-resolution grouped permission action targets the intended desktop and preserves takeover')
+        raise SystemExit(0)
+    # Real external-harness reservation automatically appears on the primary
+    # desktop; the preview is only a read-only entry into native presentation.
+    import threading
+    preview_owner=socket.socket(socket.AF_UNIX);preview_owner.settimeout(5)
+    preview_owner.connect(str(RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktop.sock'))
+    cli('pause','agent3')
+    lease=rpc(preview_owner,'acquire-desktop',{'controller':'preview-ui-codex','harness':'codex','preferredDesktop':'agent3'})
+    preview_stop=threading.Event()
+    preview_errors=[]
+    def heartbeat(connection,binding,controller):
+        while not preview_stop.wait(.5):
+            try:
+                identity=str(time.monotonic_ns())
+                connection.sendall((json.dumps({'id':identity,'method':'desktop.state','params':{},'controller':controller,'token':binding['token']})+'\n').encode())
+                data=b''
+                while b'\n' not in data:data+=connection.recv(65536)
+                reply=json.loads(data.split(b'\n')[0]);assert reply['ok'],reply
+            except Exception as error:
+                preview_errors.append(str(error));return
+    preview_thread=threading.Thread(target=heartbeat,args=(preview_owner,lease,'preview-ui-codex'),daemon=True);preview_thread.start()
+    pi_owner=socket.socket(socket.AF_UNIX);pi_owner.settimeout(5)
+    pi_owner.connect(str(RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktop.sock'))
+    cli('pause','agent2')
+    pi_lease=rpc(pi_owner,'acquire-desktop',{'controller':'preview-ui-pi','harness':'pi','preferredDesktop':'agent2'})
+    pi_thread=threading.Thread(target=heartbeat,args=(pi_owner,pi_lease,'preview-ui-pi'),daemon=True);pi_thread.start()
+    def previews():return json.loads(shell('ipc','desktopPreviews','status'))
+    try:
+        card=wait(lambda:next((item for item in previews()['cards'] if item['name']=='agent3' and item['frames']>=3),None))
+    except Exception:
+        print('PREVIEW DIAGNOSTICS',previews(),shell('ipc','desktop','status'),cli('state','agent3'),preview_errors,flush=True)
+        raise
+    wait(lambda:len(previews()['cards'])==2 and all(item['frames']>=3 for item in previews()['cards']))
+    assert cli('state','agent3')['harness']=='codex' and cli('state','agent2')['harness']=='pi'
+    assert previews()['readonly'] and previews()['visible']
+    assert not (BASE/'human.txt').exists() and not (BASE/'agent3.txt').exists()
+    subprocess.run(['grim','-o','human',str(BASE/'floating-preview.png')],env=ENV,check=True)
+    if os.getenv('CORNICE_TEST_DESKTOP_PREVIEW_ONLY') == '1':
+        # Exercise a real drag before changing the output and visible card count.
+        first=previews()['cards'][0]
+        send(f"motion {round(first['x']+80)} {round(first['y']+20)}");send('button 272 1')
+        send('motion 100 80');send('button 272 0')
+        wait(lambda:previews()['bounds']['x'] < first['x'])
+        ok('output create headless extra-physical')
+        ok('eval hl.monitor({output="extra-physical",mode="1024x768",position="1280x0",scale=1})')
+        ok('eval hl.monitor({output="human",mode="800x600",position="0x0",scale=1})')
+        def bounded():
+            state=previews();bounds=state['bounds']
+            return state if state['output']=='human' and bounds['x']>=0 and bounds['y']>=0 and bounds['x']+bounds['width']<=800 and bounds['y']+bounds['height']<=600 else None
+        wait(bounded,timeout=5)
+        shell('ipc','desktop','hidePreview','agent2')
+        wait(lambda:len(previews()['cards'])==1 and bounded(),timeout=5)
+        shell('ipc','desktop','restorePreviews')
+        wait(lambda:len(previews()['cards'])==2 and bounded() and all(c['hasFrame'] for c in previews()['cards']),timeout=5)
+        subprocess.run(['grim','-o','human',str(BASE/'preview-small-output.png')],env=ENV,check=True)
+        record('dragged preview stays on primary.output after smaller output and visible card count changes')
+        # The compositor emits an unsolicited event on the real owner sockets.
+        # Its counter proves cached frames clear from the event, not service polling.
+        before={c['name']:c['invalidations'] for c in previews()['cards']}
+        pam=BASE/'preview-pam';pam.mkdir();(pam/'permit').write_text('auth required pam_permit.so\n')
+        locker=subprocess.Popen([str(PRODUCT/'bin/cornice-human-lock'),'--scope','session','--pam-service','permit','--pam-directory',str(pam),'--allow-emergency'],env=ENV,stdin=subprocess.PIPE,stdout=open(BASE/'preview-lock-events','w'),stderr=open(BASE/'preview-lock.log','w'),start_new_session=True,text=True)
+        PROCESSES.append(locker)
+        wait(lambda:ctl('seat lock-state',True)['secure'],timeout=5)
+        began=time.monotonic()
+        cleared=wait(lambda:previews() if all(not c['hasFrame'] and c['invalidations']>before[c['name']] for c in previews()['cards']) else None,timeout=.5)
+        assert len(cleared['cards'])==2,cleared
+        print('LOCK INVALIDATION',time.monotonic()-began,cleared,flush=True)
+        record('real session-lock notification immediately clears both cached preview images')
+        locker.stdin.write('emergency-unlock\n');locker.stdin.flush()
+        wait(lambda:not ctl('seat lock-state',True)['locked'],timeout=5)
+        preview_stop.set();preview_thread.join(timeout=5);pi_thread.join(timeout=5);preview_owner.close();pi_owner.close()
+        raise SystemExit(0)
+    # Dragging only moves the shelf; clicking its close control hides it.
+    send(f"motion {round(card['x']+80)} {round(card['y']+20)}");send('button 272 1')
+    send(f"motion {round(card['x']+30)} {round(card['y']-20)}");send('button 272 0')
+    card=wait(lambda:next((item for item in previews()['cards'] if item['name']=='agent3' and item['x'] < card['x']),None))
+    click(card['x']+card['width']-20,card['y']+20)
+    wait(lambda:previews()['visible'] and all(item['name']!='agent3' for item in previews()['cards']))
+    group=next(item for item in next(item for item in json.loads(shell('ipc','bar','geometry')) if item['id']=='cn.agent-desktop')['controls'] if item['name']=='group')
+    send(f"motion {round(group['x']+group['width']/2)} {round(group['y']+group['height']/2)}")
+    restore=wait(lambda:next((item for item in json.loads(shell('ipc','desktopObserver','controls')) if item['name']=='control:previews'),None))
+    click(restore['x']+restore['width']/2,restore['y']+restore['height']/2)
+    card=wait(lambda:next((item for item in previews()['cards'] if item['name']=='agent3' and item['frames']>=2),None))
+    click(card['x']+card['width']/2,card['y']+100)
+    wait(lambda:status()['open'] and status()['name']=='agent3' and status()['readonly'])
+    wait(lambda:not previews()['visible'])
+    shell('ipc','desktop','observe','main');wait(lambda:not status()['open'])
+    preview_stop.set();preview_thread.join(timeout=5);pi_thread.join(timeout=5);preview_owner.close();pi_owner.close()
+    assert not preview_errors,preview_errors
+    wait(lambda:not cli('state','agent3')['occupied'] and not cli('state','agent2')['occupied'])
+    send(f"motion {human['cursor']['x']} {human['cursor']['y']}")
+    record('real harness preview renders fresh frames, moves, hides/restores from grouped bar and enters native read-only view without editing apps')
     tray = start(['/usr/bin/python3', str(ROOT / 'test/fake-tray-menu.py')], 'tray-fixture')
     wait(lambda: any(item['id'] == 'cornice-menu-test' for item in json.loads(shell('ipc', 'tray', 'dump'))))
     def bar_click(identity):
@@ -140,11 +259,11 @@ try:
     # Use the actual bar button, then the fullscreen toolbar for every switch.
     layer = wait(lambda: next((item for item in ctl('layers', True)['human']['levels']['2'] if item['namespace'] == 'cornice-bar'), None))
     widget = next(item for item in json.loads(shell('ipc', 'bar', 'geometry')) if item['id'] == 'cn.agent-desktop')
-    icon = next(item for item in widget['controls'] if item['name'] == 'switch')
+    icon = next(item for item in widget['controls'] if item['name'] == 'group')
     send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']/2)}")
     def bar_agent():
         widget = next(item for item in json.loads(shell('ipc','bar','geometry')) if item['id'] == 'cn.agent-desktop')
-        return next((item for item in widget['controls'] if item['name'] == 'agent1'),None)
+        return next((item for item in widget['controls'] if item['name'] == 'view:agent1'),None)
     row = wait(bar_agent)
     wait(lambda: any(item['namespace'] == 'cornice-desktop-menu' for item in ctl('layers',True)['human']['levels']['3']))
     send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']+1)}")
@@ -278,17 +397,6 @@ try:
     assert ctl('activewindow',True)['address']==human['window']
     record('Super+Shift+number moves the Agent window; Super+number switches only that seat')
 
-    agent_shell = ENV | {'CORNICE_DESKTOP_NAME': 'agent1'}
-    def agent_ui(method):
-        return json.loads(subprocess.check_output([str(PRODUCT/'bin/cornice'),'ipc','desktop',method],env=agent_shell,text=True,timeout=8))
-    for event in ('key 125 1','key 30 1','key 30 0','key 125 0'):send(event)
-    wait(lambda:agent_ui('status')['prompt']=={'open':True,'name':'agent1'})
-    send('type native controller prompt')
-    wait(lambda:agent_ui('promptDraft')['text']=='native controller prompt')
-    send('key 1 1');send('key 1 0')
-    wait(lambda:not agent_ui('status')['prompt']['open'])
-    record('seat-scoped Super+A unicasts to the correct private shell; native prompt typing works during takeover')
-
     control('takeover');wait(lambda:not status()['humanControl'])
     wait(lambda:cli('state','agent1')['paused'])
     agent_workspace=cli('state','agent1')['workspace']
@@ -306,15 +414,6 @@ try:
     wait(lambda:status()['presentation'].get('following'))
     record('read-only browsing an empty workspace leaves the agent current workspace unchanged; Follow restores it')
 
-    before_text=(BASE/'agent1.txt').read_text()
-    for event in ('key 125 1','key 30 1','key 30 0','key 125 0'):send(event)
-    wait(lambda:json.loads(shell('ipc','desktop','status'))['prompt']=={'open':True,'name':'agent1'})
-    send('type readonly controller prompt')
-    wait(lambda:json.loads(shell('ipc','desktop','promptDraft'))['text']=='readonly controller prompt')
-    assert (BASE/'agent1.txt').read_text()==before_text
-    send('key 1 1');send('key 1 0')
-    wait(lambda:not json.loads(shell('ipc','desktop','status'))['prompt']['open'])
-    record('readonly Super+A targets the selected desktop through its local controller UI without editing the application')
     control('main');wait(lambda:not status()['open'])
     wait(lambda:human_state()==human)
     record('application shortcut and button work; releasing control pauses agent, returning restores human workspace/focus/cursor')
@@ -400,7 +499,12 @@ try:
     record('lost heartbeats revoke physical takeover and restore the human scene without auto-resuming the Agent')
     shell('desktop','observe','agent1');wait(lambda:status()['presentation'].get('active'))
     shell('ipc','desktopObserver','takeover','true');wait(lambda:status()['humanControl'])
-    control('permission');wait(lambda:not cli('state','agent1')['agentAllowed'])
+    control('permission')
+    try:wait(lambda:not cli('state','agent1')['agentAllowed'])
+    except Exception:
+        print('PERMISSION DIAGNOSTICS',status(),shell('ipc','desktop','status'),shell('ipc','desktopObserver','controls'),flush=True)
+        subprocess.run(['grim','-o','human',str(BASE/'permission-failure.png')],env=ENV,check=True)
+        raise
     assert status()['humanControl'], 'disabling Agent permission must preserve human takeover'
     entry('agent1');send('type permissionoff')
     wait(lambda:'permissionoff' in (BASE/'agent1.txt').read_text())

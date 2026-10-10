@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "id": "cn.agent-desktop",
-  "name": "Agent desktops",
+  "name": "Desktops",
   "version": "0.1.0",
   "author": "cornice",
-  "description": "Optional seat-bound agent desktop management",
+  "description": "External harness desktops, read-only previews and native takeover",
   "kinds": [
     "service",
     "bar-widget",
@@ -16,11 +16,13 @@
     "panel": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Agent desktops",
+    "displayName": "Desktops",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
-    "defaults": {}
+    "defaults": {
+      "grouped": true
+    }
   },
   "keepLoaded": true
 }

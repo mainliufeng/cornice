@@ -132,7 +132,7 @@ def prepare(args):
             build = source / "native/build"
             native_bin = product / "native/bin"
             native_bin.mkdir(parents=True)
-            for name in ("cornice-desktop-runtime", "cornice-human-lock", "cornice-session-guard"):
+            for name in ("cornice-desktop-runtime", "cornice-human-lock", "cornice-session-guard", "cornice-native-accessibility"):
                 shutil.copy2(build / name, native_bin / name)
             shutil.copytree(source / "native/agent", product / "native/agent")
             module = product / "native/qml/Cornice/Desktop"
@@ -324,7 +324,9 @@ class Trial:
         self.directory.mkdir(parents=True, mode=0o700)
         self.children = []
         self.sockets = []
-        self.seat_names = ["agent" + str(index + 1) for index in range(3)]
+        self.required_desktops = {"main", "desktop2"}
+        self.desktop_startups = {}
+        self.ready_desktops = set()
         self.environment = os.environ.copy()
         for key in ("HYPRLAND_INSTANCE_SIGNATURE", "DISPLAY", "WAYLAND_SOCKET", "CORNICE_LAUNCH_LOCKED"):
             self.environment.pop(key, None)
@@ -367,8 +369,10 @@ class Trial:
         errors = ipc(self.environment, "configerrors", False)
         if errors:
             raise RuntimeError("Hyprland configuration errors: " + errors)
-        if not ipc(self.environment, "monitors"):
+        monitors = ipc(self.environment, "monitors")
+        if not monitors:
             raise RuntimeError("No visible output")
+        output_names = {monitor["name"] for monitor in monitors}
         if not self.command("ping").startswith("pong"):
             raise RuntimeError("Cornice did not answer ping")
         layers = ipc(self.environment, "layers")
@@ -376,14 +380,43 @@ class Trial:
                    for level in monitor.get("levels", {}).values() for layer in level):
             raise RuntimeError("Cornice bar is missing")
         desktops = json.loads(self.command("desktop", "list"))["desktops"]
-        if {d["name"] for d in desktops} != set(self.seat_names) | {"main"}:
-            raise RuntimeError("Agent desktops are missing")
+        if not self.required_desktops.issubset({d["name"] for d in desktops}):
+            raise RuntimeError("Required desktops are missing")
+        self.info["desktops"] = [d["name"] for d in desktops]
+        initializing = []
         for desktop in desktops:
+            if desktop.get("output") not in output_names:
+                raise RuntimeError("Desktop output is missing: " + desktop["name"])
+            if not desktop.get("primary"):
+                # Capture only real compositor-reported private sockets from this
+                # instance, including desktops added after startup. Cleanup still
+                # verifies inode/device and never unlinks a replacement socket.
+                display = desktop.get("display", "")
+                if not re.fullmatch(r"[A-Za-z0-9_.-]+", display):
+                    raise RuntimeError("Invalid private desktop display")
+                path = Path(self.environment["XDG_RUNTIME_DIR"]) / display
+                identity = path.lstat()
+                if not stat.S_ISSOCK(identity.st_mode) or identity.st_uid != os.getuid():
+                    raise RuntimeError("Private desktop display is unavailable")
+                owned = (path, identity.st_dev, identity.st_ino)
+                if owned not in self.sockets:
+                    self.sockets.append(owned)
             if len(desktop.get("workspaceSlots", [])) != 10:
                 raise RuntimeError("Agent workspace slots are missing")
+            identity = (desktop["name"], desktop.get("seatId"))
             if not any(layer.get("namespace") == "cornice-bar"
                        for level in layers.get(desktop["output"], {}).get("levels", {}).values() for layer in level):
-                raise RuntimeError("Agent Cornice bar is missing: " + desktop["name"])
+                # Only the first bar map of a new dynamic desktop has a bounded
+                # initialization window. Its output/socket/slots still must be
+                # real and healthy; required and previously-ready bars are strict.
+                if desktop["name"] not in self.required_desktops and identity not in self.ready_desktops:
+                    first_seen = self.desktop_startups.setdefault(identity, time.monotonic())
+                    if time.monotonic() - first_seen < self.ticket["startupSeconds"]:
+                        initializing.append(desktop["name"])
+                        continue
+                raise RuntimeError("Desktop Cornice bar is missing: " + desktop["name"])
+            self.ready_desktops.add(identity)
+        self.info["initializingDesktops"] = initializing
 
     def execute(self):
         self.update("starting")
@@ -457,18 +490,10 @@ class Trial:
                 time.sleep(.1)
         else:
             raise RuntimeError("Agent desktop service startup timeout")
-        # Per-trial names also avoid stale sockets left by SIGKILL/power-loss.
-        # Never unlink an unknown socket to make a candidate start.
-        for name in self.seat_names:
-            # These explicitly enabled deployment seats may retain existing Agent
-            # control through a human-only lock; creation still leaves them paused.
-            self.command("desktop", "create", name, "--virtual-output", "1920x1080",
-                         "--human-lock-policy", "continue")
-            for item in (runtime).glob("seat-" + name + "-*"):
-                identity = item.lstat()
-                if stat.S_ISSOCK(identity.st_mode):
-                    self.sockets.append((item, identity.st_dev, identity.st_ino))
-        self.info["desktops"] = self.seat_names
+        # Broker initializes one secondary desktop. Preserve this deployment's
+        # established human-only lock policy without widening generic creation.
+        self.command("desktop", "lock-policy", "desktop2", "continue")
+        self.info["desktops"] = ["main", "desktop2"]
         shell = self.start([self.product / "bin/cornice-qs", "-p", self.product / "shell"], "cornice")
         self.info["shellPid"] = shell.pid
         while time.monotonic() < deadline:

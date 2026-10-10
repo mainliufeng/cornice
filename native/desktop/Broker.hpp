@@ -1,5 +1,6 @@
 #pragma once
 #include "BrowserSession.hpp"
+#include "Accessibility.hpp"
 #include "HyprlandAdapter.hpp"
 #include "SeatDriver.hpp"
 #include <QElapsedTimer>
@@ -45,12 +46,14 @@ class Broker : public QObject {
         QString name, id, generation;
         QMap<QString, QJsonObject> frames;
         QStringList frameOrder;
-        QString controller;
+        QString controller, harness, snapshotId;
+        QJsonObject snapshotState;
         QElapsedTimer heartbeat;
     };
     QByteArray compositor(const QString &command, bool json = false);
     QJsonObject state(const QString &name);
     QJsonObject handle(const QJsonObject &, QLocalSocket *);
+    void handleNative(const QJsonObject &, QLocalSocket *);
     QJsonObject perform(const QString &method, const QJsonObject &, Binding *, QLocalSocket *);
     QJsonObject capture(const QString &name, const QString &id, const QString &workspace, QLocalSocket *owner,
                         const QString &format, bool agent = false);
@@ -58,7 +61,6 @@ class Broker : public QObject {
     void save();
     void initializeSlots(const QString &name, const QJsonObject &saved = {});
     void configureDesktop(const QString &name);
-    void invokeControllerAction(const QJsonObject &event);
 
     QJsonObject acquireDesktop(const QJsonObject &, QLocalSocket *);
     void releaseAcquisition(QLocalSocket *);
@@ -78,12 +80,14 @@ class Broker : public QObject {
     HyprlandAdapter m_compositor;
     std::map<QString, Desktop> m_desktops;
     QMap<QString, Binding> m_bindings;
+    Accessibility m_accessibility;
+    QMap<QString, QPointer<QProcess>> m_nativeJobs;
+    QMap<QString, QByteArray> m_pendingNativeHashes;
     QLocalSocket *m_humanOwner = nullptr;
     Binding m_humanBinding;
     QElapsedTimer m_humanHeartbeat;
     QMap<QLocalSocket *, QString> m_buffers;
     QMap<QLocalSocket *, QString> m_presentations;
-    QMap<QLocalSocket *, qint64> m_localVoiceClients;
     QMap<QLocalSocket *, QJsonObject> m_acquisitions;
     QMap<QString, QJsonObject> m_completed;
     QMap<QString, QByteArray> m_requestHashes;

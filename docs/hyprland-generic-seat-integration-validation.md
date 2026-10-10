@@ -1,3 +1,5 @@
+> 历史架构/验收记录：内置任务 prompt 与专属语音适配现已移除；当前产品接口以 desktop-harness.md、agent-desktop-product.md 为准。这里的旧 prompt 验证不属于现行功能。
+
 # 通用多 seat 对接实现与验证
 
 日期：2026-10-09。Hyprland `codex/cornice-agent-desktop`、Cornice `codex/agent-desktop-recovery`；Hyprvoice 消费端在 `codex/cornice-seat-input` 同步能力名称。没有合并 main、修改 dotfiles 或重启当前 compositor。

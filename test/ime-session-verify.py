@@ -114,44 +114,6 @@ try:
     wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['presentation'].get('active'))
     time.sleep(.3)
     remote('-c')
-    # Super+A in the actual read-only fullscreen viewer must focus a native
-    # text editor, rather than forwarding pinyin keys into the Agent app.
-    send('mods 64');send('key 125 1');send('key 30 1');send('key 30 0');send('key 125 0');send('mods 0')
-    wait(lambda:json.loads(shell('ipc','desktop','status'))['prompt']['open'])
-    def prompt_draft(env=None):
-        return json.loads(subprocess.check_output([str(PRODUCT/'bin/cornice'),'ipc','desktop','promptDraft'],env=env or ENV,text=True,stderr=subprocess.PIPE))
-    wait(lambda:prompt_draft()['focused'])
-    time.sleep(.5)
-    remote('-o');wait(lambda:remote()=='2');send('type zhongwen')
-    wait(lambda:prompt_draft()['preedit']!='')
-    assert prompt_draft()['text']==''
-    subprocess.run(['grim','-o','human',str(BASE/'task-pinyin-preedit.png')],env=ENV,check=True)
-    send('key 57 1');send('key 57 0')
-    wait(lambda:prompt_draft()['text']=='中文')
-    subprocess.run(['grim','-o','human',str(BASE/'task-chinese.png')],env=ENV,check=True)
-    record('Super+A task prompt accepts real Fcitx pinyin and Space commits 中文 in the read-only fullscreen viewer')
-    send('mods 4');send('key 29 1');send('key 28 1');send('key 28 0');send('key 29 0');send('mods 0')
-    wait(lambda:prompt_draft()['submitted']=='中文')
-    wait(lambda:prompt_draft()['error']!='')
-    assert prompt_draft()['text']=='中文'
-    # Do not turn a pending pinyin candidate into Latin text by committing it
-    # programmatically. Wait for the user's actual candidate selection.
-    send('type nihao');wait(lambda:prompt_draft()['preedit']!='')
-    layer=next(item for item in ctl('layers',True)['human']['levels']['3'] if item['namespace']=='cornice-agent-prompt')
-    button=prompt_draft()['run']
-    send(f"motion {round(layer['x']+button['x']+button['width']/2)} {round(layer['y']+button['y']+button['height']/2)}")
-    send('button 272 1');send('button 272 0')
-    wait(lambda:'候选词' in prompt_draft()['error'])
-    assert prompt_draft()['submitted']=='中文' and prompt_draft()['preedit']!=''
-    send('key 57 1');send('key 57 0')
-    wait(lambda:prompt_draft()['text']=='中文你好')
-    send('button 272 1');send('button 272 0')
-    wait(lambda:prompt_draft()['submitted']=='中文你好')
-    wait(lambda:prompt_draft()['error']!='')  # Isolated HOME has no model credentials.
-    assert prompt_draft()['text']=='中文你好'
-    record('pending pinyin cannot submit raw Latin text; candidate selection and UTF-8 submission preserve the Chinese draft on startup error')
-    send('key 1 1');send('key 1 0')
-    wait(lambda:not json.loads(shell('ipc','desktop','status'))['prompt']['open'])
     shell('ipc','desktop','observe','')
     ok('dispatch hl.dsp.focus({window="title:^human-window$"})')
     wait(lambda:ctl('seat input-target',True).get('seatName')=='Hyprland' and ctl('seat input-target',True).get('allowed'))
@@ -173,23 +135,6 @@ try:
     assert not (BASE/'private0.txt').exists()
     record('native GTK Chinese composition returns after repeated readonly presentation switches; observed application remains untouched')
     cli('resume','private0')
-    binding=bind('private0')
-    import hashlib
-    own_env=dict(ENV,CORNICE_SHELL_SOCKET=str(RT/('cs-'+hashlib.sha256(ENV['HYPRLAND_INSTANCE_SIGNATURE'].encode()).hexdigest()[:8]+'-private0.sock')))
-    shot=tool(binding,'capture')
-    tool(binding,'input',{'frameId':shot['frameId'],'action':'chord','keys':['SUPER','a']})
-    wait(lambda:prompt_draft(own_env)['focused'])
-    time.sleep(.5)
-    # Automation's text action deliberately bypasses IME conversion; native
-    # human takeover below exercises this seat's real pinyin path separately.
-    shot=tool(binding,'capture')
-    tool(binding,'input',{'frameId':shot['frameId'],'action':'text','text':'中文'})
-    wait(lambda:prompt_draft(own_env)['text']=='中文')
-    shot=tool(binding,'capture')
-    (BASE/'agent-task-chinese.png').write_bytes(base64.b64decode(shot['pngBase64']))
-    record('independent desktop shell receives composed Unicode from the real automation API; primary input remains isolated')
-    shot=tool(binding,'capture')
-    tool(binding,'input',{'frameId':shot['frameId'],'action':'chord','keys':['Escape']})
     cli('pause','private0')
     shell('ipc','desktop','observe','private0')
     wait(lambda:json.loads(shell('ipc','desktopObserver','status'))['presentation'].get('active'))

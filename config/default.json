@@ -101,7 +101,7 @@
     "zone": null
   },
   "agentDesktop": {
-    "enabled": false,
+    "enabled": true,
     "desktops": []
   }
 }

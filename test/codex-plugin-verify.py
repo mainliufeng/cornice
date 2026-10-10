@@ -26,14 +26,18 @@ try:
  skills=request('skills/list',{'cwds':[root],'forceReload':True})
  skill=next(item for entry in skills['data'] for item in entry['skills'] if item.get('pluginId')=='cornice@cornice-local')
  assert skill['enabled'] and skill['name']=='cornice:cornice-desktop'
+ assert '/0.3.0/' in skill['path']
  assert Path(skill['path']).read_text()==(Path(root)/'plugins/cornice/skills/cornice-desktop/SKILL.md').read_text()
  result=request('mcpServerStatus/list',{})
  server=next(item for item in result['data'] if item['pluginId']=='cornice@cornice-local')
- assert server['toolsError'] is None and len(server['tools'])==24
+ assert server['toolsError'] is None and len(server['tools'])==26
  assert server['serverInfo']['name']=='cornice-desktop'
+ assert server['serverInfo']['version']=='0.3.0',server['serverInfo']
+ assert {'desktop_acquire','desktop_snapshot','desktop_action'} <= set(server['tools'])
+ assert json.loads((Path(root)/'plugins/cornice/.mcp.json').read_text())['mcpServers']['cornice']['env']=={'CORNICE_HARNESS':'codex'}
  report={'skill':skill['name'],'plugin':server['pluginId'],'tools':sorted(server['tools']),'artifacts':home}
  (Path(home)/'result.json').write_text(json.dumps(report,indent=2))
- print('PASS actual Codex plugin install, canonical skill discovery and 24 live shared MCP tools; '+home)
+ print('PASS actual Codex plugin install, canonical skill discovery and 26 live shared MCP tools; '+home)
 finally:
  p.stdin.close()
  try:p.wait(timeout=8)

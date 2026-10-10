@@ -65,7 +65,7 @@ DRM card 设备、宿主 Wayland/X11 socket、systemd 与系统 D-Bus 均不可�
 ## 构建与隔离测试
 
 原生组件依赖 CMake、Ninja、Qt 6 Core/Gui/Network/Quick/Qml/WebSockets/DBus、PAM、Wayland client、
-wayland-scanner、xkbcommon。测试另需 bubblewrap、Mutter、GTK 3/Pycairo 的 Python GI、Pillow、grim、xmessage 及已构建的 fork。
+wayland-scanner、xkbcommon、AT-SPI 2（Arch 的 `at-spi2-core`）与 GLib。测试另需 bubblewrap、Mutter、GTK 3/Pycairo 的 Python GI、Pillow、grim、xmessage 及已构建的 fork。
 兼容验证会运行系统 Google Chrome、kitty 和 Qt/Quickshell 客户端。
 
 ```bash
@@ -173,13 +173,13 @@ CLI 自己生成新 ID；需要重试语义的执行器应直接使用 JSON 协�
 
 ## Cornice 全屏桌面切换与接管
 
-状态栏直接显示「人 / 各 Agent」按钮。圆点表示运行（绿）、暂停（灰）、接管（主题色）
-或不可用（红）；「管理」打开创建、移除和状态管理面板。点击 Agent 打开覆盖整个输出的
-桌面视图，顶部保留同样的切换入口、真实状态和运行/暂停按钮。
+状态栏的桌面组提供桌面选择、真实控制状态和 Harness 身份；可以显示或隐藏浮动预览。
+选择另一个桌面打开覆盖输出的原生观察视图，接管是独立的明确动作。当前 UI 合同见
+[桌面产品边界](agent-desktop-product.md) 与 DESIGN.md。
 
 默认只看：应用画面由 Hyprland 直接合成到物理输出。Cornice 只管理选择、浏览和控制授权，
 没有截图播放窗口、CPU 图像传输或键鼠转发。只读时应用不接收人的输入；Workspace
-栏和 Super+数字只改变观察位置，不改变 Agent 的当前 Workspace。任务编辑框可以接受输入。
+栏和 Super+数字只改变观察位置，不改变该桌面的当前 Workspace。Cornice 不提供任务编辑框。
 
 点击「接管」撤销旧 Agent 设备、截图凭证和 CDP 权限，再由 Hyprland 把物理键鼠直接
 路由到目标 seat。应用快捷键、窗口快捷键、拖动、滚动及该 seat 的原生输入法都在
@@ -230,7 +230,7 @@ guard 持有 sleep block/delay 和 lid inhibitor；启用后使用 Cornice 的 s
 
 ## Agent 浏览器的 CDP
 
-内置 Pi 执行器现已接入：`desktop_browser_connect` 授权连接后提供 Playwright MCP 元素树及语义操作，浏览器优先读树。依赖安装、截图兜底、原生 AT-SPI 边界及 Codex 对照见 [Agent 的观察路线](agent-observation.md)。
+外部 Codex、Pi 等 Harness 通过共享 MCP 操作桌面：`desktop_browser_connect` 授权连接后提供 Playwright MCP 元素树及语义操作，浏览器优先读树。依赖安装、截图兜底、原生 AT-SPI 边界及 Codex 对照见 [Agent 的观察路线](agent-observation.md)。
 
 ```bash
 cornice desktop tool /tmp/writer.binding.json desktop.browser
@@ -258,8 +258,8 @@ agent 工具完全绕开这个人的适配器。系统 Hyprland 包与原 hyprla
 ## 本轮验收边界
 
 验证的是 CLI/JSON 桌面工具和真实 cornice 界面，未假定任何模型执行器已经接入。
-调用工具的进程应由现有执行器启动，并将 binding 作为其桌面工具上下文。具体任务
-运行、取消及状态同步需下一阶段接对应执行器，不从 seat 状态推断任务正在运行。
+调用工具的进程由外部 Harness 启动，通过 desktop_acquire 获取桌面引用。具体任务
+运行、取消及历史属于 Harness；Cornice 展示真实租期和当前 Harness，不从 seat 存在推断执行结果。
 
 原生展示复用 Hyprland 输出的 damage 和刷新调度。回归读取实际应用画面的时钟像素，
 同时核对合成器场景帧数；Cornice 不再计时抓帧。具体结果记入验证记录，

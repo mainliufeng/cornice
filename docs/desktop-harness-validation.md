@@ -1,22 +1,29 @@
-# Unified desktop integration validation
+# External harness desktops — validation
 
-2026-10-09. Cornice remains on `codex/agent-desktop-recovery`; Hyprland remains on `codex/cornice-agent-desktop`. No main branch was merged. Hyprland candidate reports commit `054534629b3c6bb3bbcfd949aafb70529dcc98c5`.
+2026-10-10. Cornice stays on `codex/agent-desktop-recovery`; Hyprland stays on `codex/cornice-agent-desktop` (`fa3b70a2093a578134b9f4ccc0882bfacd318f82`). No main branch or running desktop session is changed by these tests.
 
-## Actual execution
+## Product exercised
 
-- `desktop-harness-verify.py`: real isolated Hyprland/Broker, primary and two secondary desktops, standard MCP client, full-resolution JPEG, GTK Unicode input and fresh-frame rejection. Both primary and secondary managed Chrome complete the same tree/type/click form task. Permissions off, competing harness, detach, native takeover, lost heartbeat, full lock and Broker restart revoke control as expected.
-- `codex-plugin-verify.py`: actual installed Codex 0.160.1 installs the local marketplace/plugin in an independent configuration directory, discovers `cornice:cornice-desktop`, starts the bundled MCP and lists 23 live tools. Plugin installation does not grant a desktop.
-- `agent-browser-model-verify.py`: actual Pi 1.1.0 and configured DeepSeek gateway complete a real browser form using shared MCP trees, with zero images and the primary desktop unchanged.
-- `agent-model-verify.py`: actual model operates GTK through the shared MCP, verifies Chinese input/click, waits through native human takeover, resumes after explicit restoration, chooses cancellation when appropriate, and stops on user cancellation. Duplicate submissions leave the active job intact.
-- `desktop-switcher-verify.py`: real bar/menu clicks, read-only observation, native pointer/keyboard/Fcitx, focus cycling, fullscreen/floating/drag/launch/close, workspace shortcuts, scrolling, laptop resolution, session lock and UI/Broker crash recovery. The Agent permission switch preserves human takeover input.
-- `human-lock-verify.py`: 17 checks covering ordinary/full lock, CDP revocation, native authentication, guardian death, inhibitor/suspend/resume and output loss. Host sleep and lock are never invoked.
-- `session-trial-verify.py`: real isolated login hook, new primary desktop health contract, one-shot consumption, supervisor/compositor failures, bounded shutdown and rollback.
-- `headless-verify.sh`: 321 shell checks pass, including primary window/workspace widgets and no QML errors.
-- `install-test.sh` and `install-verify.sh`: installer checks and fresh committed-tree installation pass; plugin, skill and MCP source files are included.
-- `agent-runtime-protocol-verify.py`: 25 regressions pass. `mcp-transport-verify.mjs` checks actual SDK transport, bridge errors, environment stripping, terminal control and equality with the pinned real Playwright tool schemas. `agent-screenshot-verify.ts` loads the actual thin Pi extension and checks historical-image pruning.
+- Fresh Broker and trial deployment create primary `main` plus one empty, paused secondary `desktop2`. Recovered desktops are preserved; additional desktops are created only by explicit requests or allocation when all eligible desktops are occupied.
+- Codex plugin 0.3.0 and Pi package 0.3.0 both use the same local STDIO MCP with 26 tools. Real installed Codex/Pi discover the skill, load the extension and start the MCP in private temporary configurations. No model gateway or Cornice-owned task executor is involved.
+- Real MCP tasks reuse idle desktops, create additional empty desktops under competition, preserve applications on reuse, and keep independent task references even within one MCP process. Primary requires explicit selection and its pre-enabled permission. Pause, takeover, lost heartbeat, stale owners and full lock reject old control.
+- GTK and Qt windows expose actual AT-SPI roles, text, states, actions and geometry. Tests start with both accessibility flags disabled and no accessibility-forcing environment, map the applications, then enable and read them through the actual helper. Unicode semantic editing and clicking affect only the authorized window. Missing/ambiguous windows, wrong task references, expired trees, changed workspaces, missing `setText` text and unsupported trees fail explicitly.
+- Browser tasks use the existing authorized CDP grant and pinned Playwright tree/actions, with independent managed browser profiles. Actual Chrome navigation, snapshots, Unicode editing and lifecycle interruption are exercised.
+- The primary desktop shows live read-only thumbnails labelled with desktop number, Harness and activity. Actual pointer interactions exercise grouped bar selection, hide/restore, dragging and entering the native full desktop view. Screen shrinking/card count changes keep the shelf visible on the primary output. A real lock invalidation clears cached thumbnail images immediately.
+- Native full desktop observation/takeover remains compositor presentation. Real physical pointer, keyboard, Chinese IME, focus/fullscreen, workspace shortcuts, application launch/close and scrolling are exercised. Pausing the Broker does not turn physical takeover input into a screenshot/input forwarding loop.
 
-## Delivery and scope
+## Responsiveness and failure handling
 
-All destructive lock/suspend/input tests use a separate compositor/device/PID/bus environment and fixture applications. Real model tests send only test application content. Native accessibility trees are still unavailable; browser observation uses the pinned Playwright implementation. This is a same-user coordination boundary, not an OS sandbox.
+AT-SPI reads/actions run asynchronously in bounded helper processes. A stalled application may reach the approximately 3.5-second native request budget, while other desktop status calls remain responsive and presentation/control heartbeats continue. Tests cover independent MCP clients and two task references sharing one MCP process, request deduplication and cancellation after owner/control loss. No uncertain mutation is blindly replayed.
 
-The new compositor and Cornice must be selected together at a new login; replacing the running compositor would end the current session. The existing one-shot trial mechanism prepares an immutable candidate, preserves the current desktop, and supports `cornice-session-trial cancel` before login and the existing rollback shortcut afterwards. Integration instructions are in [desktop-harness.md](desktop-harness.md).
+Real session-trial tests verify one-shot login preparation, primary/secondary health, normal `main.available=false` during native observation, dynamic extra desktops, initialization deadlines, full lock, missing required seats, supervisor failures and rollback. These tests never lock, suspend or restart the user's session.
+
+## Reproducible checks
+
+Run `make check`, `test/install-test.sh`, `test/headless-verify.sh`, `test/install-verify.sh` and the actual transport/plugin tests. Native product integration uses `test/isolated-desktop-test.sh` with `desktop-acquire-verify.py`, `desktop-harness-verify.py`, `native-accessibility-verify.py`, `desktop-switcher-verify.py`, `desktop-preview-verify.py`, `ime-session-verify.py` and `session-trial-verify.py`. The native responsiveness suite is included alongside these checks. Test doubles are confined to fixtures; the production application tree is never fabricated.
+
+## Deployment and limits
+
+The tested Cornice copy and matching Hyprland binary are prepared as an immutable future-login candidate. The current live release remains active until a new login; `cornice-session-trial cancel` cancels the pending candidate before login. Existing rollback remains available after login. Codex/Pi plugin installation does not itself replace the running compositor.
+
+Applications must expose an accessible AT-SPI tree for native semantic actions. Unsupported applications retain desktop capture/input; visual content may still require screenshots. These are same-user desktop coordination and control boundaries, not separate Linux-user/OS sandboxes. Ordinary Hyprvoice remains an independent installed application; Cornice's removed task editor and its special voice routing are not required by the external Harness interface.

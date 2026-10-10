@@ -1,3 +1,5 @@
+> 历史设计/验证记录：内置任务编辑、执行器和 prompt 专属输入/语音路径现已删除；现行外部 Harness 用法见 desktop-harness.md。
+
 # 原生 Agent 桌面验证 · 2026-10-09
 
 Cornice：`codex/agent-desktop-recovery`；Hyprland：`codex/cornice-agent-desktop`。

@@ -35,87 +35,27 @@ Item {
     return definition && definition.label || String(name).replace(/^agent([0-9]+)(?:-[0-9a-f]{8})?$/, "Agent $1")
   }
   function stateLabel(desktop) {
-    return desktop.error || !desktop.available ? "不可用" : desktop.controlMode === "human" ? "人工控制" : desktop.paused ? "已暂停" : "Agent 控制"
+    const prefix = desktop.occupied === true ? harnessLabel(desktop) + " · " : ""
+    if (desktop.humanLocked) return prefix + "已锁定"
+    if (desktop.primary && desktop.controlMode === "human") return prefix + "人工控制"
+    if (desktop.error || !desktop.available) return prefix + "不可用"
+    if (desktop.controlMode === "human") return prefix + "人工接管"
+    if (desktop.occupied === true) return prefix + (desktop.paused ? "已暂停" : "操作中")
+    return "空闲"
   }
-  property var tasks: ({})
-  property var modelConfig: ({})
-  property string taskError: ""
-  property var submissionErrors: ({})
-  function submissionResult(name, error) {
-    const errors = Object.assign({}, submissionErrors)
-    if (error) errors[name] = error
-    else delete errors[name]
-    submissionErrors = errors
+  property var hiddenPreviews: ({})
+  readonly property var activeDesktops: desktops.filter(item => !item.primary && item.occupied === true)
+  function harnessLabel(desktop) {
+    const name = String(desktop.harness || "")
+    return ({codex:"Codex",pi:"Pi"})[name.toLowerCase()] || name || "外部 Agent"
   }
-  property bool taskRefreshPending: false
-  property var notifiedTasks: ({})
-  function refreshTasks() {
-    if (!enabled) return
-    if (taskStatus.running) { taskRefreshPending = true; return }
-    taskRefreshPending = false
-    taskStatus.running = true
-  }
-  function reportTaskFailures() {
-    if (DesktopSession.agentShell) return
-    const seen = Object.assign({}, notifiedTasks)
-    for (const name of Object.keys(tasks)) {
-      const task = tasks[name]
-      if (!task.runId || !["failed", "needs_attention", "blocked"].includes(task.phase)) continue
-      const key = task.runId + ":" + task.phase
-      if (seen[name] === key) continue
-      seen[name] = key
-      Quickshell.execDetached(["notify-send", "--app-name=cornice", "--urgency=critical", "--expire-time=10000",
-        desktopLabel(name) + " · " + (task.phase === "blocked" ? "任务受阻" : "任务未能执行"), String(task.message || "请查看任务状态。")])
-    }
-    notifiedTasks = seen
-  }
-  function prompt(name) { taskPrompt.open(name) }
-  function cancelTask(name) {
-    if (taskCancel.running) return
-    taskCancel.command = [prefix + "/bin/cornice-agent-runtime", "cancel", name]
-    taskCancel.running = true
-  }
-  DesktopTaskPrompt {id:taskPrompt;service:root}
-  Process {
-    id: modelStatus; command:[root.prefix + "/bin/cornice-agent-runtime", "config-status"];running:root.enabled
-    stdout:StdioCollector {onStreamFinished: {try {root.modelConfig = JSON.parse(text)} catch(e) {}}}
-  }
-  Timer {interval:1000;repeat:true;running:root.enabled;triggeredOnStart:true;onTriggered:root.refreshTasks()}
-  Process {
-    id:taskStatus;command:[root.prefix + "/bin/cornice-agent-runtime", "status-all"]
-    property bool validReply: false
-    property string readError: ""
-    onStarted: { validReply = false; readError = "" }
-    stdout:StdioCollector {
-      onStreamFinished: {
-        try {
-          const result = JSON.parse(text)
-          if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("invalid status")
-          for (const name of Object.keys(result)) {
-            const task = result[name]
-            if (!task || typeof task !== "object" || Array.isArray(task) || typeof task.phase !== "string" || task.phase.trim() === "")
-              throw new Error("无效任务状态：" + name)
-          }
-          root.tasks = result; taskStatus.validReply = true; root.taskError = ""; root.reportTaskFailures()
-        } catch(e) { taskStatus.validReply = false; taskStatus.readError = "任务状态读取失败：" + String(e.message || "当前显示可能已过期。") }
-      }
-    }
-    stderr:StdioCollector {onStreamFinished:if (text.trim() !== "") taskStatus.readError = "任务状态读取失败：" + text.trim()}
-    onExited: code => {
-      if (code !== 0 || !validReply) root.taskError = readError || "任务状态读取失败，当前显示可能已过期。"
-      if (root.taskRefreshPending) root.refreshTasks()
-    }
-  }
-  Process {
-    id:taskCancel
-    stderr:StdioCollector {onStreamFinished:if (text.trim() !== "") root.taskError = text.trim()}
-    onExited:root.refreshTasks()
-  }
+  function previewVisible(name) { return hiddenPreviews[name] !== true }
+  function hidePreview(name) { hiddenPreviews = Object.assign({}, hiddenPreviews, {[name]:true}) }
+  function restorePreviews() { hiddenPreviews = ({}) }
   Connections {
     target:Hyprland
     function onRawEvent(event) {
-      if (event.name === "seatworkspace" || event.name === "seatpresentation" || event.name === "seatcontrol") root.refresh()
-      if (event.name === "seatcontrol") root.refreshTasks()
+      if (["seatworkspace", "seatpresentation", "seatcontrol"].includes(event.name)) root.refresh()
     }
   }
   property bool available: false
@@ -172,7 +112,7 @@ Item {
     stdout: StdioCollector {
       onStreamFinished: {
         try {
-          const result = JSON.parse(text); root.desktops = result.desktops || []
+          const result = JSON.parse(text); root.desktops = (result.desktops || []).sort((a,b) => Number(a.number || 0) - Number(b.number || 0))
           root.workspaces = result.workspaces || []; root.available = true; root.error = ""; root.bootstrap()
         } catch (e) { root.available = false; root.desktops = [] }
       }
@@ -194,11 +134,11 @@ Item {
     target: "desktop"
     function status(): string {
       return JSON.stringify({enabled: root.enabled, available: root.available, desktops: root.desktops,
-        selected: root.selectedDesktop, prompt: {open:taskPrompt.opened,name:taskPrompt.name}, tasks: root.tasks, taskError:root.taskError, submissionErrors:root.submissionErrors, model: root.modelConfig, error: root.error, socket: root.socketPath, busy: root.busy})
+        selected: root.selectedDesktop, active: root.activeDesktops.map(item => item.name), hiddenPreviews:root.hiddenPreviews,
+        error: root.error, socket: root.socketPath, busy: root.busy})
     }
-    function prompt(name: string): string { root.prompt(name); return "opened" }
-    function refreshTasks(): string { root.refreshTasks(); return "requested" }
-    function promptDraft(): string { return JSON.stringify(taskPrompt.draft()) }
+    function restorePreviews(): string { root.restorePreviews(); return "ok" }
+    function hidePreview(name: string): string { root.hidePreview(name); return "ok" }
     function observe(name: string): string {
       if (!root.available) return "desktop-unavailable"
       return root.show(name)

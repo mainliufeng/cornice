@@ -8,7 +8,11 @@ Item {
   property string description: "桌面"
   property bool alert: false
   property var entries: []
+  property var stableEntries: []
+  onEntriesChanged: if (JSON.stringify(entries) !== JSON.stringify(stableEntries)) stableEntries = entries
+  Component.onCompleted: stableEntries = entries
   property bool opened: false
+  property int badge: 0
   // Extend the popup's hit area through the gap below the icon. Its visible
   // content still starts at the bar edge, so slow pointer travel stays inside.
   readonly property real bridgeHeight: root.QsWindow.window
@@ -20,7 +24,7 @@ Item {
     const out = [{name: "menu", x: root.x, y: root.y, width: root.width, height: root.height}]
     if (opened) for (let i = 0; i < items.count; ++i) {
       const item = items.itemAt(i)
-      out.push({name: item.modelData.key, x: popup.margins.left, y: popup.margins.top + column.y + item.y,
+      out.push({name: item.modelData.key, x: popup.margins.left, y: popup.margins.top + root.bridgeHeight + item.y - menuScroll.contentY,
         width: item.width, height: item.height, enabled: item.enabled, label: item.modelData.label, detail:item.modelData.detail || "",
         detailHeight:item.detailHeight, alert:item.modelData.alert === true})
     }
@@ -30,6 +34,7 @@ Item {
     anchors.fill: parent; radius: Style.radius
     color: mouse.containsMouse || root.opened ? Color.hover : "transparent"
     Text { anchors.centerIn: parent; text: root.icon; color: Color.foreground; font.family: Style.iconFamily; font.pixelSize: Style.fontSize + 3 }
+    Text {anchors.right:parent.right;anchors.bottom:parent.bottom;visible:root.badge > 0;text:root.badge;font.pixelSize:Style.smallFontSize;color:Color.foreground}
     Rectangle {anchors.right:parent.right;anchors.top:parent.top;width:7;height:7;radius:3.5;visible:root.alert;color:Color.urgent}
     MouseArea {
       id: mouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
@@ -43,7 +48,7 @@ Item {
     id: popup
     screen: root.QsWindow.window ? root.QsWindow.window.screen : null
     visible: root.opened
-    implicitWidth: Style.space(38); implicitHeight: column.implicitHeight + root.bridgeHeight
+    implicitWidth: Style.space(38); implicitHeight: Math.min(column.implicitHeight + root.bridgeHeight, (screen ? screen.height : 1080) - Style.barHeight - Style.space(2))
     exclusionMode: ExclusionMode.Ignore; color: "transparent"; focusable: false
     anchors { top: true; left: true }
     margins.top: Style.barHeight - root.bridgeHeight
@@ -55,17 +60,23 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "cornice-desktop-menu"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    Rectangle {y:root.bridgeHeight;width:parent.width;height:column.implicitHeight;color:Color.panel}
+    Rectangle {y:root.bridgeHeight;width:parent.width;height:parent.height-root.bridgeHeight;color:Color.panel}
     // Track the whole popup independently of its periodically rebuilt rows.
     // A sibling MouseArea loses hover to the clickable row MouseAreas.
     HoverHandler {
       id: popupHover; parent: popup.contentItem; blocking: false
       onHoveredChanged: { if (hovered) closeDelay.stop(); else closeDelay.restart() }
     }
+    Flickable {
+      id:menuScroll
+      y:root.bridgeHeight
+      width:parent.width;height:parent.height-root.bridgeHeight
+      contentHeight:column.implicitHeight
+      clip:true;boundsBehavior:Flickable.StopAtBounds
     Column {
-      id: column; y:root.bridgeHeight; width: parent.width
+      id: column; width: parent.width
       Repeater {
-        id: items; model: root.entries
+        id: items; model: root.stableEntries
         delegate: Rectangle {
           required property var modelData
           property real detailHeight: detailText.visible ? detailText.implicitHeight : 0
@@ -94,6 +105,7 @@ Item {
           }
         }
       }
+    }
     }
   }
 }

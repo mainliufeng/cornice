@@ -1,6 +1,6 @@
 {
   "name": "cornice-pi",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Operate task-owned Cornice desktops from your own Pi session.",
   "pi": {

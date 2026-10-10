@@ -3,7 +3,7 @@
 #
 #   ./install.sh                 symlink the CLI into ~/.local/bin, check deps
 #   ./install.sh --copy          copy instead of symlink (no dev-tree coupling)
-#   ./install.sh --desktop       also build/install optional agent desktop native components
+#   ./install.sh --desktop       also build/install optional desktop native components
 #   ./install.sh --prefix /usr/local
 #   ./install.sh --takeover      also hand the session over (mako/hypridle/…)
 #   ./install.sh --service       install + enable the systemd user service
@@ -48,6 +48,8 @@ fi
 
 bindir="$prefix/bin"
 libdir="$prefix/share/cornice"
+# The internal executor is retired. Upgrades must not leave its old entry point.
+retired_helpers=(cornice-agent-runtime)
 ok() { printf '  \033[32mok\033[0m    %s\n' "$1"; }
 warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
 bad() { printf '  \033[31mfail\033[0m  %s\n' "$1"; }
@@ -63,6 +65,13 @@ if ((uninstall)); then
     if [[ -L $target || -f $target ]]; then
       rm -f "$target"
       ok "removed $target"
+      removed=1
+    fi
+  done
+  for name in "${retired_helpers[@]}"; do
+    if [[ -e $bindir/$name || -L $bindir/$name ]]; then
+      rm -f -- "$bindir/$name"
+      ok "removed retired helper $name"
       removed=1
     fi
   done
@@ -122,12 +131,20 @@ fi
 # ---------------------------------------------------------------------------
 step "Installing"
 if ((desktop)); then
-  command -v npm >/dev/null 2>&1 || { bad "npm is required for Agent browser tools"; exit 1; }
+  command -v pkg-config >/dev/null 2>&1 && pkg-config --exists atspi-2 \
+    || { bad "at-spi2-core is required for native application trees"; exit 1; }
+  command -v npm >/dev/null 2>&1 || { bad "npm is required for desktop browser tools"; exit 1; }
   npm ci --prefix "$repo/native/agent" --omit=dev --ignore-scripts --no-audit --no-fund
   cmake -S "$repo/native/desktop" -B "$repo/native/build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
   cmake --build "$repo/native/build" -j4
 fi
 mkdir -p "$bindir"
+for name in "${retired_helpers[@]}"; do
+  if [[ -e $bindir/$name || -L $bindir/$name ]]; then
+    rm -f -- "$bindir/$name"
+    ok "removed retired helper $name"
+  fi
+done
 installed=0
 
 if ((copy)); then

@@ -39,3 +39,40 @@ class DesktopPresentation : public QObject {
     QByteArray m_input;
     bool m_active = false, m_pending = false, m_present = true, m_refresh = false;
 };
+
+#include <QImage>
+#include <QQuickPaintedItem>
+
+// Read-only low-rate preview. Never owns a seat or forwards pointer/keyboard input.
+class DesktopThumbnail : public QQuickPaintedItem {
+    Q_OBJECT
+    QML_ELEMENT
+    Q_PROPERTY(QString socketPath MEMBER m_socketPath NOTIFY targetChanged)
+    Q_PROPERTY(QString desktop MEMBER m_desktop NOTIFY targetChanged)
+    Q_PROPERTY(bool active MEMBER m_active NOTIFY targetChanged)
+    Q_PROPERTY(QString error READ error NOTIFY statusChanged)
+    Q_PROPERTY(int frameCount READ frameCount NOTIFY statusChanged)
+    Q_PROPERTY(bool hasFrame READ hasFrame NOTIFY statusChanged)
+    Q_PROPERTY(int invalidations READ invalidations NOTIFY statusChanged)
+  public:
+    explicit DesktopThumbnail(QQuickItem *parent = nullptr);
+    void paint(QPainter *painter) override;
+    QString error() const { return m_error; }
+    int frameCount() const { return m_frameCount; }
+    bool hasFrame() const { return !m_image.isNull(); }
+    int invalidations() const { return m_invalidations; }
+  signals:
+    void targetChanged();
+    void statusChanged();
+  private:
+    void reset();
+    void request();
+    void unavailable(const QString &error);
+    QLocalSocket m_socket;
+    QTimer m_poll, m_timeout;
+    QString m_socketPath, m_desktop, m_error, m_id;
+    QByteArray m_input;
+    QImage m_image;
+    bool m_active = false, m_pending = false;
+    int m_frameCount = 0, m_invalidations = 0;
+};

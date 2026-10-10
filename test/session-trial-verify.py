@@ -49,6 +49,11 @@ def ended(process, reason=None):
 
 try:
     SENTINEL = initialize(xwayland=True)
+    # This compositor only guards the existing primary scene. The real login
+    # trial refuses parallel Hyprland sessions outside this private sandbox;
+    # retire the unused sentinel secondary to avoid wl_serial socket collisions
+    # between the two test compositors sharing one runtime directory.
+    cli("remove", "desktop2")
     BASELINE = human_state()
     TEST_ENV = ENV.copy()
     TEST_ENV.pop("HYPRLAND_INSTANCE_SIGNATURE")
@@ -144,27 +149,64 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     compositor_environment = pathlib.Path('/proc/' + str(info["compositorPid"]) + '/environ').read_bytes().split(b'\0')
     assert b'HYPRLAND_NO_SD_VARS=1' in compositor_environment and b'HYPRLAND_NO_SD_TARGET=1' in compositor_environment
     shell_environment = pathlib.Path('/proc/' + str(info["shellPid"]) + '/environ').read_bytes().split(b'\0')
-    assert b'QT_IM_MODULE=fcitx' in shell_environment and b'GTK_IM_MODULE=fcitx' in shell_environment
+    broker_environment = pathlib.Path('/proc/' + str(info['brokerPid']) + '/environ').read_bytes().split(b'\0')
+    assert b'QT_IM_MODULE=fcitx' in broker_environment and b'GTK_IM_MODULE=fcitx' in broker_environment
+    assert b'QT_IM_MODULE=wayland' in shell_environment and b'GTK_IM_MODULE=fcitx' in shell_environment
     assert b'CORNICE_TRIAL_ENV_PROBE=from-lua' in shell_environment
     assert not pathlib.Path(info['run'], 'launch-environment').exists()
-    record("supervised Cornice inherits actual Lua IME and application environment; temporary export is removed")
+    record("supervisor exports actual Lua application environment; only Cornice Qt selects native Wayland IME and the temporary export is removed")
     selected = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
     cli_path = release / "cornice/bin/cornice"
     desktops = json.loads(subprocess.check_output([str(cli_path), "desktop", "list"],
         env=selected | {"CORNICE_PATH": str(release / "cornice")}, text=True))["desktops"]
-    assert len(desktops) == 4 and desktops[0]["primary"] and desktops[0]["agentAllowed"] is False, desktops
+    assert len(desktops) == 2 and desktops[0]["primary"] and desktops[0]["agentAllowed"] is False, desktops
     assert all(d["humanLockPolicy"] == "continue" and d["paused"] for d in desktops if not d["primary"]), desktops
     (BASE / "trial-initial-desktops.json").write_text(json.dumps(desktops, indent=2))
-    record("three real deployment seats explicitly allow human-lock continuation but remain initially paused without input grants")
+    record("one real default secondary desktop explicitly retains deployment human-lock continuation and remains initially paused without input grants")
     # Both the human shell and all private shells share this right-side layout.
     socket_prefix = __import__('hashlib').sha256(info["instance"].encode()).hexdigest()[:8]
-    for name in ("", "agent1", "agent2", "agent3"):
+    for name in ("", "desktop2"):
         socket_name = f"cs-{socket_prefix}-{name}.sock" if name else f"cornice-{os.environ['USER']}.sock"
         target_env = selected | {"CORNICE_PATH": str(release / "cornice"), "CORNICE_SHELL_SOCKET": str(RT / socket_name)}
         geometry = json.loads(subprocess.check_output([str(cli_path), "ipc", "bar", "geometry"], env=target_env, text=True))
         controls = [entry for entry in geometry if entry["id"] == "cn.agent-desktop"]
         assert len(controls) == 1 and controls[0]["section"] == "right", (name, controls)
-    record("human and all Agent bars render exactly one configured right-side switch/status control")
+    record("both default desktop bars render exactly one configured right-side grouped desktop control")
+    command_env = selected | {"CORNICE_PATH": str(release / "cornice")}
+    subprocess.run([str(cli_path), "desktop", "create", "dynamic-third", "--virtual-output", "1280x800"],
+                   env=command_env, check=True, capture_output=True)
+    wait(lambda: "dynamic-third" in status()["current"].get("desktops", []) and not status()["current"].get("initializingDesktops") and status()["current"]["healthFailures"] == 0, 12)
+    for _ in range(6):
+        assert status()["running"] and status()["current"]["healthFailures"] == 0, status()
+        assert human_state() == BASELINE and SENTINEL.poll() is None
+        time.sleep(.5)
+    record("an on-demand third desktop with a real output/bar passes ongoing health checks without ending the healthy session")
+    subprocess.run([str(cli_path), "desktop", "observe", "desktop2"], env=command_env, check=True, capture_output=True)
+    def observer():
+        return json.loads(subprocess.check_output([str(cli_path), "ipc", "desktopObserver", "status"], env=command_env, text=True))
+    wait(lambda: observer().get("presentation", {}).get("active"))
+    for _ in range(6):
+        assert status()["running"] and status()["current"]["healthFailures"] == 0, status()
+        time.sleep(.5)
+    subprocess.run([str(cli_path), "desktop", "observe", ""], env=command_env, check=True, capture_output=True)
+    wait(lambda: not observer().get("open"))
+    record("native readonly secondary presentation preserves trial health while the primary scene is hidden")
+    pam = BASE / "trial-pam"
+    pam.mkdir()
+    (pam / "permit").write_text("auth required pam_permit.so\naccount required pam_permit.so\n")
+    locker = subprocess.Popen([str(release / "cornice/native/bin/cornice-human-lock"), "--scope", "session", "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"],
+        env=command_env, stdin=subprocess.PIPE, stdout=open(BASE / "trial-lock.log", "w"), stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    PROCESSES.append(locker)
+    def locked():
+        return json.loads(subprocess.check_output([str(cli_path), "desktop", "state", "main"], env=command_env, text=True))["humanLocked"]
+    wait(locked)
+    for _ in range(6):
+        assert locker.poll() is None and status()["running"] and status()["current"]["healthFailures"] == 0, status()
+        time.sleep(.5)
+    locker.stdin.write("emergency-unlock\n");locker.stdin.flush()
+    wait(lambda: not locked())
+    locker.wait(timeout=5)
+    record("real full session lock pauses/hides desktop scenes without triggering a trial health rollback")
     subprocess.run(["grim", str(BASE / "trial-desktop.png")], env=selected, check=True, timeout=5)
     # Inspect actual registered emergency bindings, not just generated config text.
     bindings = json.loads(subprocess.check_output(["/usr/bin/hyprctl", "-j", "binds"], env=selected, text=True))
@@ -195,7 +237,7 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
         assert select.select([keyboard.stdout], [], [], 5)[0] and keyboard.stdout.readline().strip() == "done"
     ended(process, "Manual rollback")
     assert settings.read_bytes() == original_settings
-    record("real Hyprland/Cornice/three seats become ready; emergency bindings exist; confirm and rollback end only the trial")
+    record("real Hyprland/Cornice/two desktops become ready; emergency bindings exist; confirm and rollback end only the trial")
     process = login_session(); process.wait(timeout=5)
     assert process.returncode == 0 and sentinel_path.exists() and not status()["armed"]
     record("after rollback, the next SDDM login uses the unchanged normal entry without a loop")
@@ -213,6 +255,13 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
         time.sleep(.5)
     trial("rollback"); ended(process, "Manual rollback")
     record("healthy unconfirmed desktop stays running beyond obsolete --seconds deadline; manual rollback remains available")
+    trial("arm", "--seconds", "60", "--startup-seconds", "30")
+    process = login_session(); info = ready(process)
+    missing_env = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"], "CORNICE_PATH": str(pathlib.Path(info["release"]) / "cornice")}
+    subprocess.run([str(pathlib.Path(info["release"]) / "cornice/bin/cornice"), "desktop", "remove", "desktop2"],
+                   env=missing_env, check=True, capture_output=True)
+    ended(process, "Required desktops are missing")
+    record("missing the required default secondary desktop still fails health checks and returns to stable login")
     trial("arm", "--seconds", "60", "--startup-seconds", "30")
     process = login_session(); info = ready(process)
     # One transient failure must be visible and recover without logging out.
@@ -267,7 +316,7 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
         selected = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
         subprocess.run(["grim", str(BASE / "trial-native-config.png")], env=selected, check=True, timeout=5)
         trial("rollback"); ended(process, "Manual rollback")
-        record("actual migrated daily Lua config starts the real candidate with bar and three Agent desktops")
+        record("actual migrated daily Lua config starts the real candidate with bar and one secondary desktop")
     configuration.write_text('error("injected startup failure")\n')
     trial("prepare", "--hyprland", os.environ["CORNICE_TEST_HYPRLAND"], "--cornice", PRODUCT, "--config", configuration)
     trial("arm", "--seconds", "60", "--startup-seconds", "5")

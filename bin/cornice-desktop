@@ -55,7 +55,7 @@ Usage: cornice desktop [--instance SIGNATURE] COMMAND
   attach NAME HARNESS              Assign desktop and private binding to a harness
   detach HARNESS                   Revoke harness assignment
   bind NAME PRIVATE_FILE           Create a seat-bound agent credential
-  tool PRIVATE_FILE METHOD [JSON]  desktop.state/capture/windows/input/workspace/focus/launch/browser
+  tool PRIVATE_FILE METHOD [JSON]  desktop.state/capture/windows/snapshot/action/input/workspace/focus/launch/browser
   request                          Send a JSON RPC object from stdin
   observe NAME                     Open fullscreen view (read-only until takeover)
   remove NAME                      Retire the seat; preserve shared windows

@@ -2,7 +2,8 @@
   "mcpServers": {
     "cornice": {
       "command": "cornice-desktop-mcp",
-      "args": []
+      "args": [],
+      "env": {"CORNICE_HARNESS": "codex"}
     }
   }
 }
