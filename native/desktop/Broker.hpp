@@ -63,6 +63,7 @@ class Broker : public QObject {
     void save();
     void initializeSlots(const QString &name, const QJsonObject &saved = {});
     void configureDesktop(const QString &name);
+    void ensureBrowser(const QString &name, const QString &program = {}, const QStringList &arguments = {});
 
     QJsonObject acquireDesktop(const QJsonObject &, QLocalSocket *);
     void releaseAcquisition(QLocalSocket *);
@@ -94,6 +95,7 @@ class Broker : public QObject {
     QElapsedTimer m_humanHeartbeat;
     QMap<QLocalSocket *, QString> m_buffers;
     QMap<QLocalSocket *, QString> m_presentations;
+    QMap<QLocalSocket *, QJsonArray> m_localOverlays;
     QMap<QLocalSocket *, QJsonObject> m_acquisitions;
     QMap<QString, QJsonObject> m_completed;
     QMap<QString, QByteArray> m_requestHashes;

@@ -20,6 +20,17 @@ QtObject {
       "hl.dsp.exec_cmd(" + JSON.stringify(String(command)) + ")"])
     return true
   }
+  function launchApplication(argv) {
+    if (readOnly || !secondary || !argv.length) return false
+    const args = [(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice") + "/bin/cornice", "desktop", "launch", selected]
+    if (!agentShell) {
+      if (!service || !service.observer || !service.observer.humanControl || state.controlMode !== "human"
+          || !state.seatId || !state.generation) return false
+      args.push("--human-seat", String(state.seatId), String(state.generation))
+    }
+    Quickshell.execDetached(args.concat(["--"], argv))
+    return true
+  }
   function workspace(slot) {
     if (selected && selected !== "main") {
       if (!agentShell && service && service.observer && service.observer.isOpen && !service.observer.humanControl) {

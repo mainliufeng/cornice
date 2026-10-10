@@ -9,7 +9,7 @@ export CORNICE_TEST_HYPRLAND=${CORNICE_TEST_HYPRLAND:-$CORNICE_TEST_HYPRLAND_SOU
 [[ -x $CORNICE_TEST_HYPRLAND ]] || { echo 'Built fork missing' >&2; exit 1; }
 suite=${1:-desktop-recovery-verify.py}
 case "$suite" in
-  desktop-handoff-verify.py|native-accessibility-response-verify.py|native-accessibility-verify.py|desktop-acquire-verify.py|generic-seat-controller-verify.py|desktop-harness-verify.py|agent-product-verify.py|desktop-switcher-verify.py|desktop-preview-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|layout-shortcuts-verify.py|seat-focus-lifecycle-verify.py|seat-action-routing-verify.py|seat-foreign-activation-verify.py) ;;
+  voice-overlay-verify.py|launcher-seat-regression.py|desktop-handoff-verify.py|native-accessibility-response-verify.py|native-accessibility-verify.py|desktop-acquire-verify.py|generic-seat-controller-verify.py|desktop-harness-verify.py|agent-product-verify.py|desktop-switcher-verify.py|desktop-preview-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|layout-shortcuts-verify.py|seat-focus-lifecycle-verify.py|seat-action-routing-verify.py|seat-foreign-activation-verify.py) ;;
   *) echo 'Unknown isolated suite' >&2; exit 2 ;;
 esac
 product_mount=()
@@ -20,6 +20,10 @@ voice_mount=()
 if [[ $suite == voice-seat-verify.py ]]; then
   : "${CORNICE_TEST_VOICE_PROBE:?Set the built Hyprvoice seat_input_probe}"
   voice_mount=(--ro-bind "$CORNICE_TEST_VOICE_PROBE" /tmp/voice-seat-probe --setenv CORNICE_TEST_VOICE_PROBE /tmp/voice-seat-probe)
+fi
+if [[ $suite == voice-overlay-verify.py ]]; then
+  : "${CORNICE_TEST_VOICE_BINARY:?Set the built Hyprvoice binary}"
+  voice_mount=(--ro-bind "$CORNICE_TEST_VOICE_BINARY" /tmp/voice-overlay-binary --setenv CORNICE_TEST_VOICE_BINARY /tmp/voice-overlay-binary)
 fi
 artifacts=$(mktemp -d /tmp/cornice-agent-test.XXXXXX)
 mkdir -m700 "$artifacts/home"

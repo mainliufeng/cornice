@@ -127,6 +127,11 @@ int main(int argc, char **argv) {
             } else if (command == "lock-policy") {
                 params["policy"] = take(args);
             } else if (command == "launch") {
+                if (args.value(0) == "--human-seat") {
+                    args.removeFirst();
+                    params["humanSeatId"] = take(args);
+                    params["humanGeneration"] = take(args);
+                }
                 if (args.value(0) == "--")
                     args.removeFirst();
                 params["argv"] = QJsonArray::fromStringList(args);

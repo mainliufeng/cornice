@@ -77,9 +77,21 @@ done
 state=$(editor_state)
 read -r panel_x panel_y <<<"$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-panel")] | first | [.x,.y] | join(" ")')"
 editor_drag() {
-  local id="$1" destination="$2" position="$3" state sx sy dx dy
-  state=$(editor_state)
-  read -r sx sy <<<"$(jq -r --arg id "$id" '.rows[] | select(.id == $id) | [.drag.x,.drag.y] | join(" ")' <<<"$state")"
+  local id="$1" destination="$2" position="$3" state row sx sy dx dy section viewport_y viewport_bottom delta
+  for _ in $(seq 1 12); do
+    state=$(editor_state)
+    row=$(jq -c --arg id "$id" '.rows[] | select(.id == $id)' <<<"$state" | head -1)
+    [[ -n $row ]] || { fail "editor row missing: $id"; return 1; }
+    read -r sx sy <<<"$(jq -r '[.drag.x,.drag.y] | join(" ")' <<<"$row")"
+    section=$(jq -r '.section' <<<"$row")
+    viewport_y=$(jq --arg section "$section" '.columns[] | select(.section == $section) | .viewport.y | floor' <<<"$state")
+    viewport_bottom=$(jq --arg section "$section" '.columns[] | select(.section == $section) | .viewport | .y + .height | floor' <<<"$state")
+    read -r panel_x panel_y <<<"$(hyprctl layers -j | jq -r '[.. | objects | select(.namespace? == "cornice-panel")] | first | [.x,.y] | join(" ")')"
+    if (( sy >= viewport_y && sy < viewport_bottom )); then break; fi
+    if (( sy < viewport_y )); then delta=-100; else delta=100; fi
+    editor_pointer "$((panel_x + sx + 70))" "$((panel_y + viewport_y + 60))" "scroll:$delta"
+  done
+  (( sy >= viewport_y && sy < viewport_bottom )) || { fail "editor drag row could not be scrolled into view: $id"; return 1; }
   if [[ $destination == outside ]]; then dx=30; dy=30
   else
     read -r dx dy <<<"$(jq -r --arg section "$destination" --arg position "$position" '.columns[] | select(.section == $section) | [.viewport.x + 70, (if $position == "start" then .viewport.y + 4 else .viewport.y + .viewport.height - 10 end)] | map(floor) | join(" ")' <<<"$state")"

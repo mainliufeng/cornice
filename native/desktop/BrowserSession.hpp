@@ -23,6 +23,7 @@ public:
   QString endpoint(const QString &token) const;
   void revoke();
   bool running() const;
+  qint64 pid() const { return m_process.processId(); }
 
 private:
   void receive();

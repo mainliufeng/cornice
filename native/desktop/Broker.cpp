@@ -461,6 +461,7 @@ void Broker::listen() {
                 if (m_presentations.contains(socket)) compositor("seat unpresent " + m_presentations.take(socket));
                 if (m_buffers.contains(socket))
                     QFile::remove(m_buffers.take(socket));
+                m_localOverlays.remove(socket);
                 releaseAcquisition(socket);
                 delete input;
                 socket->deleteLater();
@@ -702,6 +703,24 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
     if (id.isEmpty() || id.size() > 128)
         fail("Request ID required");
     const auto method = request["method"].toString();
+    if (method == "register-local-overlay") {
+        if (!request["token"].toString().isEmpty() || !owner) fail("Local application connection required");
+        struct ucred credential{};
+        socklen_t size = sizeof(credential);
+        if (getsockopt(owner->socketDescriptor(), SOL_SOCKET, SO_PEERCRED, &credential, &size) || credential.uid != getuid())
+            fail("Local application peer required");
+        const auto spaces = request["params"].toObject()["namespaces"].toArray();
+        if (spaces.isEmpty() || spaces.size() > 8) fail("Overlay namespaces required");
+        QJsonArray routes;
+        for (const auto &value : spaces) {
+            const auto space = value.toString();
+            if (!QRegularExpression("^[a-zA-Z0-9_.-]{1,80}$").match(space).hasMatch()) fail("Invalid overlay namespace");
+            routes.append(QJsonObject{{"name", space}, {"pid", credential.pid}, {"keyboard", false}, {"localInView", true}});
+        }
+        m_localOverlays[owner] = routes;
+        for (const auto &[name, desktop] : m_desktops) configureDesktop(name);
+        return {{"ok", true}, {"id", id}, {"result", QJsonObject{{"registered", true}}}};
+    }
     if (method == "acquire-desktop") {
         if (!request["token"].toString().isEmpty() || !owner) fail("Local allocation connection required");
         return {{"ok", true}, {"id", id}, {"result", acquireDesktop(request["params"].toObject(), owner)}};
@@ -1251,7 +1270,15 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         }
         return {{"adapted", true}};
     }
-    if (m_humanOwner && m_humanBinding.name == name && (method == "resume" || method == "bind" || method == "launch"))
+    bool humanLaunch = false;
+    if ((method == "launch" || method == "desktop.launch") && params.contains("humanSeatId")) {
+        const auto actual = state(name);
+        humanLaunch = !binding && m_humanOwner && m_humanBinding.name == name &&
+            params["humanSeatId"].toString() == desktop.id && params["humanGeneration"].toString() == m_humanBinding.generation &&
+            actual["generation"].toString() == m_humanBinding.generation && actual["controlMode"] == "human";
+        if (!humanLaunch) fail("Human launch requires current takeover seat and generation");
+    }
+    if (m_humanOwner && m_humanBinding.name == name && (method == "resume" || method == "bind" || (method == "launch" && !humanLaunch)))
         fail("End human control before granting agent input");
     if (method == "resume") {
         ++desktop.inputDecision;
@@ -1308,36 +1335,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         const auto actual = state(name);
         if (!binding || actual["paused"].toBool() || !actual["available"].toBool())
             fail("Browser requires an active agent binding");
-        if (desktop.browser && !desktop.browser->running())
-            desktop.browser.reset();
-        if (!desktop.browser) {
-            auto environment = QProcessEnvironment::systemEnvironment();
-            environment.remove("WAYLAND_SOCKET");
-            environment.remove("DISPLAY");
-            environment.insert("WAYLAND_DISPLAY", actual["display"].toString());
-            environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
-            const auto profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
-                                 "/cornice/desktops/" + name + "/chrome";
-            QDir().mkpath(profile);
-            desktop.browser = std::make_unique<BrowserSession>(
-                params["executable"].toString(QStandardPaths::findExecutable("google-chrome-stable").isEmpty()
-                                                  ? QStandardPaths::findExecutable("chromium")
-                                                  : QStandardPaths::findExecutable("google-chrome-stable")),
-                QStringList{"--user-data-dir=" + profile, "--ozone-platform=wayland", "--no-first-run",
-                            "--no-default-browser-check", "about:blank"},
-                environment, m_directory + "/browser-" + name + ".log", [this, name](const QString &token) {
-                    if (!m_bindings.contains(token))
-                        return false;
-                    const auto &credential = m_bindings[token];
-                    if (credential.name != name)
-                        return false;
-                    const auto current = state(name);
-                    return current["seatId"].toString() == credential.id &&
-                           current["generation"].toString() == credential.generation && !current["paused"].toBool() &&
-                           current["available"].toBool() && managed(name).agentAllowed &&
-                           !(m_humanOwner && m_humanBinding.name == name);
-                });
-        }
+        ensureBrowser(name, params["executable"].toString());
         QString token;
         for (auto it = m_bindings.begin(); it != m_bindings.end(); ++it)
             if (&it.value() == binding) {
@@ -1350,7 +1348,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         return {{"windows", json(compositor("seat windows " + name, true)).array()}};
     if (method == "launch" || method == "desktop.launch") {
         const auto actual = state(name);
-        if ((!binding && actual["humanLocked"].toBool()) || actual["paused"].toBool() || !actual["available"].toBool())
+        if ((!binding && actual["humanLocked"].toBool()) || (actual["paused"].toBool() && !humanLaunch) || !actual["available"].toBool())
             fail("Desktop writes paused");
         const auto argv = params["argv"].toArray();
         if (argv.isEmpty() || argv.size() > 128)
@@ -1363,8 +1361,9 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         }
         const auto executable = QFileInfo(args.first()).fileName();
         const bool chromium =
-            executable == "chromium" || executable == "google-chrome" || executable == "google-chrome-stable";
-        const bool firefox = executable == "firefox";
+            executable == "chromium" || executable == "chromium-browser" || executable == "google-chrome" || executable == "google-chrome-stable" || executable == "google-chrome-beta" || executable == "google-chrome-unstable";
+        const bool firefox = executable == "firefox" || executable == "firefox-esr" || executable == "firefox-developer-edition";
+        bool browserStarted = false;
         if (chromium || firefox) {
             for (const auto &arg : args) {
                 if (arg.startsWith("--remote-debugging"))
@@ -1378,6 +1377,9 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                                  "/cornice/desktops/" + name + (chromium ? "/chrome" : "/firefox");
             QDir().mkpath(profile);
             if (chromium) {
+                browserStarted = !desktop.browser || !desktop.browser->running();
+                ensureBrowser(name, args.first(), args.mid(1));
+                if (browserStarted) return {{"pid", desktop.browser->pid()}, {"seatId", desktop.id}};
                 args.insert(1, "--user-data-dir=" + profile);
                 args.insert(2, "--ozone-platform=wayland");
             } else {
@@ -1392,6 +1394,16 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         environment.remove("DISPLAY");
         environment.insert("WAYLAND_DISPLAY", actual["display"].toString());
         environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
+        if (!desktop.primary && (executable == "chatgpt" || executable == "ChatGPT" || executable == "codex-launcher")) {
+            const auto profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/cornice/desktops/" + name + "/chatgpt";
+            QDir().mkpath(profile);
+            environment.insert("CODEX_ELECTRON_USER_DATA_PATH", profile);
+            args.insert(1, "--user-data-dir=" + profile);
+        }
+        const auto localBin = QDir::homePath() + "/.local/bin";
+        environment.insert("PATH", localBin + ":" + environment.value("PATH"));
+        process.setStandardOutputFile(m_directory + "/" + name + "-launch.log", QIODevice::Append);
+        process.setStandardErrorFile(m_directory + "/" + name + "-launch.log", QIODevice::Append);
         process.setProcessEnvironment(environment);
         process.setProgram(args.takeFirst());
         process.setArguments(args);
@@ -1426,6 +1438,35 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     }
     fail("Unknown desktop method");
     return {};
+}
+
+void Broker::ensureBrowser(const QString &name, const QString &program, const QStringList &arguments) {
+    auto &desktop = managed(name);
+    if (desktop.browser && !desktop.browser->running()) desktop.browser.reset();
+    if (desktop.browser) return;
+    const auto actual = state(name);
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.remove("WAYLAND_SOCKET");
+    environment.remove("DISPLAY");
+    environment.insert("WAYLAND_DISPLAY", actual["display"].toString());
+    environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
+    const auto profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
+                         "/cornice/desktops/" + name + "/chrome";
+    QDir().mkpath(profile);
+    auto args = QStringList{"--user-data-dir=" + profile, "--ozone-platform=wayland", "--no-first-run", "--no-default-browser-check"};
+    args += arguments.isEmpty() ? QStringList{"about:blank"} : arguments;
+    const auto executable = program.isEmpty() ?
+        (QStandardPaths::findExecutable("google-chrome-stable").isEmpty() ? QStandardPaths::findExecutable("chromium") : QStandardPaths::findExecutable("google-chrome-stable")) : program;
+    desktop.browser = std::make_unique<BrowserSession>(executable, args, environment,
+        m_directory + "/browser-" + name + ".log", [this, name](const QString &token) {
+            if (!m_bindings.contains(token)) return false;
+            const auto &credential = m_bindings[token];
+            if (credential.name != name) return false;
+            const auto current = state(name);
+            return current["seatId"].toString() == credential.id && current["generation"].toString() == credential.generation &&
+                !current["paused"].toBool() && current["available"].toBool() && managed(name).agentAllowed &&
+                !(m_humanOwner && m_humanBinding.name == name);
+        });
 }
 
 void Broker::initializeSlots(const QString &name, const QJsonObject &saved) {
@@ -1482,6 +1523,8 @@ void Broker::configureDesktop(const QString &name) {
             overlays.append(QJsonObject{{"name", space}, {"pid", pid},
                 {"keyboard", space == "cornice-panel" || space == "cornice-menu" || space == "cornice-screenshot"},
                 {"localInView", space == "cornice-bar" || space == "cornice-desktop-menu" || space == "cornice-screenshot" || space == "cornice-screenshot-notice"}});
+    for (const auto &routes : m_localOverlays)
+        for (const auto &route : routes) overlays.append(route);
     const QJsonObject configuration{{"owner", desktop.configurationOwner}, {"seatName", name}, {"seatId", desktop.id},
         {"bindings", bindings}, {"overlays", overlays}};
     if (configuration == desktop.lastConfiguration) {

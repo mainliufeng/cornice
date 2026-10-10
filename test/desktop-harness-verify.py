@@ -50,13 +50,13 @@ try:
  ok('dispatch hl.dsp.focus({window="title:^human-window$"})')
  baseline=human_state()
  no_assignment=MCP(title='unassigned')
- assert no_assignment.info['serverInfo']['version']=='0.3.0'
+ assert no_assignment.info['serverInfo']['version']=='0.4.0'
  tools=no_assignment.request('tools/list',{})['tools'];names={t['name'] for t in tools}
- assert len(names)==26 and {'desktop_state','desktop_browser_connect','browser_snapshot','desktop_snapshot','desktop_action'} <= names
+ assert len(names)==27 and {'desktop_state','desktop_browser_connect','browser_snapshot','desktop_snapshot','desktop_action'} <= names
  assert not any(name in names for name in ('browser_evaluate','browser_file_upload','browser_run_code_unsafe','desktop_resume','desktop_bind'))
  assert 'Call desktop_acquire first' in str(no_assignment.call('desktop_state',success=False))
  no_assignment.close()
- record('real MCP lists 26 bounded tools and never falls back to any desktop when unassigned')
+ record('real MCP lists 27 bounded tools and never falls back to any desktop when unassigned')
  assignment=cli('attach','desktop2','codex')['bindingFile']
  mcp=MCP(assignment,title='assigned')
  state=mcp.details('desktop_state');assert state['name']=='desktop2' and state['number']==2
