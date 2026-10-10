@@ -72,11 +72,23 @@ USAGE
 # here is bounded so the CLI can never hang a script that uses it.
 ipc_timeout="${CORNICE_IPC_TIMEOUT:-5}"
 
+# A compositor shortcut carries its input seat. It must address that seat's
+# shell, just like a command started by the shell itself. A missing scoped
+# socket is an error; Quickshell's config-wide discovery can select another seat.
+shell_desktop="${CORNICE_DESKTOP_NAME:-}"
+if [[ -n ${HYPRLAND_SEAT_ID:-} ]]; then
+  shell_desktop="${HYPRLAND_SEAT_NAME:?Missing native seat name}"
+fi
+scoped_shell() {
+  [[ -n $shell_desktop || -n ${CORNICE_SHELL_SOCKET:-} ]]
+}
+
 shell_running() {
   local status
   call_via_socket shell ping >/dev/null 2>&1
   status=$?
   ((status == 0)) && return 0
+  scoped_shell && return "$status"
   timeout "$ipc_timeout" "$qs" ipc -p "$config_dir" call shell ping >/dev/null 2>&1
 }
 
@@ -90,11 +102,11 @@ require_shell() {
 
 # Request framing for the shell's own socket, matching services/IpcServer.qml.
 socket_path() {
-  if [[ -n ${CORNICE_DESKTOP_NAME:-} ]]; then
-    [[ $CORNICE_DESKTOP_NAME =~ ^[a-zA-Z0-9_-]+$ ]] || return 2
+  if [[ -n $shell_desktop ]]; then
+    [[ $shell_desktop =~ ^[a-zA-Z0-9_-]+$ ]] || return 2
     local instance_digest
     instance_digest=$(printf '%s' "${HYPRLAND_INSTANCE_SIGNATURE:?}" | sha256sum)
-    printf '%s/cs-%.8s-%s.sock\n' "${XDG_RUNTIME_DIR:?}" "$instance_digest" "$CORNICE_DESKTOP_NAME"
+    printf '%s/cs-%.8s-%s.sock\n' "${XDG_RUNTIME_DIR:?}" "$instance_digest" "$shell_desktop"
     return
   fi
   if [[ -n ${CORNICE_SHELL_SOCKET:-} ]]; then printf '%s\n' "$CORNICE_SHELL_SOCKET"; return; fi
@@ -134,13 +146,15 @@ call_via_socket() {
 }
 
 call() {
-  local status
-  call_via_socket "$@"
-  status=$?
+  local status=0
+  call_via_socket "$@" || status=$?
   ((status == 0)) && return 0
   ((status == 1)) && return 1
 
-  [[ -n ${CORNICE_SHELL_SOCKET:-} ]] && return "$status"
+  if scoped_shell; then
+    echo "cornice: no responding shell for ${shell_desktop:-$CORNICE_SHELL_SOCKET}" >&2
+    return "$status"
+  fi
   require_shell
   timeout "$ipc_timeout" "$qs" ipc -p "$config_dir" call "$@"
 }

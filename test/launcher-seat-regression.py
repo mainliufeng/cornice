@@ -28,7 +28,9 @@ try:
     wait(lambda:json.loads(shell('ipc','desktop','status'))['available'])
     shell('ipc','desktop','observe','agent1');wait(lambda:status()['presentation'].get('active'))
     shell('ipc','desktopObserver','takeover','true');wait(lambda:status()['humanControl'])
-    def opened():return any(w['id']=='cn.launcher' and w['open'] for w in json.loads(shell('ipc','shell','windows')))
+    agent_env=ENV|{'CORNICE_DESKTOP_NAME':'agent1'}
+    def agent_shell(*args):return subprocess.check_output([str(PRODUCT/'bin/cornice'),*args],env=agent_env,text=True,timeout=8,stderr=subprocess.PIPE).strip()
+    def opened():return any(w['id']=='cn.launcher' and w['open'] for w in json.loads(agent_shell('ipc','shell','windows')))
     before=human_state()
     # Test the inherited physical-seat shortcut, including opening for the first time.
     send('motion 640 400')
@@ -39,12 +41,12 @@ try:
             print('SHORTCUT FAILURE',index,status(),ctl('layers',True),flush=True);raise
         time.sleep(.35)
         key(30)
-        wait(lambda:json.loads(shell('ipc','launcher','debug'))['query']=='a')
+        wait(lambda:json.loads(agent_shell('ipc','launcher','debug'))['query']=='a')
         key(1);wait(lambda:not opened())
         time.sleep(.25)
     record('eight consecutive Super+R presses each open launcher once and focus its text input')
-    shell('launcher');wait(opened);shell('ipc','launcher','setQuery','Google Chrome')
-    wait(lambda:json.loads(shell('ipc','launcher','debug'))['first']=='Google Chrome')
+    agent_shell('launcher');wait(opened);agent_shell('ipc','launcher','setQuery','Google Chrome')
+    wait(lambda:json.loads(agent_shell('ipc','launcher','debug'))['first']=='Google Chrome')
     time.sleep(.35);key(28)
     def launched():return next((c for c in ctl('clients',True) if 'chrome' in c['class'].lower() and c['workspace']['id']==11),None)
     client=wait(launched);OWNED_PIDS.append(client['pid']);wait(lambda:not opened())

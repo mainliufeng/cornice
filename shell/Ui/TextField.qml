@@ -6,6 +6,8 @@ import qs.Commons
 FocusScope {
   id: root
 
+  readonly property bool inputFocused: input.activeFocus
+  readonly property string preedit: input.preeditText
   property alias text: input.text
   property alias echoMode: input.echoMode
   property alias passwordCharacter: input.passwordCharacter

@@ -23,11 +23,13 @@ QtObject {
   function launchApplication(argv) {
     if (readOnly || !secondary || !argv.length) return false
     const args = [(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice") + "/bin/cornice", "desktop", "launch", selected]
-    if (!agentShell) {
-      if (!service || !service.observer || !service.observer.humanControl || state.controlMode !== "human"
-          || !state.seatId || !state.generation) return false
+    if (!agentShell && (!service || !service.observer || !service.observer.humanControl)) return false
+    // Native panels belong to this desktop's shell even during physical
+    // takeover. The Broker validates the current human seat and generation.
+    if (state.controlMode === "human") {
+      if (!state.seatId || !state.generation) return false
       args.push("--human-seat", String(state.seatId), String(state.generation))
-    }
+    } else if (!agentShell) return false
     Quickshell.execDetached(args.concat(["--"], argv))
     return true
   }

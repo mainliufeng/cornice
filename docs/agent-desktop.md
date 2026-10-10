@@ -123,6 +123,10 @@ fork 在 agent socket 上优先公布目标 seat，因此通过 `desktop launch`
 Xwayland 应用可由人的 seat 使用，但当前 Agent seat 不支持向 X11 窗口输入；
 切到含 X11 的工作区或光标经过 X11 窗口必须安全忽略，不能使合成器崩溃。
 
+原生快捷键通过 Hyprland 提供的 seat 名称，连接对应桌面的 Cornice shell；面板通过该桌面的 Wayland 连接显示在自己的输出。接管期间，面板启动应用时携带当前 seat 身份与 generation，由 Broker 校验。目标 shell 不存在时直接失败，不会通过配置名找到其他桌面的 shell。
+
+回归测试 `launcher-native-seat-verify.py` 在隔离的真实 Hyprland、Fcitx、Chrome、Konsole 环境中，以物理 seat 按键连续执行工作区切换、Super+R、输入搜索、Ctrl+J 和回车，检查首次按键、窗口归属及主桌面隔离。
+
 ## 给 agent 绑定工具
 
 ```bash

@@ -267,8 +267,8 @@ PanelFrame {
   ShellIpc {
     target: "launcher"
 
-    // Test hook: the suites cannot drive the input method, so they set the
-    // query directly (same idea as weather.select / idle.feed).
+    // Filtering diagnostics; native-input suites type through the real seat
+    // and input method instead of using this hook.
     function setQuery(text: string): string {
       root.query = text
       return root.query
@@ -277,6 +277,10 @@ PanelFrame {
     function debug(): string {
       return JSON.stringify({
         query: query,
+        focused: field.inputFocused,
+        preedit: field.preedit,
+        output: window.screen ? window.screen.name : "",
+        names: results.map(item => String(item.name)),
         selected: selected,
         results: results.length,
         first: results.length > 0 ? String(results[0].name) : ""
