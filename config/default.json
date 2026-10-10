@@ -106,5 +106,70 @@
   "agentDesktop": {
     "enabled": true,
     "desktops": []
+  },
+  "desktopApplications": {
+    "browser": "chrome",
+    "rules": {
+      "chrome": {
+        "executables": [
+          "google-chrome-stable",
+          "google-chrome",
+          "chromium",
+          "chromium-browser",
+          "google-chrome-beta",
+          "google-chrome-unstable"
+        ],
+        "backend": "chromium",
+        "profile": "chrome",
+        "arguments": [
+          "--user-data-dir={profile}",
+          "--ozone-platform=wayland",
+          "--no-first-run",
+          "--no-default-browser-check"
+        ],
+        "reservedArguments": [
+          "--user-data-dir",
+          "--profile",
+          "-profile"
+        ]
+      },
+      "firefox": {
+        "executables": [
+          "firefox",
+          "firefox-esr",
+          "firefox-developer-edition"
+        ],
+        "profile": "firefox",
+        "arguments": [
+          "--no-remote",
+          "--profile",
+          "{profile}"
+        ],
+        "reservedArguments": [
+          "--remote-debugging",
+          "--user-data-dir",
+          "--profile",
+          "-profile"
+        ]
+      },
+      "chatgpt": {
+        "executables": [
+          "chatgpt",
+          "ChatGPT",
+          "codex-launcher"
+        ],
+        "scope": "secondary",
+        "profile": "chatgpt",
+        "arguments": [
+          "--user-data-dir={profile}"
+        ],
+        "environment": {
+          "CODEX_ELECTRON_USER_DATA_PATH": "{profile}"
+        },
+        "reservedArguments": [
+          "--user-data-dir"
+        ]
+      }
+    }
   }
 }

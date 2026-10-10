@@ -1,4 +1,5 @@
 #include "Broker.hpp"
+#include "ApplicationLaunch.hpp"
 #include <QBuffer>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -1359,47 +1360,20 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                 fail("Invalid application argument");
             args.append(arg.toString());
         }
-        const auto executable = QFileInfo(args.first()).fileName();
-        const bool chromium =
-            executable == "chromium" || executable == "chromium-browser" || executable == "google-chrome" || executable == "google-chrome-stable" || executable == "google-chrome-beta" || executable == "google-chrome-unstable";
-        const bool firefox = executable == "firefox" || executable == "firefox-esr" || executable == "firefox-developer-edition";
-        bool browserStarted = false;
-        if (chromium || firefox) {
-            for (const auto &arg : args) {
-                if (arg.startsWith("--remote-debugging"))
-                    fail("Use desktop.browser for authorized CDP; raw debug endpoints "
-                         "are disabled");
-                if (arg.startsWith("--user-data-dir") || arg == "-profile" || arg == "--profile" ||
-                    arg.startsWith("--profile="))
-                    fail("Browser profile is managed per desktop; omit profile overrides");
-            }
-            const auto profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
-                                 "/cornice/desktops/" + name + (chromium ? "/chrome" : "/firefox");
-            QDir().mkpath(profile);
-            if (chromium) {
-                browserStarted = !desktop.browser || !desktop.browser->running();
-                ensureBrowser(name, args.first(), args.mid(1));
-                if (browserStarted) return {{"pid", desktop.browser->pid()}, {"seatId", desktop.id}};
-                args.insert(1, "--user-data-dir=" + profile);
-                args.insert(2, "--ozone-platform=wayland");
-            } else {
-                args.insert(1, "--no-remote");
-                args.insert(2, "--profile");
-                args.insert(3, profile);
-            }
+        const auto plan = ApplicationLaunch::prepare(args, name, desktop.primary);
+        if (plan.backend == "chromium") {
+            const bool starting = !desktop.browser || !desktop.browser->running();
+            ensureBrowser(name, args.first(), args.mid(1));
+            if (starting) return {{"pid", desktop.browser->pid()}, {"seatId", desktop.id}};
         }
+        args = QStringList{plan.program} + plan.arguments;
         QProcess process;
         auto environment = QProcessEnvironment::systemEnvironment();
         environment.remove("WAYLAND_SOCKET");
         environment.remove("DISPLAY");
         environment.insert("WAYLAND_DISPLAY", actual["display"].toString());
         environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
-        if (!desktop.primary && (executable == "chatgpt" || executable == "ChatGPT" || executable == "codex-launcher")) {
-            const auto profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/cornice/desktops/" + name + "/chatgpt";
-            QDir().mkpath(profile);
-            environment.insert("CODEX_ELECTRON_USER_DATA_PATH", profile);
-            args.insert(1, "--user-data-dir=" + profile);
-        }
+        plan.applyEnvironment(environment);
         const auto localBin = QDir::homePath() + "/.local/bin";
         environment.insert("PATH", localBin + ":" + environment.value("PATH"));
         process.setStandardOutputFile(m_directory + "/" + name + "-launch.log", QIODevice::Append);
@@ -1442,22 +1416,26 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
 
 void Broker::ensureBrowser(const QString &name, const QString &program, const QStringList &arguments) {
     auto &desktop = managed(name);
+    const auto plan = ApplicationLaunch::browser(name, desktop.primary, program, arguments);
     if (desktop.browser && !desktop.browser->running()) desktop.browser.reset();
-    if (desktop.browser) return;
+    if (desktop.browser) {
+        if (desktop.browserPolicy != plan.policy)
+            fail("Managed browser configuration changed; close this desktop's browser before relaunching");
+        return;
+    }
     const auto actual = state(name);
     auto environment = QProcessEnvironment::systemEnvironment();
     environment.remove("WAYLAND_SOCKET");
     environment.remove("DISPLAY");
     environment.insert("WAYLAND_DISPLAY", actual["display"].toString());
     environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
-    const auto profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
-                         "/cornice/desktops/" + name + "/chrome";
-    QDir().mkpath(profile);
-    auto args = QStringList{"--user-data-dir=" + profile, "--ozone-platform=wayland", "--no-first-run", "--no-default-browser-check"};
-    args += arguments.isEmpty() ? QStringList{"about:blank"} : arguments;
-    const auto executable = program.isEmpty() ?
-        (QStandardPaths::findExecutable("google-chrome-stable").isEmpty() ? QStandardPaths::findExecutable("chromium") : QStandardPaths::findExecutable("google-chrome-stable")) : program;
-    desktop.browser = std::make_unique<BrowserSession>(executable, args, environment,
+    plan.applyEnvironment(environment);
+    const auto localBin = QDir::homePath() + "/.local/bin";
+    environment.insert("PATH", localBin + ":" + environment.value("PATH"));
+    auto args = plan.arguments;
+    if (arguments.isEmpty()) args.append("about:blank");
+    desktop.browserPolicy = plan.policy;
+    desktop.browser = std::make_unique<BrowserSession>(plan.program, args, environment,
         m_directory + "/browser-" + name + ".log", [this, name](const QString &token) {
             if (!m_bindings.contains(token)) return false;
             const auto &credential = m_bindings[token];

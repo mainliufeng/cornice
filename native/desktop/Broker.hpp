@@ -42,6 +42,7 @@ class Broker : public QObject {
         QJsonArray bindingOverrides;
         QJsonArray handoffs;
         quint64 inputDecision = 0;
+        QByteArray browserPolicy;
 
     };
     struct Binding {

@@ -7,3 +7,9 @@ Build/install/use instructions: [agent desktop](../../docs/agent-desktop.md).
 The XML files under `protocols/` are the virtual-keyboard and virtual-pointer
 protocol definitions from the Hyprland checkout. Their original copyright and
 permissive license notices are retained in each XML file.
+
+## Application launch configuration
+
+Executable matching, profile folders, argv and environment adaptations are configured
+through `desktopApplications` in Cornice JSON. See
+[desktop application rules](../../docs/desktop-application-rules.md).

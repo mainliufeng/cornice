@@ -17,7 +17,7 @@ foreach(name virtual-keyboard-unstable-v1 wlr-virtual-pointer-unstable-v1 hyprla
     DEPENDS protocols/${name}.xml VERBATIM)
   list(APPEND PROTOCOL_SOURCES ${name}.c ${name}.h)
 endforeach()
-add_executable(cornice-desktop-runtime main.cpp Broker.cpp Accessibility.cpp HyprlandAdapter.cpp SeatDriver.cpp BrowserSession.cpp ${PROTOCOL_SOURCES})
+add_executable(cornice-desktop-runtime main.cpp Broker.cpp ApplicationLaunch.cpp Accessibility.cpp HyprlandAdapter.cpp SeatDriver.cpp BrowserSession.cpp ${PROTOCOL_SOURCES})
 target_include_directories(cornice-desktop-runtime PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(cornice-desktop-runtime PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::WebSockets PkgConfig::WAYLAND PkgConfig::XKB)
 qt_add_qml_module(cornice_desktop_qml URI Cornice.Desktop VERSION 1.0
