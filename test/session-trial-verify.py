@@ -124,7 +124,7 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     layout = json.loads((release / "config-home/cornice/config.json").read_text())["bar"]["layout"]
     preferences=json.loads((release / "config-home/cornice/config.json").read_text())["agentDesktop"]
     assert preferences["alwaysShowPreviews"] and preferences["previewWidth"]==420 and preferences["previewCardHeight"]==230,preferences
-    assert layout["left"] == [] and layout["right"] == ["cn.agent-desktop"], layout
+    assert layout["left"] == [] and layout["right"] == ["cn.agent-desktop", {"id":"cn.screenshot"}], layout
     record("prepare preserves an existing right-side Agent control and removes duplicate copies")
     trial_classic = release / "config-home/fcitx5/conf/classicui.conf"
     assert not (release / "config-home/fcitx5").is_symlink()
@@ -136,6 +136,8 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     assert "--force-renderer-accessibility=complete" in trial_flags.read_text()
     assert chrome_flags.read_text() == original_chrome_flags
     assert profile.read_text() == original
+    candidate_layout=json.loads((release/"config-home/cornice/config.json").read_text())["bar"]["layout"]
+    assert sum((item if isinstance(item,str) else item["id"])=="cn.screenshot" for entries in candidate_layout.values() for item in entries)==1,candidate_layout
     record("prepare snapshots real candidate without arming, modifying config or touching the existing compositor")
     trial("arm", "--seconds", "5", "--startup-seconds", "30")
     assert profile.read_text().startswith(original)

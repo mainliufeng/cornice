@@ -14,6 +14,8 @@ This is an explicit first-party lifecycle, not detection of arbitrary third-part
 
 ## Usage
 
+The camera button on the right side of the bar starts region capture. Its tooltip explains selection; it is disabled during capture or lock. The bar layout editor can move or hide it like any other widget.
+
 `cornice screenshot` selects a region on one of the physical outputs (or the invoking desktop's private output). `cornice screenshot screen` captures the current monitor. An optional absolute PNG destination overrides the default standard Pictures/Screenshots directory. Every successful capture copies PNG image data. Existing files are replaced atomically only after a successful encode/write. Images are owner-readable/writable only.
 
 The supported session-trial copies route the existing known Print/Super+P region pipeline and Super+Shift+P full-screen pipeline to these commands. Custom screenshot pipelines are preserved. The screen mode is one current monitor; regions are selected within one monitor, rather than spanning outputs. Real user configuration is untouched; replacing a future-login candidate can be undone using the trial rollback path.

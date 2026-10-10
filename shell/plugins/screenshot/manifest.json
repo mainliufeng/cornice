@@ -6,9 +6,19 @@
   "author": "cornice",
   "description": "Native screen capture and region selection",
   "kinds": [
-    "service"
+    "service",
+    "bar-widget"
   ],
   "entryPoints": {
-    "service": "Screenshot.qml"
+    "service": "Screenshot.qml",
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Screenshot",
+    "category": "Utility",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {},
+    "schema": []
   }
 }

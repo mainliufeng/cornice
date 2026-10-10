@@ -136,7 +136,7 @@ try:
     command=shlex.join(['/usr/bin/python3',str(ROOT/'test/agent-desktop-client.py'),'native-launched',str(BASE/'launched.txt')])
     ok('eval hl.bind("SUPER + SHIFT + Return", hl.dsp.exec_cmd('+json.dumps(command)+'), {})')
     config = BASE / 'config/cornice'; config.mkdir(parents=True, exist_ok=True)
-    (config / 'config.json').write_text(json.dumps({'agentDesktop': {'enabled': True}, 'bar': {'layout': {'left': [{'id': 'cn.agent-desktop'}, {'id': 'cn.launcher'}], 'center': [{'id': 'cn.clock'}], 'right': [{'id': 'cn.tray'}, {'id': 'cn.menu'}]}}, 'background': {'enabled': False}, 'weather': {'intervalMinutes': 0}, 'idle': {'lock': 0, 'screenOffAc': 0, 'screenOffBattery': 0, 'dimAc': 0, 'dimBattery': 0, 'lockOnSleep': False, 'lockOnLockSignal': False, 'lockOnLidClose': False}}))
+    (config / 'config.json').write_text(json.dumps({'agentDesktop': {'enabled': True}, 'bar': {'layout': {'left': [{'id': 'cn.agent-desktop'}, {'id': 'cn.launcher'}], 'center': [{'id': 'cn.clock'}], 'right': [{'id': 'cn.tray'}, {'id': 'cn.screenshot'}, {'id': 'cn.menu'}]}}, 'background': {'enabled': False}, 'weather': {'intervalMinutes': 0}, 'idle': {'lock': 0, 'screenOffAc': 0, 'screenOffBattery': 0, 'dimAc': 0, 'dimBattery': 0, 'lockOnSleep': False, 'lockOnLockSignal': False, 'lockOnLidClose': False}}))
     ENV['XDG_DATA_HOME'] = str(BASE / 'data')
     applications = BASE / 'data/applications'; applications.mkdir(parents=True)
     overlay_command = shlex.join(['/usr/bin/python3', str(ROOT / 'test/agent-desktop-client.py'), 'overlay-launched', str(BASE / 'overlay-launched.txt')])
@@ -214,6 +214,21 @@ try:
     # Cornice owns capture/selection and declares its interaction before any
     # overlay takes input. No shortcut or third-party namespace is recognized.
     def screenshot_state():return json.loads(shell('ipc','screenshot','status'))
+    def screenshot_button():
+        button=next(item for item in json.loads(shell('ipc','bar','geometry')) if item['id']=='cn.screenshot')
+        assert button['width']>0 and button['height']>0,button
+        click(round(button['x']+button['width']/2), round(button['y']+button['height']/2))
+        wait(lambda:screenshot_state()['selecting'])
+        time.sleep(.2) # The compositor commits the selection layer after frame readiness.
+    subprocess.run(['grim','-o','human',str(BASE/'screenshot-button.png')],env=ENV,check=True)
+    screenshot_button()
+    send('motion 600 200');send('button 272 1');send('motion 800 400');send('button 272 0')
+    wait(lambda:not screenshot_state()['active'])
+    button_image=pathlib.Path(screenshot_state()['lastFile'])
+    assert button_image.exists() and button_image.is_relative_to(pathlib.Path(ENV['HOME'])) and button_image.parent.name=='Screenshots',screenshot_state()
+    assert screenshot_state()['clipboardCopied'] and button_image.stat().st_mode & 0o777 == 0o600
+    assert subprocess.check_output(['wl-paste','--type','image/png'],env=ENV)==button_image.read_bytes()
+    record('real screenshot bar button selects a region, saves the default private PNG and copies identical image bytes')
     def hover_menu():
         send(f"motion {round(group['x']+group['width']/2)} {round(group['y']+group['height']/2)}")
         row=wait(lambda:next((row for row in json.loads(shell('ipc','desktopObserver','controls')) if row['name']=='view:main'),None))
@@ -488,13 +503,20 @@ try:
     region=BASE/'native-presented-region.png'
     assert shell('screenshot','region',str(region))=='requested'
     wait(lambda:screenshot_state()['selecting'])
+    time.sleep(.2) # Commit the input region before virtual pointer events.
     send('motion 600 200');send('button 272 1');send('motion 800 400');send('button 272 0')
     wait(lambda:region.exists());wait(lambda:not screenshot_state()['active'])
     assert shell('screenshot','region',str(BASE/'readonly-cancel.png'))=='requested'
-    wait(lambda:screenshot_state()['selecting']);send('key 1 1');send('key 1 0')
+    wait(lambda:screenshot_state()['selecting']);time.sleep(.2);send('key 1 1');send('key 1 0')
     wait(lambda:not screenshot_state()['active'])
     send(f"motion {human['cursor']['x']} {human['cursor']['y']}")
     assert human_state()==human and not (BASE/'agent1.txt').exists()
+    screenshot_button()
+    time.sleep(.2) # Wait for the exclusive layer keyboard-focus commit.
+    send('key 1 1');send('key 1 0');wait(lambda:not screenshot_state()['active'])
+    send(f"motion {human['cursor']['x']} {human['cursor']['y']}")
+    assert not (BASE/'agent1.txt').exists() and human_state()==human
+    record('screenshot bar button remains usable while viewing a secondary desktop read-only; cancellation never enters an application')
     record('Cornice screenshots capture the presented secondary desktop while read-only observation leaves applications and the primary seat untouched')
     subprocess.run(['grim','-o','human',str(BASE/'native-readonly.png')],env=ENV,check=True)
     displayed_clock(BASE/'native-readonly.png')  # Warm the image decoder outside timing.

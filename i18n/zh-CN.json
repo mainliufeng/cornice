@@ -37,6 +37,8 @@
   "bar.widget.menu": "菜单",
   "bar.widget.network": "网络",
   "bar.widget.power": "电源",
+  "bar.widget.screenshot": "截图",
+  "screenshot.selectRegion": "拖动选择截图区域",
   "bar.widget.spacer": "间隔",
   "bar.widget.tray": "系统托盘",
   "bar.widget.weather": "天气",

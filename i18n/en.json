@@ -37,6 +37,8 @@
   "bar.widget.menu": "Menu",
   "bar.widget.network": "Network",
   "bar.widget.power": "Power",
+  "bar.widget.screenshot": "Screenshot",
+  "screenshot.selectRegion": "Drag to select a region",
   "bar.widget.spacer": "Spacer",
   "bar.widget.tray": "System tray",
   "bar.widget.weather": "Weather",
