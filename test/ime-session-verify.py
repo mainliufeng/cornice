@@ -1,4 +1,4 @@
-"""Real Fcitx/pinyin and ordinary desktop controls in a device sandbox."""
+"""Real Fcitx pinyin/Rime and ordinary controls in a device sandbox."""
 from desktop_harness import *
 assert os.getenv('CORNICE_TEST_SANDBOX') == '1'
 
@@ -21,7 +21,15 @@ try:
     PROCESSES.append(keyboard)
     assert select.select([keyboard.stdout],[],[],5)[0] and keyboard.stdout.readline().strip()=='ready'
     profile=BASE/'config/fcitx5/profile';profile.parent.mkdir(parents=True,exist_ok=True)
-    profile.write_text('[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=pinyin\n\n[Groups/0/Items/0]\nName=keyboard-us\n\n[Groups/0/Items/1]\nName=pinyin\n\n[GroupOrder]\n0=Default\n')
+    engine = os.environ.get('CORNICE_TEST_IME', 'pinyin')
+    assert engine in ('pinyin', 'rime'), engine
+    profile.write_text('[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=' + engine + '\n\n[Groups/0/Items/0]\nName=keyboard-us\n\n[Groups/0/Items/1]\nName=' + engine + '\n\n[GroupOrder]\n0=Default\n')
+    if engine == 'rime':
+        rime = pathlib.Path(ENV['HOME']) / '.local/share/fcitx5/rime'
+        rime.mkdir(parents=True, exist_ok=True)
+        (rime / 'default.custom.yaml').write_text('patch:\n  schema_list:\n    - schema: luna_pinyin_simp\n')
+        # Fresh Rime deployments otherwise ignore keystrokes while building.
+        subprocess.run(['rime_deployer', '--build', str(rime), '/usr/share/rime-data', str(rime / 'build')], env=ENV, check=True, stdout=open(BASE / 'rime-deploy.log', 'w'), stderr=subprocess.STDOUT)
     classic=profile.parent/'conf/classicui.conf';classic.parent.mkdir(parents=True,exist_ok=True)
     classic.write_text('Font="Sans 24"\nForceWaylandDPI=0\n')
     ENV.update(GTK_IM_MODULE='wayland',QT_IM_MODULE='fcitx',XMODIFIERS='@im=fcitx')
@@ -51,6 +59,10 @@ try:
     record('focus cycling preserves fullscreen mode using the Lua dispatcher')
     ok('dispatch hl.dsp.focus({window="title:^human-window$"})')
     remote('-o');wait(lambda:remote()=='2')
+    if engine == 'rime':
+        remote('-s', 'rime')
+        wait(lambda: remote('-n') == 'rime')
+        time.sleep(1)  # The addon initializes its first native context lazily.
     send('type nihao');time.sleep(.5)
     subprocess.run(['grim','-o','human',str(BASE/'pinyin-font-before.png')],env=ENV,check=True)
     classic.write_text('Font="Sans 12"\nForceWaylandDPI=0\n')
@@ -62,7 +74,7 @@ try:
     subprocess.run(['grim','-o','human',str(BASE/'pinyin-preedit.png')],env=ENV,check=True)
     send('key 57 1');send('key 57 0')
     wait(lambda:destinations[0].read_text()=='你好')
-    record('real Fcitx pinyin converts nihao plus Space into 你好 in GTK')
+    record(f'real Fcitx {engine} converts nihao plus Space into 你好 in GTK')
     for index in range(3):cli('create','private'+str(index),'--virtual-output','1280x800')
     for index in range(3):
         name='private'+str(index)

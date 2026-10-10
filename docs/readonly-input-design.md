@@ -31,7 +31,7 @@
 
 ## 本轮验证
 
-- 真实 Fcitx + GTK、Cornice Qt launcher/prompt、Chrome：中文 preedit、候选框、Space 提交；反复观察桌面后主桌面 GTK 和 Chrome 均继续输入中文。
+- 真实 Fcitx 拼音与 Rime（隔离简体方案）分别跑完整 12 项回归；GTK、Cornice Qt launcher/prompt、Chrome：中文 preedit、候选框、Space 提交；反复观察桌面后主桌面 GTK 和 Chrome 均继续输入中文。
 - 只读 prompt：物理 Super+A、候选未确认时禁止提交、确认后的 Ctrl+Enter、Escape；提交失败保留中文草稿。被观察应用没有写入。
 - 接管：原生候选框和 GTK 中文输入绑定额外 seat，主桌面文字不变。
 - 真实生产 Hyprvoice App + 私有 PipeWire：录音 UI 首次映射、无编辑器拒绝提示、本地 prompt 语音插入、目标变化停止录音、保留后明确插入、应用目标精确粘贴。测试音源为零音频、识别响应为测试文本，因此不宣称验证了实体麦克风或识别准确率。
