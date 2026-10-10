@@ -1,7 +1,7 @@
 {
   "name": "cornice",
-  "version": "0.1.0",
-  "description": "Operate an explicitly assigned Cornice desktop with native input and structured browser tools.",
+  "version": "0.2.0",
+  "description": "Acquire an independent desktop for each task and operate it through native input and structured browser tools.",
   "author": {
     "name": "cornice"
   },
@@ -9,8 +9,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Cornice",
-    "shortDescription": "操作已分配的桌面",
-    "longDescription": "通过 Cornice 的统一接口观察、操作和交接桌面。主桌面默认禁止 Agent 控制。",
+    "shortDescription": "自动申请并操作任务桌面",
+    "longDescription": "任务自动占用空闲桌面，忙时创建新桌面；每个任务独立控制，主桌面默认禁用。",
     "developerName": "cornice",
     "category": "Productivity",
     "capabilities": [

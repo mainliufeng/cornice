@@ -28,6 +28,7 @@ private:
   void receive();
   void send(QJsonObject message, QString token = {});
   void flush();
+  void detachTargets();
   bool authorized(const QString &token) const;
   struct Peer {
     QPointer<QWebSocket> socket;

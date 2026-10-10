@@ -1,38 +1,70 @@
-# Unified desktops and harness integration
+# Desktop allocation and harness integration
 
-All desktops use the same state, window, workspace, capture, input, application and browser interface. Desktop 1 (`main`) is the primary desktop, backed by the native primary seat. It retains native physical input and shell behavior. Other desktops retain independent seat/focus/cursor/workspace state and their native presentation.
+Cornice provides independent desktops and shared MCP tools. Codex, Pi and other harnesses own their conversations, models, task history and results. Cornice does not need to launch a Pi job to serve an external harness.
 
-Every desktop has an **允许 Agent 控制** switch on the bar. `main` defaults to disabled on every Broker/session startup; other desktops default to enabled. Enabled means a specific harness can be assigned control, not that every harness receives access. Turning permission off revokes bindings and CDP immediately. One harness controls a desktop at a time. Physical input on the primary desktop takes control before applying that event; explicit takeover on another desktop revokes the Agent generation. Session lock continues to override all grants.
+## Automatic task allocation
 
-## Codex plugin
+Installing a plugin connects tools without granting a desktop. When a user asks the agent to operate a desktop, the agent calls `desktop_acquire`. Broker atomically reserves an allowed, paused, unoccupied secondary desktop; if none is available, it creates a new private display/seat at the primary output's pixel resolution and starts its native Cornice shell. No local confirmation popup or manual attach command is required.
 
-Install Cornice with its desktop component and Node.js dependencies first. Add this repository as a local marketplace, then install the bundled plugin:
+The returned `desktop` reference belongs to that task. Every native and browser call includes it. This also supports multiple conversations sharing one MCP process: focus, windows, workspace, browser connection and control grants stay separate. Another MCP process cannot use a reference from this one. Tokens remain private inside MCP and never enter prompts.
+
+- No arguments: reuse the lowest-numbered eligible unoccupied desktop, otherwise create one.
+- `preferredDesktop`: use a user-named desktop if unoccupied and allowed. If occupied, create a new desktop. A missing or disabled explicit target fails; it does not silently grant permission.
+- `createNew:true`: always create a fresh desktop.
+- Desktop 1 (`main`) is never automatically selected. Explicit primary acquisition still requires the operator to have enabled its “允许 Agent 控制” switch beforehand.
+- Active tasks, live bindings and human takeover count as occupied. Open applications alone do not occupy a desktop: task-free desktops retain their applications and can be reused. Request `createNew:true` when a task requires an empty desktop.
+- Allocation has a 32-desktop service limit; reaching it reports an error rather than evicting a desktop.
+
+Example tool sequence:
+
+```json
+{"tool":"desktop_acquire","arguments":{}}
+{"tool":"desktop_state","arguments":{"desktop":"reference-returned-above"}}
+{"tool":"desktop_browser_connect","arguments":{"desktop":"reference-returned-above"}}
+{"tool":"browser_snapshot","arguments":{"desktop":"reference-returned-above"}}
+{"tool":"desktop_finish","arguments":{"desktop":"reference-returned-above","outcome":"completed","reason":"Verified the requested result"}}
+```
+
+Finish releases occupancy and pauses only that task's desktop; applications are preserved. Connection loss or a missed heartbeat releases the owner's reservation. Late calls or disconnects from an old owner cannot interrupt a replacement owner. Pause, human takeover, permission changes and locks revoke old input; an agent must not acquire another desktop merely to bypass interruption. New allocation is denied during a lock. Existing preauthorized continue-policy tasks retain their established lock policy.
+
+## Codex App plugin
+
+The local plugin packages the shared STDIO MCP and skill. Install it once; subsequent user tasks acquire desktops through tools, without running Cornice commands. For local development the equivalent installer is:
 
 ```sh
 codex plugin marketplace add /absolute/path/to/cornice
 codex plugin add cornice@cornice-local
 ```
 
-On the desktop to be assigned, enable **允许 Agent 控制**. The operator then assigns it to Codex:
+Use `$cornice:cornice-desktop` in a new Codex App conversation. Installing this plugin does not redirect Codex's built-in computer-use tools. The skill routes Cornice tasks to the shared tools. Keep `cornice-desktop-mcp` on the App's PATH, and update the plugin cache when changing the local plugin version.
+
+## Independent Pi package
+
+Pi has its own package, which registers the same MCP and loads the same skill:
 
 ```sh
-cornice desktop attach agent1 codex
-# or, only after enabling permission on desktop 1:
-cornice desktop attach main codex
+pi install /absolute/path/to/cornice/plugins/pi-cornice
+pi
 ```
 
-The assignment is a 0600 binding at `$XDG_STATE_HOME/cornice/harness/codex.binding.json` (default `~/.local/state/...`); no token goes into the plugin or model prompt. Start a fresh Codex chat with the plugin enabled and use `$cornice:cornice-desktop`. The initial `desktop_state` confirms the assigned desktop. Installing the plugin never grants desktop control or redirects Codex's built-in computer-use tools.
+Its extension applies the desktop screenshot-context budget and does not require `CORNICE_AGENT_BRIDGE`, a Cornice model configuration, an internal task thread or Magpie. The installed Pi package uses the user's normal model and task interface. Browser tools and native input are implemented once in the shared MCP.
 
-Detach with `cornice desktop detach codex`. Reassigning a desktop revokes its previous binding. After pause/takeover/session lock, the operator must explicitly restore control and refresh the binding. A live MCP session cannot change its desktop identity; start a new chat when assigning a different desktop.
+## Other MCP clients and transport
 
-## Other MCP clients
+Start `cornice-desktop-mcp` as a local **STDIO** server. There is no HTTP MCP listener or port to configure. It connects to Broker through a user-owned Unix socket. In the desktop session it uses the explicit compositor environment; a GUI App without that environment can use Broker's private runtime `cornice/active.json` endpoint. An old live connection never automatically switches compositors or tasks after a failure.
 
-The shared server is a local stdio process, `cornice-desktop-mcp`, backed by the existing Broker. It is not another desktop daemon. Set `CORNICE_MCP_BINDING` to an operator-issued binding file; configure the client to start that command. The same bundled skill is reusable outside Codex at `plugins/cornice/skills/cornice-desktop/SKILL.md`.
+Expose the bundled skill at `plugins/cornice/skills/cornice-desktop/SKILL.md`. The shared catalog has 24 tools including task acquisition, native desktop operations and allowlisted Playwright browser operations. It does not expose permission changes, arbitrary resume/rebinding, global CDP endpoints or arbitrary JavaScript execution.
 
-Pi's extension only connects this MCP and applies its screenshot-context budget. Native desktop tools and the allowlisted Playwright browser tools are implemented once in the shared MCP. CLI and JSON RPC remain available for management and scripts. Broker authorization is authoritative for all adapters.
+## Legacy explicit bindings
 
-The MCP exposes no desktop creation, permission switch, resume, rebinding, global browser endpoint, arbitrary JavaScript execution, or filesystem tool. It preserves full screenshot resolution and returns bounded JPEG image content plus structured frame metadata. Native apps currently use windows and screenshots, not a claimed AT-SPI implementation.
+`cornice desktop attach NAME HARNESS` / `detach HARNESS` remain management operations. Set `CORNICE_MCP_BINDING` explicitly to use such a private assignment. Those sessions retain their single assigned desktop and cannot acquire others. Default Codex sessions no longer read a global `codex.binding.json`, avoiding accidental cross-conversation assignment. The existing internal Pi task bridge remains an explicit legacy executor; it is not involved in independent Pi or Codex App tasks.
 
 ## Boundary
 
-This is a same-user coordination and tool authorization boundary, not an OS sandbox. A harness with unrestricted host shell/Wayland/Hyprland access or arbitrary application launch can bypass it. Strong confinement requires a separate sandbox and management-channel access policy.
+This is same-user desktop coordination, not an OS sandbox. A harness with unrestricted host shell/Wayland/Hyprland access can bypass these tool boundaries. Primary permission, lock state and task leases are enforced by Broker for the shared tools.
+
+## Verification
+
+`test/desktop-acquire-verify.py`, through `test/isolated-desktop-test.sh`, runs real headless Hyprland, native Cornice shells, GTK applications, managed Chrome and the native session-lock protocol. It verifies concurrent allocation across harnesses, multiple tasks in one MCP process, fresh empty desktops, application-preserving reuse, task references, native Unicode input, independent browser trees, primary permission, finish/disconnect, heartbeat expiry and stale-owner rejection.
+
+`test/desktop-harness-verify.py` retains explicit-binding regression coverage. `test/codex-plugin-verify.py` installs the actual Codex plugin into a temporary configuration; `test/pi-plugin-verify.mjs` installs the actual Pi package and loads its extension and skill. Both discover the live shared MCP catalog without model credentials. `test/mcp-transport-verify.mjs` checks transport failures and the pinned browser schemas, while `test/agent-runtime-protocol-verify.py` retains internal-executor protocol regression coverage.

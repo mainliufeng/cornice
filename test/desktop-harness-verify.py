@@ -48,11 +48,11 @@ try:
  baseline=human_state()
  no_assignment=MCP(title='unassigned')
  tools=no_assignment.request('tools/list',{})['tools'];names={t['name'] for t in tools}
- assert len(names)==23 and {'desktop_state','desktop_browser_connect','browser_snapshot'} <= names
+ assert len(names)==24 and {'desktop_state','desktop_browser_connect','browser_snapshot'} <= names
  assert not any(name in names for name in ('browser_evaluate','browser_file_upload','browser_run_code_unsafe','desktop_resume','desktop_bind'))
- assert 'No desktop assigned' in str(no_assignment.call('desktop_state',success=False))
+ assert 'Call desktop_acquire first' in str(no_assignment.call('desktop_state',success=False))
  no_assignment.close()
- record('real MCP lists 23 bounded tools and never falls back to any desktop when unassigned')
+ record('real MCP lists 24 bounded tools and never falls back to any desktop when unassigned')
  assignment=cli('attach','agent1','codex')['bindingFile']
  mcp=MCP(assignment,title='assigned')
  state=mcp.details('desktop_state');assert state['name']=='agent1' and state['number']==2

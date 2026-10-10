@@ -60,6 +60,8 @@ class Broker : public QObject {
     void configureDesktop(const QString &name);
     void invokeControllerAction(const QJsonObject &event);
 
+    QJsonObject acquireDesktop(const QJsonObject &, QLocalSocket *);
+    void releaseAcquisition(QLocalSocket *);
     void revokeBindings(const QString &name);
     void startShell(const QString &name);
     void pause(const QString &name);
@@ -82,6 +84,7 @@ class Broker : public QObject {
     QMap<QLocalSocket *, QString> m_buffers;
     QMap<QLocalSocket *, QString> m_presentations;
     QMap<QLocalSocket *, qint64> m_localVoiceClients;
+    QMap<QLocalSocket *, QJsonObject> m_acquisitions;
     QMap<QString, QJsonObject> m_completed;
     QMap<QString, QByteArray> m_requestHashes;
 };

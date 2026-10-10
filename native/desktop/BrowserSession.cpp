@@ -156,10 +156,16 @@ BrowserSession::BrowserSession(QString program, QStringList args,
           peer->deleteLater();
           continue;
         }
+        bool attached = false;
+        for (const auto &old : m_peers)
+          if (old.socket && authorized(old.token)) attached = true;
+        // Revoked peers may still be closing when a replacement connects.
+        if (!attached) detachTargets();
         m_peers.append({peer, token});
         connect(peer, &QWebSocket::disconnected, this, [this, peer] {
           m_peers.removeIf(
               [peer](const auto &p) { return !p.socket || p.socket == peer; });
+          if (m_peers.isEmpty() && running()) detachTargets();
           peer->deleteLater();
         });
         connect(
@@ -253,6 +259,17 @@ void BrowserSession::revoke() {
           "seat authorization revoked; in-flight requests unconfirmed");
   m_requests.clear();
 }
+void BrowserSession::detachTargets() {
+  // The Chrome pipe outlives a harness connection. Detach old root sessions
+  // so the next CDP client receives existing targets again; keep tabs open.
+  try {
+    send({{"id", ++m_nextId}, {"method", "Target.setAutoAttach"},
+          {"params", QJsonObject{{"autoAttach", false},
+                                 {"waitForDebuggerOnStart", false},
+                                 {"flatten", true}}}});
+  } catch (...) { revoke(); }
+}
+
 void BrowserSession::send(QJsonObject message, QString token) {
   auto data = QJsonDocument(message).toJson(QJsonDocument::Compact);
   data.append('\0');

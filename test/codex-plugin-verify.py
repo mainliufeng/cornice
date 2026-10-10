@@ -29,11 +29,11 @@ try:
  assert Path(skill['path']).read_text()==(Path(root)/'plugins/cornice/skills/cornice-desktop/SKILL.md').read_text()
  result=request('mcpServerStatus/list',{})
  server=next(item for item in result['data'] if item['pluginId']=='cornice@cornice-local')
- assert server['toolsError'] is None and len(server['tools'])==23
+ assert server['toolsError'] is None and len(server['tools'])==24
  assert server['serverInfo']['name']=='cornice-desktop'
  report={'skill':skill['name'],'plugin':server['pluginId'],'tools':sorted(server['tools']),'artifacts':home}
  (Path(home)/'result.json').write_text(json.dumps(report,indent=2))
- print('PASS actual Codex plugin install, canonical skill discovery and 23 live shared MCP tools; '+home)
+ print('PASS actual Codex plugin install, canonical skill discovery and 24 live shared MCP tools; '+home)
 finally:
  p.stdin.close()
  try:p.wait(timeout=8)

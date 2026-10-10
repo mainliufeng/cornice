@@ -1,0 +1,14 @@
+{
+  "name": "cornice-pi",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Operate task-owned Cornice desktops from your own Pi session.",
+  "pi": {
+    "extensions": [
+      "../../native/agent/desktop.ts"
+    ],
+    "skills": [
+      "../cornice/skills/cornice-desktop"
+    ]
+  }
+}

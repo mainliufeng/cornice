@@ -11,6 +11,7 @@ let root=dirname(pi);
 while(true){try{if(JSON.parse(readFileSync(join(root,"package.json"),"utf8")).name==="@earendil-works/pi-coding-agent")break;}catch{} if(dirname(root)===root)throw new Error("Pi package not found");root=dirname(root);}
 const {loadExtensions}=await import(pathToFileURL(join(root,"dist/core/extensions/loader.js")).href);
 process.env.CORNICE_AGENT_BRIDGE=join(product,"bin/cornice-agent-runtime");
+delete process.env.CORNICE_AGENT_BRIDGE;
 const loaded=await loadExtensions([join(product,"native/agent/desktop.ts")],"/tmp");
 assert.deepEqual(loaded.errors,[]);
 const extension=loaded.extensions[0];

@@ -132,8 +132,11 @@ Broker::Broker(QString instance)
                 endTakeover("Desktop unavailable");
             }
         }
+        QList<QLocalSocket *> expiredAcquisitions;
         for (auto it = m_bindings.begin(); it != m_bindings.end(); ++it) {
             if (it->controller.isEmpty() || !it->heartbeat.isValid() || it->heartbeat.elapsed() <= 5000) continue;
+            for (auto owner = m_acquisitions.begin(); owner != m_acquisitions.end(); ++owner)
+                if (owner.value()["token"].toString() == it.key()) expiredAcquisitions.append(owner.key());
             it->controller.clear();
             try {
                 const auto actual = state(it->name);
@@ -141,6 +144,7 @@ Broker::Broker(QString instance)
                     actual["controlMode"].toString() == "agent") pause(it->name);
             } catch (...) {}
         }
+        for (auto *owner : expiredAcquisitions) { releaseAcquisition(owner); owner->abort(); }
         bool invalidateFrames = false;
         for (auto &[name, desktop] : m_desktops) {
             try {
@@ -355,6 +359,11 @@ void Broker::listen() {
     QLocalServer::removeServer(m_socketPath);
     if (!m_server.listen(m_socketPath))
         fail("Cannot listen on desktop socket: " + m_server.errorString());
+    QSaveFile active(qEnvironmentVariable("XDG_RUNTIME_DIR") + "/cornice/active.json");
+    if (!active.open(QIODevice::WriteOnly)) fail("Cannot publish active desktop endpoint");
+    active.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    active.write(QJsonDocument(QJsonObject{{"instance", m_instance}, {"socket", m_socketPath}, {"pid", getpid()}}).toJson());
+    if (!active.commit()) fail("Cannot publish active desktop endpoint");
     connect(&m_server, &QLocalServer::newConnection, this, [this] {
         while (auto *socket = m_server.nextPendingConnection()) {
             struct ucred credential{};
@@ -391,6 +400,7 @@ void Broker::listen() {
                 if (m_buffers.contains(socket))
                     QFile::remove(m_buffers.take(socket));
                 m_localVoiceClients.remove(socket);
+                releaseAcquisition(socket);
                 delete input;
                 socket->deleteLater();
             });
@@ -411,6 +421,77 @@ void Broker::revokeBindings(const QString &name) {
     }
 }
 
+void Broker::releaseAcquisition(QLocalSocket *owner) {
+    if (!m_acquisitions.contains(owner)) return;
+    const auto lease = m_acquisitions.take(owner);
+    const auto token = lease["token"].toString();
+    if (!m_bindings.contains(token)) return;
+    m_bindings.remove(token);
+    try {
+        const auto actual = state(lease["name"].toString());
+        if (actual["seatId"] == lease["seatId"] && actual["generation"] == lease["generation"] &&
+            actual["controlMode"].toString() == "agent") pause(lease["name"].toString());
+    } catch (...) {}
+}
+
+QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owner) {
+    if (m_acquisitions.contains(owner)) return m_acquisitions[owner];
+    const auto controller = params["controller"].toString();
+    if (!QRegularExpression("^[A-Za-z0-9_-]{1,64}$").match(controller).hasMatch()) fail("Invalid controller identity");
+    if (state("main")["humanLocked"].toBool()) fail("Unlock session before acquiring a desktop");
+    const auto preferred = params["preferredDesktop"].toString();
+    if (!preferred.isEmpty()) {
+        atom(preferred);
+        if (!m_desktops.contains(preferred)) fail("Requested desktop does not exist");
+        if (!managed(preferred).agentAllowed) fail("Agent control is disabled for this desktop");
+    }
+    const auto free = [this](const QString &name) {
+        const auto &desktop = m_desktops.at(name);
+        if (!desktop.agentAllowed || (m_humanOwner && m_humanBinding.name == name)) return false;
+        for (const auto &lease : m_acquisitions) if (lease["name"].toString() == name) return false;
+        const auto actual = state(name);
+        if (!actual["available"].toBool() || actual["humanLocked"].toBool() || !actual["paused"].toBool()) return false;
+        for (const auto &binding : m_bindings)
+            if (binding.name == name && ((binding.id == actual["seatId"].toString() && binding.generation == actual["generation"].toString()) ||
+                (!binding.controller.isEmpty() && binding.heartbeat.isValid() && binding.heartbeat.elapsed() <= 5000))) return false;
+        return true;
+    };
+    QString name;
+    bool created = false;
+    if (!params["createNew"].toBool()) {
+        if (!preferred.isEmpty()) {
+            if (free(preferred)) name = preferred;
+        } else {
+            int number = INT_MAX;
+            for (const auto &[candidate, desktop] : m_desktops)
+                if (!desktop.primary && !desktop.privateOutput.isEmpty() && desktop.number < number && free(candidate)) {
+                    name = candidate; number = desktop.number;
+                }
+        }
+    }
+    if (name.isEmpty()) {
+        if (m_desktops.size() >= 32) fail("Desktop allocation limit reached (32); remove an unused desktop first");
+        name = "desktop-" + uuid().left(12);
+        const auto size = state("main")["pixelSize"].toArray();
+        const auto geometry = QString("%1x%2").arg(size.at(0).toInt()).arg(size.at(1).toInt());
+        perform("create", {{"name", name}, {"virtual-output", geometry}}, nullptr, nullptr);
+        created = true;
+    }
+    try {
+        resume(name);
+        auto lease = perform("bind", {{"name", name}}, nullptr, owner);
+        auto &binding = m_bindings[lease["token"].toString()];
+        binding.controller = controller;
+        binding.heartbeat.start();
+        lease["created"] = created;
+        m_acquisitions[owner] = lease;
+        return lease;
+    } catch (...) {
+        try { pause(name); } catch (...) {}
+        throw;
+    }
+}
+
 QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
     const auto id = request["id"].toString();
     if (id.isEmpty() || id.size() > 128)
@@ -424,6 +505,11 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
         m_localVoiceClients[owner] = peer.pid;
         for (const auto &[name, desktop] : m_desktops) configureDesktop(name);
         return {{"ok", true}, {"registered", true}};
+    }
+
+    if (method == "acquire-desktop") {
+        if (!request["token"].toString().isEmpty() || !owner) fail("Local allocation connection required");
+        return {{"ok", true}, {"id", id}, {"result", acquireDesktop(request["params"].toObject(), owner)}};
     }
 
     const auto token = request["token"].toString();

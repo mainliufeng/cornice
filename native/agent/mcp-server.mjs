@@ -10,15 +10,16 @@ import { readFile, lstat, mkdtemp, chmod, rm } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const bindingFile = process.env.CORNICE_MCP_BINDING || join(process.env.XDG_STATE_HOME || join(homedir(), ".local/state"), "cornice/harness/codex.binding.json");
+const bindingFile = process.env.CORNICE_MCP_BINDING;
 const job = process.env.CORNICE_AGENT_JOB;
-let identity, binding, finished = false, browser, browserIdentity, browserHome;
-const secrets = new Set();
-const instanceId = randomUUID();
-process.env.CORNICE_DESKTOP_CONTROLLER = instanceId;
+const contexts = new Map(), current = new AsyncLocalStorage(), secrets = new Set();
+const makeContext=()=>({controller:randomUUID(),finished:false});
+const legacy = (bindingFile || job) ? makeContext() : undefined;
+const context=()=>current.getStore();
 const active = state => state.agentAllowed !== false && !state.taskFinished && !state.paused && !state.agentPaused && state.available && state.controlMode === "agent" &&
   (!state.humanLocked || (state.lockScope === "human" && state.humanLockPolicy === "continue"));
 const sanitize = value => {
@@ -27,26 +28,70 @@ const sanitize = value => {
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k,v]) => [k,sanitize(v)]));
   return value;
 };
+async function privateJSON(path) {
+  const info=await lstat(path);
+  if(!info.isFile() || info.isSymbolicLink() || info.uid!==process.getuid() || (info.mode&0o077) || info.size>16384)
+    throw new Error("Private local configuration owned by this user is required");
+  return JSON.parse(await readFile(path,"utf8"));
+}
 async function credential() {
-  const info = await lstat(bindingFile).catch(() => { throw new Error("No desktop assigned. Use cornice desktop attach NAME codex after enabling Agent control on that desktop. No desktop was selected automatically."); });
-  if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid() || (info.mode & 0o077) || info.size > 16384)
-    throw new Error("A private desktop binding file owned by this user is required");
-  const value = JSON.parse(await readFile(bindingFile, "utf8"));
-  if (!value.token || !value.socket || !value.name || !value.seatId || !value.generation) throw new Error("Invalid desktop binding");
-  if (identity && (identity.name !== value.name || identity.seatId !== value.seatId || identity.instance !== value.instance))
-    throw new Error("Assigned desktop changed. Start a new MCP session; no action was sent.");
-  identity ||= {name:value.name,seatId:value.seatId,instance:value.instance};
-  secrets.add(value.token); binding = value;
+  const c=context();
+  const value=c.automatic ? c.binding : await privateJSON(bindingFile);
+  if (!value?.token || !value.socket || !value.name || !value.seatId || !value.generation) throw new Error("Invalid desktop binding");
+  if (c.identity && (c.identity.name !== value.name || c.identity.seatId !== value.seatId || c.identity.instance !== value.instance))
+    throw new Error("Assigned desktop changed. Start a new task; no action was sent.");
+  c.identity ||= {name:value.name,seatId:value.seatId,instance:value.instance};
+  secrets.add(value.token); c.binding = value;
   return value;
 }
+async function brokerEndpoint() {
+  const runtime=process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`;
+  const instance=process.env.HYPRLAND_INSTANCE_SIGNATURE;
+  if(instance && /^[A-Za-z0-9_.-]+$/.test(instance)) {
+    const socket=join(runtime,"cornice",instance,"desktop.sock");
+    const info=await lstat(socket).catch(()=>undefined);
+    if(info?.isSocket() && info.uid===process.getuid()) return {instance,socket};
+  }
+  const endpoint=await privateJSON(join(runtime,"cornice/active.json")).catch(()=>{throw new Error("Cornice desktop service is unavailable. Start Cornice in the desktop session.");});
+  if(!/^[A-Za-z0-9_.-]+$/.test(endpoint.instance) || endpoint.socket!==join(runtime,"cornice",endpoint.instance,"desktop.sock"))
+    throw new Error("Invalid active desktop endpoint");
+  return endpoint;
+}
+async function acquire(params) {
+  if(job || bindingFile) throw new Error("This session already has an explicit assignment; automatic acquisition is unavailable");
+  const endpoint=await brokerEndpoint(), c=makeContext(), reference=randomUUID();
+  const socket=connectSocket(endpoint.socket); c.reservation=socket; c.automatic=true;
+  try {
+    const lease=await new Promise((resolveReply,reject)=> {
+      let input=Buffer.alloc(0),done=false;
+      const timer=setTimeout(()=>complete(new Error("Desktop allocation timed out; no desktop was selected")),15000);
+      function complete(error,result) {if(done)return;done=true;clearTimeout(timer);error?reject(error):resolveReply(result);}
+      socket.on("error",error=>complete(error));
+      socket.on("end",()=>complete(new Error("Desktop allocation connection ended")));
+      socket.on("connect",()=>socket.write(JSON.stringify({id:reference,method:"acquire-desktop",params:{...params,controller:c.controller}})+"\n"));
+      socket.on("data",chunk=>{
+        input=Buffer.concat([input,chunk]);
+        if(input.length>16384)return complete(new Error("Desktop allocation exceeded transport budget"));
+        const end=input.indexOf(10);if(end<0)return;
+        try {const reply=JSON.parse(input.subarray(0,end).toString());if(!reply.ok)throw new Error(reply.error||"Desktop allocation failed");complete(null,reply.result);}catch(error){complete(error);}
+      });
+    });
+    if(lease.socket!==endpoint.socket || lease.instance!==endpoint.instance || !lease.token)throw new Error("Allocation identity mismatch");
+    c.binding=lease; secrets.add(lease.token);
+    const state=await current.run(c,()=>invoke("state"));
+    contexts.set(reference,c);
+    return {...state,desktop:reference,created:lease.created};
+  } catch(error) {socket.destroy();throw error;}
+}
 function rpc(value, method, params, requestId) {
+  const controller=context().controller;
   return new Promise((resolveReply,reject) => {
     const socket = connectSocket(value.socket); let input = Buffer.alloc(0), done = false;
     const timer = setTimeout(() => complete(new Error("Desktop response timed out. Action outcome is uncertain; inspect state before deciding what to do next.")), 8000);
     function complete(error,result) { if (done) return; done=true; clearTimeout(timer); socket.destroy(); error ? reject(error) : resolveReply(result); }
     socket.on("error", error => complete(error));
     socket.on("end", () => { if (!done) complete(new Error("Desktop service disconnected; action outcome may be uncertain")); });
-    socket.on("connect", () => socket.write(JSON.stringify({id:instanceId+":"+String(requestId || randomUUID()),method,token:value.token,controller:instanceId,params})+"\n"));
+    socket.on("connect", () => socket.write(JSON.stringify({id:controller+":"+String(requestId || randomUUID()),method,token:value.token,controller,params})+"\n"));
     socket.on("data", chunk => {
       input = Buffer.concat([input,chunk]);
       if (input.length > 64*1024*1024) return complete(new Error("Desktop response exceeded the transport budget"));
@@ -74,46 +119,43 @@ function verifyState(state) {
     throw new Error("Updated Cornice Broker is required; desktop permission contract is unavailable. No action was sent.");
 }
 async function invoke(operation,params={},extra={}) {
-  if (finished && operation !== "state") throw new Error("Task already finished; no further actions allowed");
-  if (job) {
-    const result=await bridge(operation,params,extra.signal);
-    if(operation==="state") verifyState(result);
-    return result;
-  }
+  const c=context();
+  if (c.finished && operation !== "state") throw new Error("Task already finished; no further actions allowed");
+  if (job) {const result=await bridge(operation,params,extra.signal);if(operation==="state")verifyState(result);return result;}
   const value=await credential();
   if(operation==="finish") {
-    await rpc(value,"desktop.release",{},extra.requestId); finished=true; return {outcome:params.outcome,reason:params.reason};
+    try {await rpc(value,"desktop.release",{},extra.requestId);}
+    catch(error) {if(!/binding revoked|binding revoked or unknown/.test(error.message))throw error;}
+    finally {c.finished=true;c.reservation?.destroy();}
+    return {outcome:params.outcome,reason:params.reason};
   }
   const result=await rpc(value,"desktop."+(operation==="browser_connect"?"browser":operation),params,extra.requestId);
-  if(operation==="state") verifyState(result);
+  if(operation==="state")verifyState(result);
   return result;
 }
 async function closeBrowser() {
-  const old=browser; browser=undefined; browserIdentity=undefined;
-  if(old) await old.close().catch(()=>{});
+  const c=context(), old=c.browser;c.browser=undefined;c.browserIdentity=undefined;
+  if(old)await old.close().catch(()=>{});
 }
 async function connectBrowser(extra) {
-  const state=await invoke("state",{},extra);
-  if(!active(state)) throw new Error("Desktop control is interrupted. Wait for explicit restoration; no browser action was sent.");
-  const connection=await invoke("browser",{},extra);
-  if(connection.interrupted) return connection;
+  const c=context(), state=await invoke("state",{},extra);
+  if(!active(state))throw new Error("Desktop control is interrupted. No browser action was sent.");
+  const connection=await invoke("browser",{},extra);if(connection.interrupted)return connection;
   const endpoint=new URL(connection.cdpUrl);
-  if(endpoint.protocol!=="http:" || endpoint.hostname!=="127.0.0.1" || !endpoint.port || endpoint.pathname==="/") throw new Error("Invalid authorized browser endpoint");
-  secrets.add(connection.cdpUrl); secrets.add(endpoint.pathname.slice(1));
-  await closeBrowser();
-  browserHome ||= await mkdtemp(join(process.env.CORNICE_AGENT_MCP_TMP || tmpdir(),"cornice-mcp-")); await chmod(browserHome,0o700);
+  if(endpoint.protocol!=="http:" || endpoint.hostname!=="127.0.0.1" || !endpoint.port || endpoint.pathname==="/")throw new Error("Invalid authorized browser endpoint");
+  secrets.add(connection.cdpUrl);secrets.add(endpoint.pathname.slice(1));await closeBrowser();
+  c.browserHome ||= await mkdtemp(join(process.env.CORNICE_AGENT_MCP_TMP || tmpdir(),"cornice-mcp-"));await chmod(c.browserHome,0o700);
   const client=new Client({name:"cornice-browser-adapter",version:"0.1.0"});
-  const transport=new StdioClientTransport({command:join(root,"bin/cornice-desktop-mcp"),args:["--browser"],
-    env:{PATH:process.env.PATH || "/usr/bin:/bin",PLAYWRIGHT_MCP_CDP_ENDPOINT:connection.cdpUrl,CORNICE_MCP_BROWSER_HOME:browserHome},cwd:browserHome,stderr:"pipe"});
-  transport.stderr?.on("data",()=>{}); // Credential-bearing diagnostics never enter model context.
+  const transport=new StdioClientTransport({command:join(root,"bin/cornice-desktop-mcp"),args:["--browser"],env:{PATH:process.env.PATH || "/usr/bin:/bin",PLAYWRIGHT_MCP_CDP_ENDPOINT:connection.cdpUrl,CORNICE_MCP_BROWSER_HOME:c.browserHome},cwd:c.browserHome,stderr:"pipe"});
+  transport.stderr?.on("data",()=>{});
   try {
-    await client.connect(transport); const available=await client.listTools();
-    for(const tool of browserTools) if(!available.tools.some(item=>item.name===tool.name)) throw new Error("Pinned browser tool missing: "+tool.name);
-    const current=await invoke("state",{},extra);
-    if(!active(current) || current.seatId!==state.seatId || current.generation!==state.generation) throw new Error("Control changed during browser connection; reconnect after restoration");
-    browser=client;browserIdentity={seatId:state.seatId,generation:state.generation};
+    await client.connect(transport);const available=await client.listTools();
+    for(const tool of browserTools)if(!available.tools.some(item=>item.name===tool.name))throw new Error("Pinned browser tool missing: "+tool.name);
+    const fresh=await invoke("state",{},extra);
+    if(!active(fresh) || fresh.seatId!==state.seatId || fresh.generation!==state.generation)throw new Error("Control changed during browser connection; reconnect after restoration");
+    c.browser=client;c.browserIdentity={seatId:state.seatId,generation:state.generation};
     return {connected:true,seatId:state.seatId,generation:state.generation,observation:"accessibility-tree"};
-  } catch(error) { await client.close().catch(()=>{}); throw error; }
+  } catch(error) {await client.close().catch(()=>{});throw error;}
 }
 const object = (properties={},required=[])=>({type:"object",properties,required,additionalProperties:false});
 const string={type:"string"}, number={type:"number"};
@@ -133,60 +175,70 @@ const browserSpec=JSON.parse(await readFile(join(root,"native/agent/browser-sche
 const installedBrowser=JSON.parse(await readFile(join(root,"native/agent/node_modules/@playwright/mcp/package.json"),"utf8"));
 if(installedBrowser.version!==browserSpec.version) throw new Error("Pinned browser dependency and tool schema differ");
 const browserTools=browserSpec.tools;
-const allTools=[...nativeTools,...browserTools];
+const acquireTool={name:"desktop_acquire",description:"Acquire an allowed, idle desktop for this task. Reuse an unoccupied secondary desktop, preserving its applications, or create a new one if none is free. Use createNew for an empty desktop. An occupied preferredDesktop creates a new desktop; primary is never chosen implicitly. Keep the returned desktop reference and include it in every following tool call.",inputSchema:object({preferredDesktop:{type:"string",minLength:1,maxLength:64},createNew:{type:"boolean"}})};
+const allTools=[acquireTool,...nativeTools,...browserTools].map(tool=>({...tool,inputSchema:{...tool.inputSchema,properties:{...tool.inputSchema.properties,...(tool.name==="desktop_acquire"?{}:{desktop:{type:"string",minLength:1,maxLength:128}})}}}));
 const validator=new AjvJsonSchemaValidator();
 const validators=new Map(allTools.map(tool=>[tool.name,validator.getValidator(tool.inputSchema)]));
-const server=new Server({name:"cornice-desktop",version:"0.1.0"},{capabilities:{tools:{}},instructions:"Operate only the explicitly assigned desktop. Begin with desktop_state. Browser tasks: desktop_browser_connect, browser_tabs, fresh browser_snapshot, semantic actions. Native tasks: fresh desktop_capture before input. Permission off, human takeover and session lock interrupt control. Never resume or rebind yourself, fall back to another desktop, or replay uncertain actions. After explicit restoration reconnect and observe again. Finish only after verifying the requested result."});
+const server=new Server({name:"cornice-desktop",version:"0.2.0"},{capabilities:{tools:{}},instructions:"Begin a desktop task with desktop_acquire. Retain its desktop reference and include it in every native and browser tool call. Each task has independent control. Primary desktop requires pre-enabled permission and explicit selection. On interruption stop input; do not reacquire to escape pause, human takeover or lock. Finish after verifying the requested result."});
 server.setRequestHandler(ListToolsRequestSchema,async()=>({tools:allTools}));
 let sequence=Promise.resolve();
 server.setRequestHandler(CallToolRequestSchema,(request,extra)=> {
   const run=async()=> {
     try {
-      const name=request.params.name,params=request.params.arguments || {};
-      const validate=validators.get(name);if(!validate) throw new Error("Unknown desktop tool");
-      const valid=validate(params); if(!valid.valid) throw new Error("Invalid tool arguments: "+valid.errorMessage);
-      if(finished && name!=="desktop_state") throw new Error("Task already finished; no further actions allowed");
-      if(name.startsWith("browser_")) {
-        const current=await invoke("state",{},extra);
-        if(!browser || !active(current) || current.seatId!==browserIdentity.seatId || current.generation!==browserIdentity.generation) {
-          await closeBrowser(); throw new Error("Browser control interrupted or changed. Reconnect after explicit restoration and read a fresh snapshot; no browser action was sent.");
-        }
-        const result=await browser.callTool({name,arguments:params});
-        return sanitize(result);
+      const name=request.params.name,args=request.params.arguments || {};
+      const validate=validators.get(name);if(!validate)throw new Error("Unknown desktop tool");
+      const valid=validate(args);if(!valid.valid)throw new Error("Invalid tool arguments: "+valid.errorMessage);
+      if(name==="desktop_acquire") {
+        const result=await acquire(args);return {content:[{type:"text",text:JSON.stringify(sanitize(result))}],structuredContent:sanitize(result)};
       }
-      const operation=name.slice("desktop_".length); let result;
-      if(operation==="browser_connect") result=await connectBrowser(extra);
-      else if(operation==="wait" && job) result=await invoke("wait",params,extra);
-      else if(operation==="wait") {
-        const end=Date.now()+params.seconds*1000;
-        do {
-          if(extra.signal.aborted) throw new Error("Desktop wait cancelled");
-          result=await invoke("state",{},extra);
-          if(active(result)) break;
-          await new Promise(resolve=>setTimeout(resolve,250));
-        } while(Date.now()<end);
-        result={control:result,interrupted:!active(result)};
-      } else result=await invoke(operation,operation==="capture"?{encoding:"jpeg"}:params,extra);
-      if(operation==="finish") {finished=true;await closeBrowser();}
-      const {imageBase64,pngBase64,mimeType,...details}=result;
-      const content=[{type:"text",text:JSON.stringify(sanitize(details))}];
-      if(imageBase64 || pngBase64) content.push({type:"image",data:imageBase64 || pngBase64,mimeType:mimeType || "image/png"});
-      return {content,structuredContent:sanitize(details)};
-    } catch(error) {return {isError:true,content:[{type:"text",text:sanitize(error.message || String(error))}]};}
+      const {desktop,...params}=args;
+      const c=desktop ? contexts.get(desktop) : legacy;
+      if(!c)throw new Error("Call desktop_acquire first, then include its desktop reference in every tool call");
+      return await current.run(c,async()=> {
+        if(c.finished && name!=="desktop_state")throw new Error("Task already finished; no further actions allowed");
+        if(name.startsWith("browser_")) {
+          const state=await invoke("state",{},extra);
+          if(!c.browser || !active(state) || state.seatId!==c.browserIdentity.seatId || state.generation!==c.browserIdentity.generation) {
+            await closeBrowser();throw new Error("Browser control interrupted or changed. Reconnect after explicit restoration and read a fresh snapshot; no browser action was sent.");
+          }
+          return sanitize(await c.browser.callTool({name,arguments:params}));
+        }
+        const operation=name.slice("desktop_".length);let result;
+        if(operation==="browser_connect")result=await connectBrowser(extra);
+        else if(operation==="wait" && job)result=await invoke("wait",params,extra);
+        else if(operation==="wait") {
+          const end=Date.now()+params.seconds*1000;
+          do {
+            if(extra.signal.aborted)throw new Error("Desktop wait cancelled");
+            result=await invoke("state",{},extra);if(active(result))break;
+            await new Promise(resolve=>setTimeout(resolve,250));
+          }while(Date.now()<end);
+          result={control:result,interrupted:!active(result)};
+        }else result=await invoke(operation,operation==="capture"?{encoding:"jpeg"}:params,extra);
+        if(operation==="finish"){c.finished=true;await closeBrowser();}
+        const {imageBase64,pngBase64,mimeType,...details}=result;
+        const content=[{type:"text",text:JSON.stringify(sanitize(details))}];
+        if(imageBase64 || pngBase64)content.push({type:"image",data:imageBase64 || pngBase64,mimeType:mimeType || "image/png"});
+        return {content,structuredContent:sanitize(details)};
+      });
+    }catch(error){return {isError:true,content:[{type:"text",text:sanitize(error.message || String(error))}]};}
   };
   const pending=sequence.then(run,run);sequence=pending.then(()=>{},()=>{});return pending;
 });
-// Keep the Broker's single-controller lease alive even during model thinking.
+let closing=false;
 const heartbeat=setInterval(()=> {
-  if((binding || job) && !finished && !closing) invoke("state").catch(()=>{});
+  for(const c of [...contexts.values(),...(legacy?[legacy]:[])])
+    if((c.binding || job) && !c.finished && !closing)current.run(c,()=>invoke("state").catch(()=>{}));
 },1000);
 heartbeat.unref();
-let closing=false;
 async function close() {
-  if(closing) return;closing=true;clearInterval(heartbeat);
-  await closeBrowser();
-  if(!job && binding && !finished) await rpc(binding,"desktop.release",{},"disconnect").catch(()=>{});
-  if(browserHome) await rm(browserHome,{recursive:true,force:true});
+  if(closing)return;closing=true;clearInterval(heartbeat);
+  for(const c of [...contexts.values(),...(legacy?[legacy]:[])])await current.run(c,async()=> {
+    await closeBrowser();
+    c.reservation?.destroy();
+    if(!job && c.binding && !c.finished)await rpc(c.binding,"desktop.release",{},"disconnect").catch(()=>{});
+    if(c.browserHome)await rm(c.browserHome,{recursive:true,force:true});
+  });
   await server.close().catch(()=>{});
 }
 process.on("SIGTERM",()=>{close().finally(()=>process.exit(0));});

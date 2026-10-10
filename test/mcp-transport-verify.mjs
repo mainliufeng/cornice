@@ -27,7 +27,7 @@ const transport=new StdioClientTransport({command:join(root,'bin/cornice-desktop
 transport.stderr?.on('data',()=>{});
 try{
  await client.connect(transport);
- const tools=await client.listTools();assert.equal(tools.tools.length,23);
+ const tools=await client.listTools();assert.equal(tools.tools.length,24);
  const call=async(name,args={},error=false)=>{const value=await client.callTool({name,arguments:args});assert.equal(!!value.isError,error,JSON.stringify(value));return value;};
  assert.equal((await call('desktop_state')).structuredContent.name,'fixture');
  for(const mode of ['nonzero','malformed','array']){
