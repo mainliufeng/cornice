@@ -33,7 +33,7 @@ PanelFrame {
   }
   function iconFor(id) {
     const icons = { "cn.launcher": "\u{F00CA}", "cn.workspaces": "\u{F009}", "cn.active-window": "\u{F2D0}",
-      "cn.clock": "\u{F017}", "cn.weather": "\u{F0C2}", "cn.media": "\u{F001}", "cn.indicators": "\u{F0F3}",
+      "cn.recording": "\u{F03D}", "cn.clock": "\u{F017}", "cn.weather": "\u{F0C2}", "cn.media": "\u{F001}", "cn.indicators": "\u{F0F3}",
       "cn.tray": "\u{F141}", "cn.network": "\u{F1EB}", "cn.bluetooth": "\u{F293}", "cn.audio": "\u{F028}",
       "cn.brightness": "\u{F0EB}", "cn.power": "\u{F240}", "cn.keylayout": "\u{F11C}", "cn.spacer": "\u{F07E}" }
     return icons[id] || "\u{F12E}"

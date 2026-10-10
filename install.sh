@@ -116,6 +116,10 @@ command -v flock >/dev/null 2>&1 && ok "flock: serialized window focus" \
   || { bad "flock not found — install util-linux"; missing=1; }
 command -v socat >/dev/null 2>&1 && ok "socat: $(command -v socat)" \
   || { bad "socat not found — install socat for CLI-to-plugin communication"; missing=1; }
+[[ -x ${HOME}/.local/bin/wf-recorder ]] || command -v wf-recorder >/dev/null 2>&1 && ok "wf-recorder: screen recording" \
+  || { bad "wf-recorder not found — install wf-recorder for screen recording"; missing=1; }
+command -v ffprobe >/dev/null 2>&1 && ok "ffmpeg: recording validation" \
+  || { bad "ffprobe not found — install ffmpeg for video validation"; missing=1; }
 command -v grim >/dev/null 2>&1 && ok "grim: screenshots for 'cornice verify'" \
   || warn "no grim — 'cornice verify' will skip its visual checks"
 command -v fc-list >/dev/null 2>&1 && {

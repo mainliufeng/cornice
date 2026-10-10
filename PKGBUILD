@@ -27,7 +27,7 @@ license=('MIT')
 # glib2 provides gdbus (the logind monitor for suspend/lid locking) and curl is
 # what the weather plugin fetches with — both are used by default plugins, so
 # they are hard dependencies, not optional ones.
-depends=('quickshell' 'hyprland' 'jq' 'glib2' 'curl' 'util-linux' 'qt6-base' 'qt6-declarative' 'socat')
+depends=('quickshell' 'hyprland' 'jq' 'glib2' 'curl' 'util-linux' 'qt6-base' 'qt6-declarative' 'socat' 'wf-recorder' 'ffmpeg')
 makedepends=('cmake' 'ninja')
 optdepends=(
   'at-spi2-core: native application accessibility trees'

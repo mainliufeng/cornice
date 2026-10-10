@@ -53,6 +53,9 @@
           "id": "cn.screenshot"
         },
         {
+          "id": "cn.recording"
+        },
+        {
           "id": "cn.menu"
         }
       ]
@@ -171,5 +174,8 @@
         ]
       }
     }
+  },
+  "recording": {
+    "directory": "~/Videos/Cornice"
   }
 }

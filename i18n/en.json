@@ -201,5 +201,14 @@
   "weather.updated": "Updated",
   "weather.wind": "Wind",
   "idle.lockWarning": "Locking soon · move the mouse or press a key to continue",
-  "brightness.failed": "Could not adjust brightness. Check backlight permissions and install light or brightnessctl."
+  "brightness.failed": "Could not adjust brightness. Check backlight permissions and install light or brightnessctl.",
+  "bar.widget.recording": "Screen recording",
+  "recording.start": "Record this screen; click again to stop",
+  "recording.stop": "Stop recording",
+  "recording.saved": "Recording saved",
+  "recording.failed": "Recording failed",
+  "recording.directoryFailed": "Cannot create the video directory",
+  "recording.backendFailed": "Recorder failed to start",
+  "recording.timeout": "Recorder start or stop timed out",
+  "recording.invalidVideo": "The video was not finalized; please record again"
 }

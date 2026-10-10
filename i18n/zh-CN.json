@@ -201,5 +201,14 @@
   "weather.updated": "更新于",
   "weather.wind": "风速",
   "idle.lockWarning": "即将锁屏 · 移动鼠标或按键继续使用",
-  "brightness.failed": "亮度调整失败，请检查背光权限并安装 light 或 brightnessctl。"
+  "brightness.failed": "亮度调整失败，请检查背光权限并安装 light 或 brightnessctl。",
+  "bar.widget.recording": "录屏",
+  "recording.start": "点击录制当前屏幕，再次点击停止",
+  "recording.stop": "停止录屏",
+  "recording.saved": "录屏已保存",
+  "recording.failed": "录屏失败",
+  "recording.directoryFailed": "无法创建视频目录",
+  "recording.backendFailed": "录屏后端启动失败",
+  "recording.timeout": "录屏启动或停止超时",
+  "recording.invalidVideo": "视频未完整保存，请重新录制"
 }

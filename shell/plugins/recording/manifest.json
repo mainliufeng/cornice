@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.recording",
+  "name": "Screen recording",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Start and stop screen recording from the bar",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Recording.qml",
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Screen recording",
+    "category": "Utility",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {},
+    "schema": []
+  }
+}
