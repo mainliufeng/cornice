@@ -38,6 +38,7 @@ class DesktopPresentation : public QObject {
                                      m_connectedPath, m_handoffId;
     QJsonObject m_state;
     QByteArray m_input;
+    quint64 m_targetRevision = 0, m_requestRevision = 0;
     bool m_active = false, m_pending = false, m_present = true, m_refresh = false;
 };
 

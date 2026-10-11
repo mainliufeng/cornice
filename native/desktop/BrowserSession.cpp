@@ -1,5 +1,9 @@
 #include "BrowserSession.hpp"
 #include <QElapsedTimer>
+#include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QJsonArray>
+#include <QThread>
 #include <QHostAddress>
 #include <QJsonDocument>
 #include <QTcpSocket>
@@ -17,76 +21,67 @@ BrowserSession::BrowserSession(QString program, QStringList args,
                                QProcessEnvironment env, QString log,
                                std::function<bool(const QString &)> allowed)
     : m_allowed(std::move(allowed)) {
-  int commands[2], responses[2];
-  if (pipe2(commands, O_CLOEXEC))
-    failure("Cannot create Chrome pipe");
-  if (pipe2(responses, O_CLOEXEC)) {
-    close(commands[0]);
-    close(commands[1]);
-    failure("Cannot create Chrome pipe");
-  }
-  // Move child handles above fd4 before mapping Chrome's reserved pipe FDs.
-  int childRead = fcntl(commands[0], F_DUPFD_CLOEXEC, 10);
-  int childWrite = fcntl(responses[1], F_DUPFD_CLOEXEC, 10);
-  close(commands[0]);
-  close(responses[1]);
-  m_write = commands[1];
-  m_read = responses[0];
+  m_log = log;
   try {
-    if (childRead < 0 || childWrite < 0)
-      failure("Cannot map Chrome pipe");
-    m_process.setProcessEnvironment(env);
-    m_process.setProgram(program);
-    args.prepend("--remote-debugging-pipe");
-    m_process.setArguments(args);
-    m_process.setStandardOutputFile(log, QIODevice::Append);
-    m_process.setStandardErrorFile(log, QIODevice::Append);
-    m_process.setChildProcessModifier(
-        [childRead, childWrite, write = m_write, read = m_read] {
-          dup2(childRead, 3);
-          dup2(childWrite, 4);
-          if (write != 3 && write != 4)
-            close(write);
-          if (read != 3 && read != 4)
-            close(read);
-          close(childRead);
-          close(childWrite);
-        });
-    m_process.start();
-    if (!m_process.waitForStarted(2000))
-      failure("Cannot start managed Chrome");
-    close(childRead);
-    close(childWrite);
-    childRead = childWrite = -1;
-    fcntl(m_read, F_SETFL, fcntl(m_read, F_GETFL) | O_NONBLOCK);
-    fcntl(m_write, F_SETFL, fcntl(m_write, F_GETFL) | O_NONBLOCK);
-    send({{"id", 1}, {"method", "Browser.getVersion"}});
-    QElapsedTimer deadline;
-    deadline.start();
-    while (m_version.isEmpty() && deadline.elapsed() < 4000) {
-      pollfd fd{m_read, POLLIN, 0};
-      poll(&fd, 1, 100);
-      receive();
+    QJsonObject requestedEnvironment;
+    const auto requestedBytes = env.value("CORNICE_BROWSER_REQUESTED_ENV").toUtf8();
+    if (!requestedBytes.isEmpty()) {
+      QJsonParseError error;
+      const auto requested = QJsonDocument::fromJson(requestedBytes, &error);
+      if (error.error != QJsonParseError::NoError || !requested.isObject())
+        failure("Invalid managed browser launch environment metadata");
+      requestedEnvironment = requested.object();
+      for (auto it = requestedEnvironment.begin(); it != requestedEnvironment.end(); ++it)
+        if (it.key().isEmpty() || it.key().contains('=') || it.key().contains(QChar(0)) ||
+            !it.value().isString() || it.value().toString().contains(QChar(0)))
+          failure("Invalid managed browser launch environment metadata");
     }
-    if (m_version.isEmpty())
-      failure("Managed Chrome did not open its debug pipe; close the old "
-              "browser before starting CDP");
+    m_runtime = std::make_unique<QLocalSocket>();
+    const auto path = qEnvironmentVariable("XDG_RUNTIME_DIR") + "/cb-" + QString::fromLatin1(QCryptographicHash::hash(log.toUtf8(), QCryptographicHash::Sha256).toHex().left(32)) + ".sock";
+    m_startupRetry.setInterval(100);
+    connect(&m_startupRetry, &QTimer::timeout, this, [this, path] {
+      if (m_startupComplete) return;
+      if (m_startupTime.elapsed() >= 10000) {
+        finishStartup("Browser runtime startup timed out; see " + m_log + ".runtime");
+        return;
+      }
+      if (m_runtime->state() == QLocalSocket::UnconnectedState)
+        m_runtime->connectToServer(path);
+    });
+    connect(m_runtime.get(), &QLocalSocket::connected, this, [this, env, requestedEnvironment] {
+      auto attach = QJsonDocument(QJsonObject{{"op", "attach"}, {"policy", env.value("CORNICE_BROWSER_POLICY")},
+          {"requestedEnvironment", requestedEnvironment}}).toJson(QJsonDocument::Compact);
+      attach.append('\0');
+      if (m_runtime->write(attach) != attach.size()) {
+        finishStartup("Cannot attach browser runtime");
+        return;
+      }
+      m_runtime->flush();
+    });
+    connect(m_runtime.get(), &QLocalSocket::errorOccurred, this, [this, path, program, args, env, log](QLocalSocket::LocalSocketError) {
+      if (m_startupComplete) { revoke(); return; }
+      m_connectRetrying = true;
+      m_runtime->abort();
+      m_connectRetrying = false;
+      if (m_startupComplete || m_helperStarted) return;
+      m_helperStarted = true;
+      QProcess helper;
+      helper.setProgram(QCoreApplication::applicationDirPath() + "/cornice-browser-runtime");
+      helper.setArguments({path, program, QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(args)).toJson(QJsonDocument::Compact)), log, env.value("CORNICE_BROWSER_POLICY")});
+      helper.setProcessEnvironment(env);
+      helper.setStandardOutputFile(log + ".runtime", QIODevice::Append);
+      helper.setStandardErrorFile(log + ".runtime", QIODevice::Append);
+      if (!helper.startDetached()) finishStartup("Cannot start browser runtime helper");
+    });
+    connect(m_runtime.get(), &QLocalSocket::readyRead, this, [this] { receive(); });
+    connect(m_runtime.get(), &QLocalSocket::disconnected, this, [this] {
+      if (!m_startupComplete && !m_connectRetrying)
+        finishStartup("Browser runtime disconnected during startup; see " + m_log + ".runtime");
+      else if (m_startupComplete) revoke();
+    });
+    connect(m_runtime.get(), &QLocalSocket::bytesWritten, this, [this] { try { flush(); } catch (...) { revoke(); } });
     if (!m_http.listen(QHostAddress::LocalHost, 0))
       failure("Cannot start authorized CDP endpoint");
-    m_reader =
-        std::make_unique<QSocketNotifier>(m_read, QSocketNotifier::Read, this);
-    m_writer = std::make_unique<QSocketNotifier>(m_write,
-                                                 QSocketNotifier::Write, this);
-    m_writer->setEnabled(false);
-    connect(m_writer.get(), &QSocketNotifier::activated, this, [this] {
-      try {
-        flush();
-      } catch (...) {
-        revoke();
-      }
-    });
-    connect(m_reader.get(), &QSocketNotifier::activated, this,
-            [this] { receive(); });
     connect(&m_http, &QTcpServer::newConnection, this, [this] {
       while (auto *socket = m_http.nextPendingConnection()) {
         auto *timeout = new QTimer(socket);
@@ -181,15 +176,22 @@ BrowserSession::BrowserSession(QString program, QStringList args,
               auto message = document.object();
               if (error.error != QJsonParseError::NoError ||
                   text.size() > 1024 * 1024 || !message["id"].isDouble() ||
-                  !message["method"].isString() || m_requests.size() >= 256) {
+                  !message["method"].isString() || message.contains("op") ||
+                  (message.contains("params") && !message["params"].isObject()) ||
+                  (message.contains("sessionId") && !message["sessionId"].isString()) ||
+                  m_requests.size() >= 256) {
                 peer->close();
                 return;
               }
               const auto id = ++m_nextId;
               m_requests[id] = {peer, message["id"], token};
-              message["id"] = id;
+              // CDP and private runtime control share a transport, not an
+              // envelope. Never forward private control or arbitrary metadata.
+              QJsonObject command{{"id",id},{"method",message["method"]}};
+              for (const auto &key : {"params","sessionId"})
+                if (message.contains(key)) command[key] = message[key];
               try {
-                send(message, token);
+                send(command, token);
               } catch (...) {
                 revoke();
               }
@@ -209,36 +211,68 @@ BrowserSession::BrowserSession(QString program, QStringList args,
                              "seat authorization revoked");
     });
     m_watchdog.start(100);
-  } catch (...) {
-    // The FD values might have been closed already; invalidate after each
-    // successful close to avoid closing a newly allocated descriptor.
-    m_process.kill();
-    m_process.waitForFinished(1000);
-    if (childRead >= 0)
-      close(childRead);
-    if (childWrite >= 0)
-      close(childWrite);
-    if (m_write >= 0)
-      close(m_write);
-    if (m_read >= 0)
-      close(m_read);
-    m_write = m_read = -1;
-    throw;
-  }
+    m_startupTime.start();
+    m_startupRetry.start();
+    m_runtime->connectToServer(path);
+  } catch (...) { if (m_runtime) m_runtime->abort(); throw; }
 }
 BrowserSession::~BrowserSession() {
+  m_watchdog.stop();
+  m_startupRetry.stop();
+  m_readyCallbacks.clear();
+  QObject::disconnect(&m_ws, nullptr, this, nullptr);
+  QObject::disconnect(&m_http, nullptr, this, nullptr);
+  for (auto *socket : m_http.findChildren<QTcpSocket *>()) {
+    QObject::disconnect(socket, nullptr, this, nullptr);
+    socket->abort();
+  }
+  m_http.close();
+  for (const auto &peer : m_peers) if (peer.socket) QObject::disconnect(peer.socket, nullptr, this, nullptr);
+  if (m_runtime) QObject::disconnect(m_runtime.get(), nullptr, this, nullptr);
   revoke();
-  m_reader.reset();
-  m_writer.reset();
-  m_process.kill();
-  m_process.waitForFinished(2000);
-  if (m_write >= 0)
-    close(m_write);
-  if (m_read >= 0)
-    close(m_read);
+  if (m_runtime) m_runtime->abort();
 }
 bool BrowserSession::running() const {
-  return m_process.state() == QProcess::Running;
+  return m_startupComplete && m_startupError.isEmpty() && m_pid > 0 &&
+         m_runtime && m_runtime->state() == QLocalSocket::ConnectedState;
+}
+bool BrowserSession::matchesLaunchEnvironment(const QJsonObject &requested) const {
+  if (!running()) return false;
+  for (auto it = requested.begin(); it != requested.end(); ++it)
+    if (!it.value().isString() || !m_launchEnvironment.contains(it.key()) ||
+        m_launchEnvironment.value(it.key()) != it.value()) return false;
+  return true;
+}
+void BrowserSession::whenReady(std::function<void(QString)> callback) {
+  if (m_startupComplete) {
+    const auto error = m_startupError;
+    QTimer::singleShot(0, this, [callback = std::move(callback), error] { callback(error); });
+  } else {
+    if (m_readyCallbacks.size() >= 64) failure("Browser startup waiter limit reached");
+    m_readyCallbacks.append(std::move(callback));
+  }
+}
+void BrowserSession::finishStartup(QString error) {
+  if (m_startupComplete) return;
+  m_startupComplete = true;
+  m_startupError = std::move(error);
+  m_startupRetry.stop();
+  if (!m_startupError.isEmpty()) m_runtime->abort();
+  const auto callbacks = std::move(m_readyCallbacks);
+  for (const auto &callback : callbacks) {
+    const auto result = m_startupError;
+    QTimer::singleShot(0, this, [callback, result] { callback(result); });
+  }
+}
+bool BrowserSession::close(const QString &log) {
+  QLocalSocket socket;
+  const auto path = qEnvironmentVariable("XDG_RUNTIME_DIR") + "/cb-" + QString::fromLatin1(QCryptographicHash::hash(log.toUtf8(), QCryptographicHash::Sha256).toHex().left(32)) + ".sock";
+  socket.connectToServer(path);
+  if (!socket.waitForConnected(500)) return true; // No live runtime to close.
+  QByteArray message("{\"op\":\"shutdown\"}"); message.append('\0');
+  socket.write(message); socket.flush();
+  if (!socket.waitForReadyRead(3000)) return false;
+  return QJsonDocument::fromJson(socket.readAll().split('\0').first()).object()["ok"].toBool();
 }
 bool BrowserSession::authorized(const QString &token) const {
   try {
@@ -248,9 +282,11 @@ bool BrowserSession::authorized(const QString &token) const {
   }
 }
 QString BrowserSession::endpoint(const QString &token) const {
+  if (!running()) failure(m_startupError.isEmpty() ? "Browser runtime startup is pending" : m_startupError);
   return QString("http://127.0.0.1:%1/%2").arg(m_http.serverPort()).arg(token);
 }
 void BrowserSession::revoke() {
+  if (starting()) finishStartup("Desktop control revoked during browser startup");
   const auto peers = m_peers;
   for (const auto &peer : peers)
     if (peer.socket)
@@ -258,15 +294,26 @@ void BrowserSession::revoke() {
           QWebSocketProtocol::CloseCodePolicyViolated,
           "seat authorization revoked; in-flight requests unconfirmed");
   m_requests.clear();
+  // Revoke queued control as well as client sockets. Frames accepted by the
+  // helper are submitted and may have an unconfirmed outcome; never replay.
+  const bool incomplete = !m_outgoing.empty() && m_outgoing.front().written;
+  m_outgoing.clear();
+  m_queuedBytes = 0;
+  if (!running()) return;
+  if (incomplete) {
+    // Closing this transport drops its incomplete local frame at the helper,
+    // which independently owns Chrome and preserves all application state.
+    m_runtime->abort();
+    return;
+  }
+  try { send({{"op", "detach"}}); }
+  catch (...) { m_runtime->abort(); }
 }
 void BrowserSession::detachTargets() {
   // The Chrome pipe outlives a harness connection. Detach old root sessions
   // so the next CDP client receives existing targets again; keep tabs open.
   try {
-    send({{"id", ++m_nextId}, {"method", "Target.setAutoAttach"},
-          {"params", QJsonObject{{"autoAttach", false},
-                                 {"waitForDebuggerOnStart", false},
-                                 {"flatten", true}}}});
+    send({{"op", "detach"}});
   } catch (...) { revoke(); }
 }
 
@@ -284,25 +331,24 @@ void BrowserSession::flush() {
     auto &next = m_outgoing.front();
     if (!next.token.isEmpty() && !authorized(next.token)) {
       if (next.written) {
-        m_process.kill();
-        failure("CDP authorization changed during pipe write; browser stopped");
+        m_runtime->abort();
+        failure("CDP authorization changed during transport write; submitted command unconfirmed");
       }
       m_queuedBytes -= next.bytes.size();
       m_outgoing.pop_front();
       continue;
     }
-    const auto count = write(m_write, next.bytes.constData() + next.written,
-                             next.bytes.size() - next.written);
+    if (!running()) failure("Browser runtime connection closed");
+    if (m_runtime->bytesToWrite() + next.bytes.size() > 8 * 1024 * 1024) failure("Browser runtime queue full");
+    const auto count = m_runtime->write(next.bytes.constData() + next.written, next.bytes.size() - next.written);
     if (count < 0 && errno == EINTR)
       continue;
     if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-      if (m_writer)
-        m_writer->setEnabled(true);
       return;
     }
     if (count <= 0) {
-      m_process.kill();
-      failure("Chrome pipe failed; in-flight commands unconfirmed");
+      m_runtime->abort();
+      failure("Browser runtime transport failed; in-flight commands unconfirmed");
     }
     // Continue writing only the unsent suffix. Never resend a CDP command.
     next.written += count;
@@ -311,19 +357,38 @@ void BrowserSession::flush() {
       m_outgoing.pop_front();
     }
   }
-  if (m_writer)
-    m_writer->setEnabled(false);
 }
 void BrowserSession::receive() {
-  char buffer[65536];
-  ssize_t count;
-  while ((count = read(m_read, buffer, sizeof(buffer))) > 0)
-    m_input.append(buffer, count);
-  if (count == 0) {
-    if (m_reader)
-      m_reader->setEnabled(false);
-    revoke();
-    return;
+  m_input.append(m_runtime->readAll());
+  if (!m_startupComplete) {
+    if (m_input.size() > 1024 * 1024) {
+      finishStartup("Browser runtime greeting is too large");
+      return;
+    }
+    if (!m_input.contains('\0')) return;
+    const auto separator = m_input.indexOf('\0');
+    const auto greeting = QJsonDocument::fromJson(m_input.left(separator)).object();
+    m_input.remove(0, separator + 1);
+    if (!greeting["ok"].toBool() || greeting["pid"].toInteger() <= 0) {
+      finishStartup(greeting["error"].toString("Cannot attach browser runtime"));
+      return;
+    }
+    if (!greeting["launchEnvironment"].isObject()) {
+      finishStartup("Browser runtime did not provide its launch environment");
+      return;
+    }
+    const auto launchEnvironment = greeting["launchEnvironment"].toObject();
+    for (auto it = launchEnvironment.begin(); it != launchEnvironment.end(); ++it)
+      if (!it.value().isString() || it.value().toString().contains(QChar(0))) {
+        finishStartup("Invalid browser runtime launch environment");
+        return;
+      }
+    // Private runtime metadata remains in memory and is never included in the
+    // public HTTP discovery object or forwarded as a CDP event.
+    m_launchEnvironment = launchEnvironment;
+    m_pid = greeting["pid"].toInteger();
+    m_version = greeting["version"].toObject();
+    finishStartup();
   }
   if (m_input.size() > 64 * 1024 * 1024) {
     revoke();
@@ -334,6 +399,12 @@ void BrowserSession::receive() {
     auto message =
         QJsonDocument::fromJson(m_input.left(m_input.indexOf('\0'))).object();
     m_input.remove(0, m_input.indexOf('\0') + 1);
+    // Only a startup handshake may contain private runtime metadata. A
+    // subsequent greeting or malformed non-CDP frame revokes public peers.
+    if (message.contains("op") || message.contains("ok") || message.contains("launchEnvironment") ||
+        (!message["id"].isDouble() && !message["method"].isString())) {
+      revoke(); m_input.clear(); return;
+    }
     const auto id = message["id"].toInteger();
     if (id == 1) {
       m_version = message["result"].toObject();

@@ -7,6 +7,9 @@
 #include <QJsonDocument>
 #include <QRegularExpression>
 #include <QSet>
+#include <QProcess>
+#include <QUrl>
+#include <QMimeDatabase>
 #include <QStandardPaths>
 #include <stdexcept>
 
@@ -32,9 +35,9 @@ QJsonObject merge(QJsonObject base, const QJsonObject &overrides) {
     }
     return base;
 }
-QStringList strings(const QJsonValue &value, const QString &field, bool optional = false) {
+QStringList strings(const QJsonValue &value, const QString &field, bool optional = false, int maximum = 128) {
     if (value.isUndefined() && optional) return {};
-    if (!value.isArray() || value.toArray().size() > 128) invalid(field + " must be an array of up to 128 strings");
+    if (!value.isArray() || value.toArray().size() > maximum) invalid(field + " must be an array of up to " + QString::number(maximum) + " strings");
     QStringList result;
     for (const auto &entry : value.toArray()) {
         if (!entry.isString() || entry.toString().contains(QChar(0)) || entry.toString().size() > 16384)
@@ -110,6 +113,142 @@ QJsonObject settings() {
     }
     return result;
 }
+QStringList simpleCommand(const QString &command) {
+    QStringList result;
+    QString word;
+    QChar quote;
+    bool started = false, escaped = false;
+    for (const auto character : command) {
+        if (escaped) { word += character; escaped = false; started = true; continue; }
+        if (character == '\\' && quote != '\'') { escaped = true; started = true; continue; }
+        if (!quote.isNull()) {
+            if (character == quote) quote = {};
+            else {
+                if (quote == '"' && (character == '$' || character == '`'))
+                    invalid("shell expansion is not a desktop application command; launch an explicit argv");
+                word += character;
+            }
+            started = true;
+            continue;
+        }
+        if (character == '\'' || character == '"') { quote = character; started = true; continue; }
+        if (character.isSpace()) {
+            if (started) { result.append(word); word.clear(); started = false; }
+            continue;
+        }
+        if (QString(";&|<>$`*?(){}~").contains(character))
+            invalid("compound shell commands cannot guarantee desktop application routing; launch an explicit argv");
+        word += character;
+        started = true;
+    }
+    if (escaped || !quote.isNull()) invalid("unterminated application command quote");
+    if (started) result.append(word);
+    if (result.isEmpty()) invalid("empty application command");
+    return result;
+}
+QString executable(const QStringList &names) {
+    const auto paths = (QDir::homePath() + "/.local/bin:" + qEnvironmentVariable("PATH")).split(':', Qt::SkipEmptyParts);
+    for (const auto &name : names) {
+        const auto value = QStandardPaths::findExecutable(name, paths);
+        if (!value.isEmpty()) return value;
+    }
+    invalid("application executable is not installed");
+}
+QStringList urlCommand(const QJsonObject &config, const QString &target, bool primary) {
+    const QUrl url = QUrl::fromUserInput(target, QDir::currentPath(), QUrl::AssumeLocalFile);
+    if (!url.isValid()) invalid("invalid application URL");
+    const auto scheme = url.scheme().toLower();
+    if (scheme == "http" || scheme == "https") {
+        const auto rule = config["rules"].toObject()[config["browser"].toString()].toObject();
+        if (rule.isEmpty() || !rule["enabled"].toBool(true) || rule["backend"] != "chromium")
+            invalid("HTTP URLs require the configured desktop browser");
+        return {executable(strings(rule["executables"], "browser.executables")), url.toString()};
+    }
+    const auto mime = url.isLocalFile() ? QMimeDatabase().mimeTypeForFile(url.toLocalFile()).name() : "x-scheme-handler/" + scheme;
+    QProcess query;
+    query.start("xdg-mime", {"query", "default", mime});
+    if (!query.waitForFinished(2000)) { query.kill(); query.waitForFinished(1000); invalid("application URL handler lookup timed out"); }
+    const auto desktopId = QString::fromUtf8(query.readAllStandardOutput()).trimmed();
+    if (query.exitCode() || !QRegularExpression("^[A-Za-z0-9_.-]+\\.desktop$").match(desktopId).hasMatch())
+        invalid("no desktop application handles " + mime);
+    const auto path = QStandardPaths::locate(QStandardPaths::GenericDataLocation, "applications/" + desktopId);
+    QFile file(path);
+    if (path.isEmpty() || !file.open(QIODevice::ReadOnly) || file.size() > 1024 * 1024)
+        invalid("cannot read the configured URL handler");
+    QString command;
+    bool inEntry = false;
+    for (auto line : QString::fromUtf8(file.readAll()).split('\n')) {
+        line = line.trimmed();
+        if (line.startsWith('[')) inEntry = line == "[Desktop Entry]";
+        else if (inEntry && line.startsWith("Exec=")) { command = line.mid(5); break; }
+    }
+    auto argv = simpleCommand(command);
+    bool substituted = false;
+    for (auto &argument : argv) {
+        if (argument == "%u" || argument == "%U" || argument == "%f" || argument == "%F") {
+            argument = (argument == "%f" || argument == "%F") && url.isLocalFile() ? url.toLocalFile() : url.toString();
+            substituted = true;
+        } else if (argument.contains('%')) {
+            argument.replace("%%", "%");
+            if (argument.contains(QRegularExpression("%[a-zA-Z]"))) invalid("URL handler has unsupported desktop-entry fields");
+        }
+    }
+    if (!substituted) argv.append(url.isLocalFile() ? url.toLocalFile() : url.toString());
+    if (!primary) {
+        bool adapted = false;
+        for (const auto &entry : config["rules"].toObject()) {
+            const auto rule = entry.toObject();
+            if (rule["enabled"].toBool(true) && rule.contains("profile") &&
+                strings(rule["executables"], "handler.executables", true).contains(QFileInfo(argv.first()).fileName())) adapted = true;
+        }
+        if (!adapted) invalid("URL handler needs a desktopApplications profile rule on secondary desktops: " + desktopId);
+    }
+    return argv;
+}
+QStringList normalizeCommand(const QJsonObject &config, QStringList argv, bool primary, QJsonObject &environment, QStringList &warnings) {
+    for (int depth = 0; depth < 8; ++depth) {
+        if (argv.isEmpty()) invalid("application command required");
+        const auto name = QFileInfo(argv.first()).fileName();
+        if (name == "env") {
+            argv.removeFirst();
+            if (argv.value(0) == "--") argv.removeFirst();
+            while (!argv.isEmpty() && argv.first().contains('=')) {
+                const auto entry = argv.takeFirst();
+                const auto separator = entry.indexOf('=');
+                const auto key = entry.left(separator);
+                if (!QRegularExpression("^[A-Za-z_][A-Za-z0-9_]*$").match(key).hasMatch()) invalid("invalid application environment");
+                if (key.startsWith("HYPRLAND_") || key.startsWith("CORNICE_") ||
+                    QSet<QString>{"WAYLAND_DISPLAY", "WAYLAND_SOCKET", "DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"}.contains(key))
+                    invalid("compositor identity environment is managed by the Broker");
+                environment[key] = entry.mid(separator + 1);
+            }
+            if (argv.value(0).startsWith('-')) invalid("unsupported env option; launch explicit application argv");
+            continue;
+        }
+        if ((name == "sh" || name == "bash" || name == "zsh" || name == "dash") && argv.size() == 3 && argv[1] == "-c") {
+            // Only literal single commands can be safely unwrapped for profile
+            // adaptation. General scripts still inherit the desktop environment,
+            // as before, and explicitly report the limit instead of changing
+            // shell semantics or pretending nested single-instance apps isolate.
+            try {
+                argv = simpleCommand(argv[2]);
+            } catch (const std::runtime_error &) {
+                warnings.append("Compound shell command inherits the desktop environment; profile rules cannot inspect applications launched inside the script");
+                return argv;
+            }
+            if (argv.value(0) == "exec") argv.removeFirst();
+            continue;
+        }
+        if (name == "xdg-open" || (name == "gio" && argv.value(1) == "open")) {
+            const int count = name == "gio" ? 3 : 2;
+            if (argv.size() != count) invalid("open requires exactly one URL or file");
+            argv = urlCommand(config, argv.last(), primary);
+            continue;
+        }
+        return argv;
+    }
+    invalid("application command wrappers exceed routing depth");
+}
 QString expand(QString value, const QString &profile, const QString &desktop) {
     if (value.contains("{profile}") && profile.isEmpty()) invalid("{profile} requires a profile directory");
     value.replace("{profile}", profile).replace("{desktop}", desktop);
@@ -119,6 +258,7 @@ ApplicationLaunchPlan build(const QStringList &argv, const QString &desktop, con
     ApplicationLaunchPlan plan;
     plan.program = argv.first();
     plan.arguments = argv.mid(1);
+    plan.requestedArguments = plan.arguments;
     if (id.isEmpty()) return plan;
     plan.rule = id;
     plan.backend = rule["backend"].toString("process");
@@ -143,11 +283,15 @@ ApplicationLaunchPlan build(const QStringList &argv, const QString &desktop, con
     QStringList arguments;
     for (const auto &arg : strings(rule["arguments"], id + ".arguments", true)) arguments.append(expand(arg, plan.profile, desktop));
     plan.arguments = arguments + plan.arguments;
+    if (plan.arguments.size() > 256) invalid("combined configured and requested arguments exceed 256");
     const auto environment = rule["environment"].toObject();
     for (auto it = environment.begin(); it != environment.end(); ++it) plan.environment[it.key()] = expand(it.value().toString(), plan.profile, desktop);
     return plan;
 }
-ApplicationLaunchPlan prepare(const QJsonObject &config, const QStringList &argv, const QString &desktop, bool primary) {
+ApplicationLaunchPlan prepare(const QJsonObject &config, const QStringList &requested, const QString &desktop, bool primary) {
+    QJsonObject requestedEnvironment;
+    QStringList warnings;
+    const auto argv = normalizeCommand(config, requested, primary, requestedEnvironment, warnings);
     if (argv.isEmpty() || argv.first().isEmpty() || !segment(desktop)) invalid("explicit application and desktop required");
     QString id;
     QJsonObject selected;
@@ -160,10 +304,46 @@ ApplicationLaunchPlan prepare(const QJsonObject &config, const QStringList &argv
         if (!id.isEmpty()) invalid("multiple rules match " + argv.first());
         id = it.key(); selected = rule;
     }
-    return build(argv, desktop, id, selected);
+    auto plan = build(argv, desktop, id, selected);
+    plan.warnings = warnings; plan.basePolicy = plan.policy; plan.requestedEnvironment = requestedEnvironment;
+    for (auto it = requestedEnvironment.begin(); it != requestedEnvironment.end(); ++it) {
+        if (plan.environment.contains(it.key())) invalid("application environment conflicts with configured policy: " + it.key());
+        plan.environment[it.key()] = it.value();
+    }
+    if (plan.backend == "chromium") {
+        // Relative launcher commands and default browser reconnects must name
+        // the same actual executable. Resolve against the launch environment,
+        // rather than making a new runtime identity from an argv spelling.
+        const auto search = plan.environment.contains("PATH") ? plan.environment["PATH"].toString() :
+            QDir::homePath() + "/.local/bin:" + qEnvironmentVariable("PATH");
+        const auto executable = QStandardPaths::findExecutable(plan.program, search.split(':', Qt::SkipEmptyParts));
+        if (executable.isEmpty()) invalid("managed browser executable is not installed");
+        plan.program = QDir::cleanPath(executable);
+    }
+    // Requested env wrappers are launch policy too: reconnecting an existing
+    // managed browser may not silently discard a changed proxy or application env.
+    plan.policy += QJsonDocument(plan.environment).toJson(QJsonDocument::Compact);
+    return plan;
 }
 } // namespace
 
+QJsonObject ApplicationLaunchPlan::toJson() const {
+    return {{"program",program},{"backend",backend},{"profile",profile},{"rule",rule},
+        {"arguments",QJsonArray::fromStringList(arguments)},{"requestedArguments",QJsonArray::fromStringList(requestedArguments)},
+        {"warnings",QJsonArray::fromStringList(warnings)},{"environment",environment},{"requestedEnvironment",requestedEnvironment},{"policy",QString::fromLatin1(policy.toBase64())},{"basePolicy",QString::fromLatin1(basePolicy.toBase64())}};
+}
+ApplicationLaunchPlan ApplicationLaunchPlan::fromJson(const QJsonObject &value) {
+    ApplicationLaunchPlan plan;
+    plan.program = value["program"].toString(); plan.backend = value["backend"].toString();
+    plan.profile = value["profile"].toString(); plan.rule = value["rule"].toString();
+    plan.arguments = strings(value["arguments"], "planned arguments", false, 256);
+    plan.requestedArguments = strings(value["requestedArguments"], "requested arguments");
+    plan.warnings = strings(value["warnings"], "planned warnings");
+    plan.environment = value["environment"].toObject(); plan.policy = QByteArray::fromBase64(value["policy"].toString().toLatin1());
+    plan.requestedEnvironment = value["requestedEnvironment"].toObject(); plan.basePolicy = QByteArray::fromBase64(value["basePolicy"].toString().toLatin1());
+    if (plan.program.isEmpty()) invalid("prepared program is missing");
+    return plan;
+}
 void ApplicationLaunchPlan::applyEnvironment(QProcessEnvironment &target) const {
     for (auto it = environment.begin(); it != environment.end(); ++it) target.insert(it.key(), it.value().toString());
 }

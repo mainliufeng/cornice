@@ -1,4 +1,5 @@
 #include "Broker.hpp"
+#include "ApplicationLaunch.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -38,6 +39,23 @@ int main(int argc, char **argv) {
             instance = take(args);
         }
         const auto command = take(args);
+        // Internal preparation worker. It reads application policy and resolves
+        // desktop-entry handlers without blocking the Broker event loop. Only
+        // the Broker can submit the resulting plan after checking a live grant.
+        if (command == "plan-launch") {
+            const auto desktop = take(args), primary = take(args);
+            const auto array = QJsonDocument::fromJson(take(args).toUtf8()).array();
+            if (!args.isEmpty() || (primary != "true" && primary != "false") || array.isEmpty() || array.size() > 128)
+                throw std::runtime_error("Invalid launch planning arguments");
+            QStringList requested;
+            for (const auto &entry : array) {
+                if (!entry.isString() || entry.toString().contains(QChar(0)) || entry.toString().size() > 16384)
+                    throw std::runtime_error("Invalid application argument");
+                requested.append(entry.toString());
+            }
+            QTextStream(stdout) << QJsonDocument(ApplicationLaunch::prepare(requested, desktop, primary == "true").toJson()).toJson(QJsonDocument::Compact) << '\n';
+            return 0;
+        }
         if (command == "ensure") {
             const auto socket = desktopSocket(instance);
             try {
@@ -113,6 +131,11 @@ int main(int argc, char **argv) {
                         flag != "--human-lock-policy")
                         throw std::runtime_error("Expected --workspace or --output");
                     params[flag.mid(2)] = take(args);
+                }
+            } else if (command == "reset" || command == "remove") {
+                while (!args.isEmpty()) {
+                    if (take(args) != "--close-apps") throw std::runtime_error("Expected --close-apps");
+                    params["closeApps"] = true;
                 }
             } else if (command == "handoff-start" || command == "handoff-complete") {
                 params["requestId"] = take(args);

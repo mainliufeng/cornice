@@ -7,6 +7,7 @@
 #   ./install.sh --prefix /usr/local
 #   ./install.sh --takeover      also hand the session over (mako/hypridle/…)
 #   ./install.sh --service       install + enable the systemd user service
+#   ./install.sh --rollback     atomically restore the previous copy install
 #   ./install.sh --uninstall     remove what was installed
 #
 # Leaves compositor config alone; --service backs up an existing user unit.
@@ -21,6 +22,7 @@ takeover=0
 service=0
 uninstall=0
 desktop=0
+rollback=0
 # NB: a `for arg in "$@"` loop cannot consume its own arguments — `shift` inside
 # it has no effect, so --prefix would swallow nothing and its value would be
 # treated as an unknown option.
@@ -35,6 +37,7 @@ while (($#)); do
     --service) service=1 ;;
     --uninstall) uninstall=1 ;;
     --desktop) desktop=1 ;;
+    --rollback) rollback=1 ;;
     -h | --help) sed -n '2,15p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "install.sh: unknown option '$arg'" >&2; exit 2 ;;
   esac
@@ -50,6 +53,22 @@ bindir="$prefix/bin"
 libdir="$prefix/share/cornice"
 # The internal executor is retired. Upgrades must not leave its old entry point.
 retired_helpers=(cornice-agent-runtime)
+acquire_install_lock() {
+  # The service and takeover configuration are shared even across prefixes.
+  # Keep the whole user-level operation serial, including failure restoration.
+  local install_state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/cornice"
+  local previous_umask
+  previous_umask=$(umask)
+  umask 077
+  mkdir -p "$install_state_dir"
+  exec 9>"$install_state_dir/install.lock"
+  umask "$previous_umask"
+  flock 9
+}
+if ((rollback)); then
+  acquire_install_lock
+  exec python3 "$repo/bin/cornice-install-tree" rollback "$libdir"
+fi
 ok() { printf '  \033[32mok\033[0m    %s\n' "$1"; }
 warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
 bad() { printf '  \033[31mfail\033[0m  %s\n' "$1"; }
@@ -58,6 +77,7 @@ step() { printf '\n%s\n' "$1"; }
 # ---------------------------------------------------------------------------
 step "Uninstall"
 if ((uninstall)); then
+  acquire_install_lock
   removed=0
   for src in "$repo"/bin/cornice*; do
     name=$(basename "$src")
@@ -130,12 +150,13 @@ fi
 
 # ---------------------------------------------------------------------------
 step "Installing"
+acquire_install_lock
 # The core shell module uses Qt already required by Quickshell. Packaged builds
 # ship it; source installs build it independently of optional desktop tooling.
 platform_prebuilt="$repo/native/qml/Cornice/Platform"
 if [[ ! -f $platform_prebuilt/libcornice_platform.so ]]; then
   cmake -S "$repo/native/platform" -B "$repo/native/platform-build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-  cmake --build "$repo/native/platform-build" -j4
+  cmake --build "$repo/native/platform-build" -j2
 fi
 if ((desktop)); then
   command -v pkg-config >/dev/null 2>&1 && pkg-config --exists atspi-2 \
@@ -143,7 +164,7 @@ if ((desktop)); then
   command -v npm >/dev/null 2>&1 || { bad "npm is required for desktop browser tools"; exit 1; }
   npm ci --prefix "$repo/native/agent" --omit=dev --ignore-scripts --no-audit --no-fund
   cmake -S "$repo/native/desktop" -B "$repo/native/build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-  cmake --build "$repo/native/build" -j4
+  cmake --build "$repo/native/build" -j2
 fi
 mkdir -p "$bindir"
 for name in "${retired_helpers[@]}"; do
@@ -153,15 +174,57 @@ for name in "${retired_helpers[@]}"; do
   fi
 done
 installed=0
+installation_pending=0
+unit_published=0
+unit=""
+unit_backup=""
+service_activation_attempted=0
+service_enabled_before=""
+service_running_before=0
+staging=""
+rollback_on_failure() {
+  local result=$?
+  trap - EXIT
+  if ((result != 0)); then
+    if ((unit_published)); then
+      if ((service_activation_attempted)); then
+        # enable --now can enable a unit and then fail to start it. Restore
+        # autostart state separately, without stopping a pre-existing service.
+        if ((!service_running_before)); then
+          systemctl --user stop cornice.service >/dev/null 2>&1 || warn "could not stop the service started by this install"
+        fi
+        systemctl --user disable cornice.service >/dev/null 2>&1 || warn "could not remove this install's service enablement"
+      fi
+      if [[ -n $unit_backup ]]; then
+        cp -a -- "$unit_backup" "$unit" || warn "could not restore the previous unit from $unit_backup"
+      else
+        rm -f -- "$unit" || warn "could not remove the new service unit"
+      fi
+      systemctl --user daemon-reload >/dev/null 2>&1 || warn "could not reload the restored service unit"
+      if ((service_activation_attempted)); then
+        case "$service_enabled_before" in
+          enabled) systemctl --user enable cornice.service >/dev/null 2>&1 || warn "could not restore previous service enablement" ;;
+          enabled-runtime) systemctl --user enable --runtime cornice.service >/dev/null 2>&1 || warn "could not restore previous runtime service enablement" ;;
+        esac
+      fi
+    fi
+    if ((installation_pending)); then
+      python3 "$repo/bin/cornice-install-tree" rollback "$libdir" --if-activated "$staging" >&2 || warn "could not restore the previous installation; use install.sh --rollback"
+    fi
+  fi
+  exit "$result"
+}
+trap rollback_on_failure EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if ((copy)); then
   # A self-contained layout: the tree lives in $prefix/share/cornice and the CLI
   # entries in $bindir are symlinks into it. The CLI resolves its own prefix by
   # following the symlink, so shell/, themes/, config/ must sit under libdir —
   # copying only bin/ would leave it looking for $prefix/shell.
-  staging="$libdir.new.$$"
-  rm -rf "$staging"
-  mkdir -p "$staging"
+  mkdir -p "$(dirname "$libdir")"
+  staging=$(mktemp -d "${libdir}.generation.XXXXXX")
   for dir in bin shell i18n themes wallpapers config docs plugins; do
     [[ -d $repo/$dir ]] && cp -r "$repo/$dir" "$staging/"
   done
@@ -176,9 +239,8 @@ if ((copy)); then
   if ((desktop)); then cmake --install "$repo/native/build" --prefix "$staging"; fi
   find "$staging" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
   chmod +x "$staging"/bin/* 2>/dev/null || true
-  rm -rf "$libdir"
-  mkdir -p "$(dirname "$libdir")"
-  mv "$staging" "$libdir"
+  installation_pending=1
+  python3 "$repo/bin/cornice-install-tree" activate "$libdir" "$staging"
   ok "installed the tree to $libdir"
   source_dir="$libdir/bin"
 else
@@ -228,6 +290,17 @@ if ((service)); then
   unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   mkdir -p "$unit_dir"
   unit="$unit_dir/cornice.service"
+  service_enabled_before=$(systemctl --user is-enabled cornice.service 2>/dev/null || true)
+  service_active_before=$(systemctl --user is-active cornice.service 2>/dev/null || true)
+  case "$service_enabled_before" in
+    enabled|enabled-runtime|disabled|static|indirect|linked|linked-runtime|alias|masked|masked-runtime|not-found) : ;;
+    *) bad "could not determine previous cornice.service enablement; no service changes were made"; exit 1 ;;
+  esac
+  case "$service_active_before" in
+    active|activating|reloading|deactivating) service_running_before=1 ;;
+    inactive|failed|unknown) : ;;
+    *) bad "could not determine previous cornice.service activity; no service changes were made"; exit 1 ;;
+  esac
   service_executable="$bindir/cornice-launch"
   service_executable=${service_executable//\\/\\\\}
   service_executable=${service_executable//\"/\\\"}
@@ -244,20 +317,24 @@ if ((service)); then
   done <"$repo/config/cornice.service" >"$unit_staging"
   chmod 644 "$unit_staging"
   if [[ -e $unit || -L $unit ]]; then
-    backup=$(mktemp "$unit_dir/cornice.service.backup.XXXXXX")
-    cp -a -- "$unit" "$backup"
-    ok "previous unit backed up to $backup"
+    unit_backup=$(mktemp "$unit_dir/cornice.service.backup.XXXXXX")
+    cp -a -- "$unit" "$unit_backup"
+    ok "previous unit backed up to $unit_backup"
   fi
   mv -f -- "$unit_staging" "$unit"
+  unit_published=1
   ok "installed $unit"
-  if systemctl --user daemon-reload >/dev/null 2>&1 \
-    && systemctl --user enable --now cornice.service >/dev/null 2>&1; then
-    ok "enabled and started cornice.service (Restart=always)"
-    echo "  status: systemctl --user status cornice"
-  else
+  if ! systemctl --user daemon-reload >/dev/null 2>&1; then
     bad "could not enable cornice.service — check: systemctl --user status cornice"
     exit 1
   fi
+  service_activation_attempted=1
+  if ! systemctl --user enable --now cornice.service >/dev/null 2>&1; then
+    bad "could not enable cornice.service — check: systemctl --user status cornice"
+    exit 1
+  fi
+  ok "enabled and started cornice.service (Restart=always)"
+  echo "  status: systemctl --user status cornice"
 else
   echo "  Running under systemd is recommended: it restarts the shell if it dies."
   echo "  Add --service to this script."
@@ -289,7 +366,11 @@ fi
 
 if ((takeover)); then
   step "Taking over from the old daemons"
-  "$repo/bin/cornice-takeover" --apply --reload || warn "takeover reported a problem"
+  if ! "$repo/bin/cornice-takeover" --apply --reload; then
+    bad "requested takeover failed; installation and service changes will be restored"
+    echo "  Any takeover configuration backup can be restored with: cornice takeover --undo" >&2
+    exit 1
+  fi
 else
   echo
   echo "  If you currently run mako/hypridle/waybar/polkit-gnome, hand over with:"
@@ -299,3 +380,7 @@ fi
 
 echo
 ok "done"
+
+# All validation and requested setup completed: retain the previous generation
+# for an explicit install.sh --rollback instead of deleting it during upgrade.
+installation_pending=0

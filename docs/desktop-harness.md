@@ -4,7 +4,7 @@ Cornice provides independent desktops and shared MCP tools. Codex, Pi and other 
 
 ## Automatic task allocation
 
-A fresh session starts with exactly two desktops: primary `main` and one task-ready secondary `desktop2`. Recovered or explicitly created desktops are preserved; startup does not create a second unused secondary desktop. Additional desktops are created only when a harness needs another one.
+An initial installation starts with exactly two desktops: primary `main` and one task-ready secondary `desktop2`. Stable desktop identities, workspace slots, geometry and cooperation history are persisted in `$XDG_STATE_HOME/cornice/desktops.json` and rebuilt after a new login. Old task/input/capture grants are never persisted, all restored desktops start paused, and primary automation permission resets off. Recovered or explicitly created desktops are preserved; startup does not create a second unused secondary desktop. Additional desktops are created only when a harness needs another one.
 
 Installing a plugin connects tools without granting a desktop. When a user asks the agent to operate a desktop, the agent calls `desktop_acquire`. Broker atomically reserves an allowed, paused, unoccupied secondary desktop; if none is available, it creates a new private display/seat at the primary output's pixel resolution and starts its native Cornice shell. No local confirmation popup or manual attach command is required.
 
@@ -15,7 +15,7 @@ The returned `desktop` reference belongs to that task. Every native and browser 
 - `createNew:true`: always create a fresh desktop.
 - Desktop 1 (`main`) is never automatically selected. Explicit primary acquisition still requires the operator to have enabled its “允许 Agent 控制” switch beforehand.
 - Active tasks, live bindings and human takeover count as occupied. Open applications alone do not occupy a desktop: task-free desktops retain their applications and can be reused. Request `createNew:true` when a task requires an empty desktop.
-- Allocation has a 32-desktop service limit; reaching it reports an error rather than evicting a desktop.
+- All creation and resize paths share configured `agentDesktop.resources` limits (default 32 desktops, 134217728 private pixels, 256 MiB minimum available memory); reaching a limit reports an error without evicting desktops or silently resizing them.
 
 Example tool sequence:
 
@@ -28,6 +28,12 @@ Example tool sequence:
 ```
 
 Finish releases occupancy and pauses only that task's desktop; applications are preserved. Connection loss or a missed heartbeat releases the owner's reservation. Late calls or disconnects from an old owner cannot interrupt a replacement owner. Pause, human takeover, permission changes and locks revoke old input; an agent must not acquire another desktop merely to bypass interruption. New allocation is denied during a lock. Existing preauthorized continue-policy tasks retain their established lock policy.
+
+After ordinary operator pause/resume, use `desktop_restore` on the same task reference to obtain fresh input/browser authorization. It never resumes a paused seat or reverses independent human control, permission changes or locks. `desktop_wait` is an event wait and returns control changes/cooperation outcomes without restoring control. Capable MCP clients can receive lifecycle logging notifications; Cornice reports `wakeHarness:false` because it cannot start an idle external conversation turn.
+
+Normal Broker restart detaches CDP control and reconnects the independent browser runtime; Chrome PID, tabs and unsaved page state survive. Finished tasks keep applications and report `allocationMode:retained` and `retainedApps`. `createNew:true` selects a new empty desktop. Default reset/remove revoke control but keep running apps and profile data. Only explicit `--close-apps` closes owned windows/browser, after confirmation and rejection of occupied/shared-workspace cases.
+
+Clipboard selection sharing is configured through `agentDesktop.clipboard` (`mode:shared|isolated`, default shared, `maxBytes:16777216`). The Broker asynchronously bridges actual MIME payloads across allowed managed seats; it does not rely on shared cliphist history. Full lock blocks transfer; human lock excludes primary-desktop changes. Oversized or timed-out transfers report an error and do not replace the receiving selection.
 
 ## Codex App plugin
 
@@ -55,7 +61,7 @@ Its extension applies the desktop screenshot-context budget and registers `CORNI
 
 Start `cornice-desktop-mcp` as a local **STDIO** server. There is no HTTP MCP listener or port to configure. It connects to Broker through a user-owned Unix socket. In the desktop session it uses the explicit compositor environment; a GUI App without that environment can use Broker's private runtime `cornice/active.json` endpoint. An old live connection never automatically switches compositors or tasks after a failure.
 
-Expose the bundled skill at `plugins/cornice/skills/cornice-desktop/SKILL.md`. The shared catalog has 27 tools including task acquisition, native desktop operations and allowlisted Playwright browser operations. It includes task-owned cooperation requests, completion/cancellation and restoration after that specific request. It does not expose permission changes, arbitrary resume/rebinding, global CDP endpoints or arbitrary JavaScript execution.
+Expose the bundled skill at `plugins/cornice/skills/cornice-desktop/SKILL.md`. The shared catalog has 28 tools including task acquisition, native desktop operations and allowlisted Playwright browser operations. It includes task-owned cooperation requests, completion/cancellation and restoration after that specific request. It does not expose permission changes, arbitrary resume/rebinding, global CDP endpoints or arbitrary JavaScript execution.
 
 ## Human cooperation and remote exit
 
@@ -68,7 +74,7 @@ The Codex and Pi 0.4.0 plugins expose `desktop_handoff`. It is part of the exist
 {"tool":"desktop_handoff","arguments":{"desktop":"task-reference","action":"resume","requestId":"id-from-request"}}
 ```
 
-Requesting immediately pauses and revokes Agent input. The primary desktop shows outstanding requests; the target desktop shows its own request while observed or taken over. “接管并处理” starts native human control; “已完成，退出接管” records completion and releases it. The desktop management panel lists recent requests, human instructions and terminal status. The Broker persists up to 20 records per desktop and 20 transitions per record for that desktop lifecycle. A Broker restart preserves records and cancels pending requests whose reservations were lost; a new compositor session is a new desktop lifecycle.
+Requesting immediately pauses and revokes Agent input. The primary desktop shows outstanding requests; the target desktop shows its own request while observed or taken over. “接管并处理” starts native human control; “已完成，退出接管” records completion and releases it. The desktop management panel lists recent requests, human instructions and terminal status. The Broker persists up to 20 records per desktop and 20 transitions per record for that desktop lifecycle. A Broker restart preserves records and cancels pending requests whose reservations were lost; a new compositor session rebuilds the stable desktop identity with fresh control credentials. History is retained, while interrupted records explicitly prohibit resuming the lost owner.
 
 The task's separate cooperation credential permits only status and resolution for its reserved desktop across input-generation changes. It cannot operate applications, change permissions, or control other reservations. A remote resolution can release only the takeover associated with that request. A later independent human takeover, pause, lock or permission change cannot be overridden by retrying an old resume. After resolution, `resume` explicitly obtains a fresh input generation; reconnect the managed browser and read a fresh tree/frame before continuing.
 
@@ -81,6 +87,8 @@ User replies stay in Codex/Pi. The completion button does **not** automatically 
 ## Desktop state and observation
 
 `desktop_state` returns independent fields: `occupied` means a live harness lease, `harness` identifies its owner (Codex/Pi plugins supply `codex`/`pi`), and `activity` is one of `idle`, `running`, `paused`, `takeover`, `locked` or `unavailable`. Open windows do not prove that a harness is working, and releasing a lease preserves those windows.
+
+After `desktop_finish`, the task reference and its live credentials are released; `desktop_state` on that reference returns an explicit expired-task error. A new task must acquire a new desktop reference.
 
 The primary desktop shows read-only floating thumbnails for occupied secondary desktops. Preview refresh is limited to four frames per second; it never forwards keyboard or pointer input. The “始终显示预览” switch includes idle and finished-task desktops and persists across shell restarts. Drag a title to move the shelf and its bottom-right corner to resize it; size settings persist. Hide a thumbnail from its close control and restore it from the desktop menu. A click selects the full native read-only desktop view; human takeover is an explicit separate control. The default bar groups desktop selection and control in one button; `grouped:false` splits them into the two existing buttons. Full desktop presentation remains native Hyprland composition and is not a thumbnail or screenshot viewing loop.
 

@@ -10,14 +10,14 @@ pkg_check_modules(XKB REQUIRED IMPORTED_TARGET xkbcommon)
 pkg_check_modules(PAM REQUIRED IMPORTED_TARGET pam)
 pkg_check_modules(ATSPI REQUIRED IMPORTED_TARGET atspi-2 gobject-2.0)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
-foreach(name virtual-keyboard-unstable-v1 wlr-virtual-pointer-unstable-v1 hyprland-lock-scope-v1 ext-session-lock-v1)
+foreach(name wlr-data-control-unstable-v1 virtual-keyboard-unstable-v1 wlr-virtual-pointer-unstable-v1 hyprland-lock-scope-v1 ext-session-lock-v1)
   add_custom_command(OUTPUT ${name}.h ${name}.c
     COMMAND ${WAYLAND_SCANNER} client-header ${CMAKE_CURRENT_SOURCE_DIR}/protocols/${name}.xml ${name}.h
     COMMAND ${WAYLAND_SCANNER} private-code ${CMAKE_CURRENT_SOURCE_DIR}/protocols/${name}.xml ${name}.c
     DEPENDS protocols/${name}.xml VERBATIM)
   list(APPEND PROTOCOL_SOURCES ${name}.c ${name}.h)
 endforeach()
-add_executable(cornice-desktop-runtime main.cpp Broker.cpp ApplicationLaunch.cpp Accessibility.cpp HyprlandAdapter.cpp SeatDriver.cpp BrowserSession.cpp ${PROTOCOL_SOURCES})
+add_executable(cornice-desktop-runtime main.cpp Broker.cpp ApplicationLaunch.cpp Accessibility.cpp ClipboardBridge.cpp HyprlandAdapter.cpp SeatDriver.cpp BrowserSession.cpp ${PROTOCOL_SOURCES})
 target_include_directories(cornice-desktop-runtime PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(cornice-desktop-runtime PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::WebSockets PkgConfig::WAYLAND PkgConfig::XKB)
 qt_add_qml_module(cornice_desktop_qml URI Cornice.Desktop VERSION 1.0
@@ -27,14 +27,16 @@ target_link_libraries(cornice_desktop_qml PRIVATE Qt6::Quick Qt6::Network)
 set_target_properties(cornice_desktop_qml cornice_desktop_qmlplugin PROPERTIES INSTALL_RPATH "$ORIGIN")
 add_executable(cornice-native-accessibility accessibility_main.cpp)
 target_link_libraries(cornice-native-accessibility PRIVATE Qt6::Core Qt6::Network Qt6::DBus PkgConfig::ATSPI)
-install(TARGETS cornice-desktop-runtime cornice-native-accessibility RUNTIME DESTINATION native/bin)
+add_executable(cornice-browser-runtime browser_runtime_main.cpp)
+target_link_libraries(cornice-browser-runtime PRIVATE Qt6::Core Qt6::Network)
+install(TARGETS cornice-desktop-runtime cornice-native-accessibility cornice-browser-runtime RUNTIME DESTINATION native/bin)
 install(TARGETS cornice_desktop_qml cornice_desktop_qmlplugin LIBRARY DESTINATION native/qml/Cornice/Desktop)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/qml/Cornice/Desktop/qmldir
   ${CMAKE_CURRENT_BINARY_DIR}/qml/Cornice/Desktop/cornice_desktop_qml.qmltypes
   DESTINATION native/qml/Cornice/Desktop)
 
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSE
-  protocols/virtual-keyboard-unstable-v1.xml protocols/wlr-virtual-pointer-unstable-v1.xml
+  protocols/wlr-data-control-unstable-v1.xml protocols/virtual-keyboard-unstable-v1.xml protocols/wlr-virtual-pointer-unstable-v1.xml
   protocols/hyprland-lock-scope-v1.xml protocols/ext-session-lock-v1.xml
   DESTINATION native/licenses)
 
@@ -49,3 +51,9 @@ add_executable(cornice-session-guard ../session/main.cpp hyprland-lock-scope-v1.
 target_include_directories(cornice-session-guard PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(cornice-session-guard PRIVATE Qt6::Core Qt6::Network Qt6::DBus PkgConfig::WAYLAND)
 install(TARGETS cornice-session-guard RUNTIME DESTINATION native/bin)
+
+# Explicit test-only target: no compositor, application or installed artifact.
+add_executable(cornice-browser-startup-unit EXCLUDE_FROM_ALL ../../test/browser-startup-unit.cpp BrowserSession.cpp)
+add_dependencies(cornice-browser-startup-unit cornice-browser-runtime)
+target_include_directories(cornice-browser-startup-unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(cornice-browser-startup-unit PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)

@@ -25,10 +25,16 @@ DesktopPresentation::DesktopPresentation(QObject *parent) : QObject(parent) {
             const auto line = m_input.left(m_input.indexOf('\n'));
             m_input.remove(0, line.size() + 1);
             const auto reply = QJsonDocument::fromJson(line).object();
-            if (reply["id"].toString() != m_id)
+            if (!m_pending || reply["id"].toString() != m_id)
                 continue;
             m_pending = false;
             m_timeout.stop();
+            // Drain the old RPC before presenting the new target. Its result
+            // must not close the view or overwrite a newly queued control.
+            if (m_requestRevision != m_targetRevision) {
+                QTimer::singleShot(0, this, &DesktopPresentation::request);
+                continue;
+            }
             if (!reply["ok"].toBool()) {
                 m_error = reply["error"].toString();
                 m_state = {};
@@ -61,10 +67,12 @@ DesktopPresentation::DesktopPresentation(QObject *parent) : QObject(parent) {
     });
 }
 void DesktopPresentation::reset() {
+    ++m_targetRevision;
     if (m_active && !m_desktop.isEmpty() && !m_socketPath.isEmpty() && m_connectedPath == m_socketPath &&
         m_socket.state() == QLocalSocket::ConnectedState) {
         m_present = true;
         m_control.clear();
+        m_handoffId.clear();
         request();
         return;
     }
@@ -76,6 +84,7 @@ void DesktopPresentation::reset() {
     m_refresh = false;
     m_present = true;
     m_control.clear();
+    m_handoffId.clear();
     m_state = {};
     m_error.clear();
     emit stateChanged();
@@ -100,6 +109,7 @@ void DesktopPresentation::request() {
     const QJsonObject request{{"id", m_id},
                               {"method", m_method},
                               {"params", QJsonObject{{"name", m_desktop}, {"workspace", m_workspace}, {"requestId", handoffId}}}};
+    m_requestRevision = m_targetRevision;
     m_pending = true;
     m_timeout.start();
     m_socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
@@ -115,6 +125,7 @@ void DesktopPresentation::takeHandoff(const QString &requestId) {
 }
 
 void DesktopPresentation::refreshView() {
+    ++m_targetRevision;
     m_present = true;
     request();
 }

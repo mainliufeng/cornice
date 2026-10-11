@@ -15,6 +15,9 @@
 #include <map>
 #include <memory>
 
+class ClipboardBridge;
+struct ApplicationLaunchPlan;
+
 QString desktopSocket(const QString &instance);
 QJsonObject desktopRequest(const QString &socket, const QJsonObject &request);
 
@@ -42,7 +45,9 @@ class Broker : public QObject {
         QJsonArray bindingOverrides;
         QJsonArray handoffs;
         quint64 inputDecision = 0;
-        QByteArray browserPolicy;
+        QByteArray browserPolicy, browserConfiguration;
+        QString stableId, geometry, outputName, initialWorkspace, lockPolicy = "pause";
+        quint64 revision = 1;
 
     };
     struct Binding {
@@ -55,16 +60,32 @@ class Broker : public QObject {
     };
     QByteArray compositor(const QString &command, bool json = false);
     QJsonObject state(const QString &name);
-    QJsonObject handle(const QJsonObject &, QLocalSocket *);
+    QJsonObject handle(const QJsonObject &, QLocalSocket *, const ApplicationLaunchPlan *launchPlan = nullptr);
+    void deferLaunch(const QJsonObject &, QLocalSocket *, const QString &);
     void handleNative(const QJsonObject &, QLocalSocket *);
-    QJsonObject perform(const QString &method, const QJsonObject &, Binding *, QLocalSocket *);
+    void deferBrowser(const QJsonObject &, QLocalSocket *, const QString &, bool firstLaunch, const QStringList &warnings, std::shared_ptr<ApplicationLaunchPlan> plan = {});
+    QJsonObject perform(const QString &method, const QJsonObject &, Binding *, QLocalSocket *, const ApplicationLaunchPlan *launchPlan = nullptr);
     QJsonObject capture(const QString &name, const QString &id, const QString &workspace, QLocalSocket *owner,
                         const QString &format, bool agent = false);
     Desktop &managed(const QString &name);
     void save();
+    QJsonObject resourceLimits() const;
+    void updateClipboard();
+    QJsonObject clipboardStatus() const;
+    void checkResources(const QString &geometry, const QString &replacing = {});
+    QJsonObject definition(const QString &name);
+    void restoreDefinition(const QString &name, const QJsonObject &spec);
+    void closeDesktopApps(const QString &name);
+    bool occupied(const QString &name) const;
+    void retireBinding(const QString &token);
+    QMap<QLocalSocket *, QJsonObject>::iterator taskLease(const QJsonObject &request);
+    QJsonObject renewTaskBinding(QLocalSocket *owner);
+    QJsonObject task(const QJsonObject &request);
+    void waitTask(const QJsonObject &request, QLocalSocket *owner);
+    void publishTaskState(const QString &name);
     void initializeSlots(const QString &name, const QJsonObject &saved = {});
     void configureDesktop(const QString &name);
-    void ensureBrowser(const QString &name, const QString &program = {}, const QStringList &arguments = {});
+    void ensureBrowser(const QString &name, const QString &program = {}, const QStringList &arguments = {}, const ApplicationLaunchPlan *prepared = nullptr);
 
     QJsonObject acquireDesktop(const QJsonObject &, QLocalSocket *);
     void releaseAcquisition(QLocalSocket *);
@@ -79,7 +100,18 @@ class Broker : public QObject {
     void resume(const QString &name);
     void validateFrame(const Binding &, const QString &frame, const QJsonObject &actual);
     int m_nextDesktopNumber = 2;
-    QString m_instance, m_socketPath, m_directory;
+    QString m_instance, m_socketPath, m_directory, m_statePath;
+    bool m_restoring = true;
+    QJsonObject m_definitions, m_restoreErrors, m_capabilities;
+    QMap<QString, QByteArray> m_taskStates;
+    std::unique_ptr<ClipboardBridge> m_clipboard;
+    QString m_clipboardError;
+    QMap<QString,QJsonArray> m_windows;
+    QMap<QString,qint64> m_windowsAt;
+    QJsonArray m_clients;
+    qint64 m_clientsAt=0;
+    struct Waiter { QString id, name, taskToken; quint64 revision; qint64 deadline; };
+    QMap<QLocalSocket *, Waiter> m_taskWaiters;
     QLocalServer m_server;
     QLocalSocket m_events;
     QByteArray m_eventInput;
@@ -91,11 +123,15 @@ class Broker : public QObject {
     Accessibility m_accessibility;
     QMap<QString, QPointer<QProcess>> m_nativeJobs;
     QMap<QString, QByteArray> m_pendingNativeHashes;
+    QMap<QString, QByteArray> m_pendingBrowserHashes;
+    QMap<QString, QByteArray> m_pendingLaunchHashes;
+    QMap<QString, QPointer<QProcess>> m_launchJobs;
     QLocalSocket *m_humanOwner = nullptr;
     Binding m_humanBinding;
     QElapsedTimer m_humanHeartbeat;
     QMap<QLocalSocket *, QString> m_buffers;
     QMap<QLocalSocket *, QString> m_presentations;
+    QMap<QLocalSocket *, QJsonObject> m_presentationStates;
     QMap<QLocalSocket *, QJsonArray> m_localOverlays;
     QMap<QLocalSocket *, QJsonObject> m_acquisitions;
     QMap<QString, QJsonObject> m_completed;

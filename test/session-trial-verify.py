@@ -280,8 +280,11 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     missing_env = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"], "CORNICE_PATH": str(pathlib.Path(info["release"]) / "cornice")}
     subprocess.run([str(pathlib.Path(info["release"]) / "cornice/bin/cornice"), "desktop", "remove", "desktop2"],
                    env=missing_env, check=True, capture_output=True)
-    ended(process, "Required desktops are missing")
-    record("missing the required default secondary desktop still fails health checks and returns to stable login")
+    wait(lambda: status()["current"].get("degraded") and status()["current"].get("recoveryRequired") == "diagnostics", 15)
+    assert process.poll() is None and pathlib.Path('/proc/' + str(info["compositorPid"])).exists()
+    assert human_state() == BASELINE
+    trial("rollback"); ended(process, "Manual rollback")
+    record("missing a required secondary desktop reports degraded diagnostics without terminating the ready compositor")
     trial("arm", "--seconds", "60", "--startup-seconds", "30")
     process = login_session(); info = ready(process)
     # Real Lua dispatcher errors share configerrors with startup diagnostics.
@@ -315,14 +318,47 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     assert status()["running"] and status()["current"]["status"] == "ready"
     record("transient Cornice unresponsiveness is reported then clears without logout")
     os.kill(info["shellPid"], signal.SIGKILL)
-    ended(process, "health failed")
-    record("Cornice crash without confirmation is detected and automatically logs out to stable selection")
+    def recovered_component(name, old_pid, pid_key):
+        current = status()["current"]
+        recovery = current.get("componentRecovery", {}).get(name, {})
+        return current if current.get(pid_key) != old_pid and recovery and not recovery["recovering"] and current["healthFailures"] == 0 else None
+    restored = wait(lambda: recovered_component("cornice", info["shellPid"], "shellPid"), 30)
+    assert process.poll() is None and window.poll() is None and restored["compositorPid"] == info["compositorPid"]
+    assert runtime_window() and human_state() == BASELINE
+    record("main Cornice crash recovers in place; compositor and real unsaved application remain alive")
+    os.kill(restored["brokerPid"], signal.SIGKILL)
+    restored = wait(lambda: recovered_component("desktop", restored["brokerPid"], "brokerPid"), 30)
+    assert process.poll() is None and window.poll() is None and restored["compositorPid"] == info["compositorPid"]
+    desktops = json.loads(subprocess.check_output([str(pathlib.Path(info["release"]) / "cornice/bin/cornice"), "desktop", "list"], env=runtime_env | {"CORNICE_PATH": str(pathlib.Path(info["release"]) / "cornice")}, text=True, timeout=8))["desktops"]
+    assert all(desktop["paused"] for desktop in desktops)
+    assert human_state() == BASELINE
+    record("Broker crash recovers in the same session with every desktop paused and fresh control required")
+    trial("rollback"); ended(process, "Manual rollback")
+    trial("arm", "--seconds", "60", "--startup-seconds", "30")
+    process = login_session(); info = ready(process)
+    for attempt in range(4):
+        os.kill(info["shellPid"], signal.SIGKILL)
+        if attempt < 3:
+            info = wait(lambda: recovered_component("cornice", info["shellPid"], "shellPid"), 30)
+        else:
+            wait(lambda: status()["current"].get("degraded") and status()["current"].get("recoveryRequired") == "cornice", 15)
+            assert "recovery budget exhausted" in status()["current"]["lastHealthError"]
+            assert process.poll() is None and pathlib.Path('/proc/' + str(info["compositorPid"])).exists()
+            assert human_state() == BASELINE
+    trial("rollback"); ended(process, "Manual rollback")
+    record("repeated component crashes exhaust a bounded repair budget while the ready compositor remains alive")
     trial("arm", "--seconds", "60", "--startup-seconds", "30")
     process = login_session(); info = ready(process)
     os.kill(info["compositorPid"], signal.SIGSTOP)
-    ended(process, "health failed")
-    assert not pathlib.Path('/proc/' + str(info["compositorPid"])).exists()
-    record("SIGSTOP compositor hang is detected externally and killed after bounded graceful shutdown")
+    try:
+        wait(lambda: status()["current"].get("degraded") and status()["current"].get("recoveryRequired") == "diagnostics", 15)
+        assert process.poll() is None and pathlib.Path('/proc/' + str(info["compositorPid"])).exists()
+    finally:
+        os.kill(info["compositorPid"], signal.SIGCONT)
+    wait(lambda: status()["current"].get("healthFailures") == 0, 15)
+    assert process.poll() is None
+    trial("rollback"); ended(process, "Manual rollback")
+    record("unresponsive compositor IPC reports diagnostics without killing the session and clears on real recovery")
     trial("arm", "--seconds", "60", "--startup-seconds", "30")
     process = login_session(); info = ready(process)
     os.kill(info["compositorPid"], signal.SIGKILL)

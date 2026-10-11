@@ -7,6 +7,8 @@ DesktopMenu {
   property bool compact: true
   property string selected: service ? service.selectedDesktop : ""
   icon: selected && selected !== "main" ? "󰚩" : "󰍹"
+  alert:!!service && (service.humanRequests.length > 0 || service.error !== "")
+  badge:service ? service.humanRequests.length : 0
   description: service ? service.desktopLabel(selected || "main") : "桌面 1 · 主桌面"
   entries: service && service.desktops.length ? service.desktops.map(desktop => ({
     key: desktop.name, icon:"󰍹", label: service.desktopLabel(desktop.name), detail:service.stateLabel(desktop),

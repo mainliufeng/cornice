@@ -144,7 +144,7 @@ def prepare(args):
             build = source / "native/build"
             native_bin = product / "native/bin"
             native_bin.mkdir(parents=True)
-            for name in ("cornice-desktop-runtime", "cornice-human-lock", "cornice-session-guard", "cornice-native-accessibility"):
+            for name in ("cornice-desktop-runtime", "cornice-human-lock", "cornice-session-guard", "cornice-native-accessibility", "cornice-browser-runtime"):
                 shutil.copy2(build / name, native_bin / name)
             shutil.copytree(source / "native/agent", product / "native/agent")
             module = product / "native/qml/Cornice/Desktop"
@@ -152,6 +152,11 @@ def prepare(args):
             shutil.copy2(build / "libcornice_desktop_qml.so", module / "libcornice_desktop_qml.so")
             for library in module.glob("*.so"):
                 run(["patchelf", "--set-rpath", "$ORIGIN", library])
+        for name in ("cornice-desktop-runtime", "cornice-human-lock", "cornice-session-guard",
+                     "cornice-native-accessibility", "cornice-browser-runtime"):
+            binary = product / "native/bin" / name
+            if not binary.is_file() or not os.access(binary, os.X_OK):
+                raise RuntimeError("Candidate is missing an executable native component: " + name)
         platform = source / "native/qml/Cornice/Platform"
         if not platform.is_dir():
             platform = source / "native/platform-build/qml/Cornice/Platform"
@@ -347,6 +352,12 @@ def child_setup():
         os._exit(1)
 
 
+class ComponentUnhealthy(RuntimeError):
+    def __init__(self, component, message):
+        super().__init__(message)
+        self.component = component
+
+
 class Trial:
     def __init__(self, ticket):
         self.ticket = ticket
@@ -359,6 +370,12 @@ class Trial:
         self.required_desktops = {"main", "desktop2"}
         self.desktop_startups = {}
         self.ready_desktops = set()
+        self.components = {}
+        self.recovery = {}
+        self.component_failures = {}
+        self.compositor = None
+        self.health_failures = 0
+        self.next_health_check = 0.0
         self.environment = os.environ.copy()
         for key in ("HYPRLAND_INSTANCE_SIGNATURE", "DISPLAY", "WAYLAND_SOCKET", "CORNICE_LAUNCH_LOCKED"):
             self.environment.pop(key, None)
@@ -383,6 +400,165 @@ class Trial:
         self.children.append(process)
         return process
 
+    def component(self, arguments, name):
+        process = self.start(arguments, name)
+        self.components[name] = {"arguments": arguments, "process": process, "restarts": [], "retryAt": 0.0}
+        return process
+
+    def recover_component(self, name, reason):
+        component = self.components[name]
+        now = time.monotonic()
+        component["restarts"] = [at for at in component["restarts"] if now - at < 60]
+        if len(component["restarts"]) >= 3:
+            component["retryAt"] = component["restarts"][0] + 60
+            self.report_health(degraded=True, recoveryRequired=name,
+                recoveryRetryAt=time.time() + max(0, component["retryAt"] - now),
+                lastHealthError=name + " recovery budget exhausted: " + reason)
+            return False
+        if now < component["retryAt"]:
+            return False
+        # Reserve the attempt before stop/start. A failed fork must count too;
+        # otherwise resource exhaustion becomes an unlimited restart loop.
+        component["restarts"].append(now)
+        component["retryAt"] = now + min(20, 2 ** len(component["restarts"]))
+        # Restarting UI must not silently continue old input grants. The native
+        # guardian independently keeps/escalates any existing lock on UI death.
+        if name == "cornice":
+            try:
+                for desktop in json.loads(self.command("desktop", "list"))["desktops"]:
+                    self.command("desktop", "pause", desktop["name"])
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+                pass  # Broker death is independently fail-closed in Hyprland.
+        process = component["process"]
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGCONT)
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=2)
+            except ProcessLookupError:
+                pass
+        component["process"] = self.start(component["arguments"], name + "-recovery")
+        self.info["brokerPid" if name == "desktop" else "shellPid"] = component["process"].pid
+        self.recovery[name] = now + 20
+        self.component_failures[name] = 0
+        self.report_health(componentRecovery=self.component_status(), lastHealthError=reason,
+                           recoveryRetryAt=None)
+        return True
+
+    def component_status(self):
+        return {name: {"attempts": len(component["restarts"]),
+                       "recovering": name in self.recovery,
+                       "pid": component["process"].pid}
+                for name, component in self.components.items()}
+
+    def report_health(self, **details):
+        # Status persistence is diagnostic after readiness. A full filesystem,
+        # temporary FD shortage or failed fsync must not become a logout request.
+        previous_error = self.info.pop("statusWriteError", None)
+        try:
+            self.update(self.info["status"], **details)
+        except (OSError, ValueError) as error:
+            self.info.update(**details)
+            self.info["statusWriteError"] = str(error)
+            if previous_error != str(error):
+                try:
+                    print("cornice trial: cannot persist health status: " + str(error), file=sys.stderr)
+                except (OSError, ValueError):
+                    pass  # A failed diagnostic sink cannot end a ready session.
+
+    def mark_ready(self):
+        # Startup validation is complete. Persisting this transition is now a
+        # diagnostic operation, so ENOSPC/failed fsync cannot undo a usable login.
+        self.info["status"] = "ready"
+        self.report_health(confirmationRequired=False, healthFailures=0, lastHealthyAt=time.time())
+
+    def auxiliary_failure(self, name, error):
+        failures = self.info.setdefault("auxiliaryStartFailures", [])
+        failures.append({"name": name, "error": str(error), "at": time.time()})
+        del failures[:-32]
+        self.report_health(degraded=True, lastHealthError=name + ": " + str(error))
+
+    def start_ready_auxiliaries(self):
+        # Unlike required pre-ready components, optional autostarts and the
+        # notification are not allowed to tear down a verified desktop.
+        self.check_request()
+        try:
+            commands = read(self.release / "autostart.json")
+            if not isinstance(commands, list) or not all(isinstance(command, str) for command in commands):
+                raise ValueError("Autostart must be a JSON array of commands")
+        except (OSError, ValueError, TypeError) as error:
+            self.auxiliary_failure("autostart configuration", error)
+            commands = []
+        notice = ("试运行桌面：启动检查已通过，后台持续检查；无需确认，不会因超时退出。"
+                  "有问题按 Super+Ctrl+Alt+Backspace 回退。下一次登录始终使用稳定版。")
+        starts = [(["/bin/sh", "-c", command], "autostart-" + str(index)) for index, command in enumerate(commands)]
+        starts.append((["notify-send", "Cornice 试运行", notice, "--expire-time=0"], "notice"))
+        for arguments, name in starts:
+            self.check_request()  # Explicit termination stays outside the guard.
+            try:
+                self.start(arguments, name)
+            except Exception as error:
+                self.auxiliary_failure(name, error)
+
+    def supervise_once(self):
+        self.check_request()  # An explicit rollback still ends the session.
+        if self.compositor.poll() is not None:
+            self.report_health(reason="Hyprland exited; stable login remains selected")
+            self.update("exited" if self.compositor.returncode == 0 else "rolled-back",
+                        reason="Hyprland exited; stable login remains selected")
+            return False
+        if (self.directory / "confirm").exists() and self.info["status"] != "confirmed":
+            try:
+                self.update("confirmed")
+            except (OSError, ValueError) as error:
+                self.report_health(statusWriteError=str(error))
+        now = time.monotonic()
+        if now < self.next_health_check:
+            return True
+        self.next_health_check = now + .5
+        try:
+            self.health()
+            if (self.health_failures or self.component_failures or self.recovery or
+                    self.info.get("degraded") or time.time() - self.info["lastHealthyAt"] >= 5):
+                self.recovery.clear()
+                self.report_health(healthFailures=0, lastHealthError=None,
+                    lastHealthyAt=time.time(), degraded=False, recoveryRequired=None,
+                    recoveryRetryAt=None, componentRecovery=self.component_status())
+            self.health_failures = 0
+            self.component_failures.clear()
+        except ComponentUnhealthy as error:
+            name = error.component
+            self.component_failures[name] = self.component_failures.get(name, 0) + 1
+            component = self.components[name]
+            dead = component["process"].poll() is not None
+            grace = name in self.recovery and now < self.recovery[name]
+            self.report_health(healthFailures=self.component_failures[name], lastHealthError=str(error))
+            if dead or (not grace and self.component_failures[name] >= 3):
+                try:
+                    self.recover_component(name, str(error))
+                except Exception as recovery_error:
+                    # Repair also parses component replies: valid JSON with a
+                    # broken shape must not escape this handler and log out.
+                    # Explicit termination stays in check_request above.
+                    # Failed component repair leaves the compositor running and
+                    # existing native lock/input guardians fail-closed.
+                    self.report_health(degraded=True, lastHealthError=str(recovery_error),
+                        recoveryRequired=name, componentRecovery=self.component_status())
+            if self.info.get("degraded"):
+                self.next_health_check = now + 2
+        except Exception as error:
+            # Probe payloads can be valid JSON with a broken shape, raising
+            # KeyError/TypeError/AttributeError. Such component diagnostics are
+            # not logout requests; check_request above retains that boundary.
+            self.health_failures += 1
+            self.report_health(healthFailures=self.health_failures, lastHealthError=str(error))
+            if self.health_failures >= 3:
+                self.report_health(degraded=True, recoveryRequired="diagnostics")
+                self.next_health_check = now + min(5, self.health_failures - 1)
+        return True
+
     def command(self, *args):
         return run([self.product / "bin/cornice", *args], env=self.environment)
 
@@ -392,9 +568,11 @@ class Trial:
 
     def health(self):
         self.check_request()
-        for child in self.children[:3]:
-            if child.poll() is not None:
-                raise RuntimeError("A supervised desktop process exited")
+        for name, component in self.components.items():
+            self.info["healthStage"] = name + ".process"
+            if component["process"].poll() is not None:
+                raise ComponentUnhealthy(name, name + " process exited")
+        self.info["healthStage"] = "compositor.version"
         version = ipc(self.environment, "version")
         if version.get("commit") != self.version.get("commit"):
             raise RuntimeError("Wrong compositor instance")
@@ -402,22 +580,34 @@ class Trial:
         # An application command error is diagnostic, not proof that a healthy
         # desktop must be terminated. Configuration is still required to be
         # error-free during startup, before any user applications are launched.
+        self.info["healthStage"] = "compositor.configerrors"
         self.info["configurationErrors"] = ipc(self.environment, "configerrors", False)
+        self.info["healthStage"] = "compositor.monitors"
         monitors = ipc(self.environment, "monitors")
         if not monitors:
             raise RuntimeError("No visible output")
         output_names = {monitor["name"] for monitor in monitors}
-        if not self.command("ping").startswith("pong"):
-            raise RuntimeError("Cornice did not answer ping")
+        self.info["healthStage"] = "cornice.ping"
+        try:
+            if not self.command("ping").startswith("pong"):
+                raise RuntimeError("Cornice did not answer ping")
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            raise ComponentUnhealthy("cornice", str(error)) from error
+        self.info["healthStage"] = "compositor.layers"
         layers = ipc(self.environment, "layers")
         if not any(layer.get("namespace") == "cornice-bar" for monitor in layers.values()
                    for level in monitor.get("levels", {}).values() for layer in level):
-            raise RuntimeError("Cornice bar is missing")
-        desktops = json.loads(self.command("desktop", "list"))["desktops"]
+            raise ComponentUnhealthy("cornice", "Cornice bar is missing")
+        self.info["healthStage"] = "desktop.list"
+        try:
+            desktops = json.loads(self.command("desktop", "list"))["desktops"]
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            raise ComponentUnhealthy("desktop", str(error)) from error
         if not self.required_desktops.issubset({d["name"] for d in desktops}):
             raise RuntimeError("Required desktops are missing")
         self.info["desktops"] = [d["name"] for d in desktops]
         initializing = []
+        self.info["healthStage"] = "desktop.topology"
         for desktop in desktops:
             if desktop.get("output") not in output_names:
                 raise RuntimeError("Desktop output is missing: " + desktop["name"])
@@ -448,9 +638,10 @@ class Trial:
                     if time.monotonic() - first_seen < self.ticket["startupSeconds"]:
                         initializing.append(desktop["name"])
                         continue
-                raise RuntimeError("Desktop Cornice bar is missing: " + desktop["name"])
+                raise ComponentUnhealthy("desktop", "Desktop Cornice bar is missing: " + desktop["name"])
             self.ready_desktops.add(identity)
         self.info["initializingDesktops"] = initializing
+        self.info["healthStage"] = "complete"
 
     def execute(self):
         self.update("starting")
@@ -462,6 +653,7 @@ class Trial:
             'hl.bind("SUPER + CTRL + ALT + BackSpace", hl.dsp.exec_cmd(' + json.dumps(runner + " rollback") + '), {locked=true,submap_universal=true})\n' +
             'hl.bind("SUPER + CTRL + ALT + Return", hl.dsp.exec_cmd(' + json.dumps(runner + " confirm") + '), {submap_universal=true})\n')
         compositor = self.start([self.release / "Hyprland", "-c", config], "Hyprland")
+        self.compositor = compositor
         self.info["compositorPid"] = compositor.pid
         self.update("starting")
         deadline = time.monotonic() + self.ticket["startupSeconds"]
@@ -513,7 +705,7 @@ class Trial:
                 raise RuntimeError("Compositor launch environment export failed")
         finally:
             environment_file.unlink(missing_ok=True)
-        broker = self.start([self.product / "bin/cornice-desktopd"], "desktop")
+        broker = self.component([self.product / "bin/cornice-desktopd"], "desktop")
         self.info["brokerPid"] = broker.pid
         while time.monotonic() < deadline:
             self.check_request()
@@ -528,7 +720,7 @@ class Trial:
         # established human-only lock policy without widening generic creation.
         self.command("desktop", "lock-policy", "desktop2", "continue")
         self.info["desktops"] = ["main", "desktop2"]
-        shell = self.start([self.product / "bin/cornice-qs", "-p", self.product / "shell"], "cornice")
+        shell = self.component([self.product / "bin/cornice-qs", "-p", self.product / "shell"], "cornice")
         self.info["shellPid"] = shell.pid
         while time.monotonic() < deadline:
             self.check_request()
@@ -539,33 +731,11 @@ class Trial:
                 time.sleep(.2)
         else:
             raise RuntimeError("Cornice/Agent desktops failed startup health checks")
-        self.update("ready", confirmationRequired=False, healthFailures=0, lastHealthyAt=time.time())
-        # These are the user's real autostart commands, only after the desktop is ready.
-        for index, command in enumerate(read(self.release / "autostart.json")):
-            self.start(["/bin/sh", "-c", command], "autostart-" + str(index))
-        notice = ("试运行桌面：启动检查已通过，后台持续检查；无需确认，不会因超时退出。"
-                  "有问题按 Super+Ctrl+Alt+Backspace 回退。下一次登录始终使用稳定版。")
-        self.start(["notify-send", "Cornice 试运行", notice, "--expire-time=0"], "notice")
-        # Healthy sessions have no confirmation deadline, including legacy tickets
-        # containing a seconds field. Only detected failures or rollback end them.
-        failures = 0
-        while True:
-            self.check_request()
-            if compositor.poll() is not None:
-                self.update("exited" if compositor.returncode == 0 else "rolled-back", reason="Hyprland exited; stable login remains selected")
-                return
-            if (self.directory / "confirm").exists() and self.info["status"] != "confirmed":
-                self.update("confirmed")
-            try:
-                self.health()
-                if failures or time.time() - self.info["lastHealthyAt"] >= 5:
-                    self.update(self.info["status"], healthFailures=0, lastHealthError=None, lastHealthyAt=time.time())
-                failures = 0
-            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
-                failures += 1
-                self.update(self.info["status"], healthFailures=failures, lastHealthError=str(error))
-                if failures >= 3:
-                    raise RuntimeError("Desktop health failed three times: " + str(error)) from error
+        self.mark_ready()
+        self.start_ready_auxiliaries()
+        # A ready user session ends only on compositor exit or an explicit
+        # rollback. Probe errors and bounded component repair stay in place.
+        while self.supervise_once():
             time.sleep(.5)
 
     def cleanup(self):

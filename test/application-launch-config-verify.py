@@ -32,6 +32,24 @@ try:
     command=pathlib.Path('/proc',str(browser_window['pid']),'cmdline').read_bytes().split(b'\0')
     assert ('--user-data-dir='+default_profile) in shlex.split(b' '.join(command).decode()),(default_profile,command,browser_window)
     record('omitted browser settings inherit the shipped managed Chrome rule')
+    # Literal env/shell wrappers pass through the same profile adapter.
+    wrapped=cli('launch','agent1','--','env','WRAPPER_PROBE=quoted value','sh','-c',"exec kitty --title 'Wrapped terminal' --override confirm_os_window_close=0 sleep 120")
+    wrapped_window=wait(lambda:next((w for w in ctl('clients',True) if w['title']=='Wrapped terminal'),None))
+    wrapped_env=pathlib.Path('/proc',str(wrapped_window['pid']),'environ').read_bytes().split(b'\0')
+    assert b'WRAPPER_PROBE=quoted value' in wrapped_env and ('CORNICE_PROFILE_PROBE='+profile).encode() in wrapped_env
+    assert wrapped_window['workspace']['id']==11
+    # Preserve general scripts' native semantics and expose their routing limit.
+    command="printf 'compound works' > "+shlex.quote(str(BASE/'compound-result'))+"; sleep 1"
+    compound=cli('launch','agent1','--','sh','-c',command)
+    assert compound['warnings'] and 'profile' in compound['warnings'][0]
+    wait(lambda:(BASE/'compound-result').read_text()=='compound works')
+    assert 'identity' in cli('launch','agent1','--','env','WAYLAND_DISPLAY=wrong','kitty',succeeds=False)
+    # A standard HTTP open uses the configured desktop browser, its existing
+    # profile and target seat, instead of forwarding to the primary browser.
+    opened=cli('launch','agent1','--','xdg-open','https://example.invalid/cornice-routing-test')
+    wait(lambda:any(w['workspace']['id']==11 and 'chrome' in w['class'].lower() for w in ctl('clients',True)))
+    assert human_state()==before and human.poll() is None
+    record('literal env/shell wrappers and HTTP handlers use profile routing; arbitrary scripts retain semantics with an explicit warning')
     # Changing a live browser policy must report an error, never silently keep
     # old settings or terminate a running application.
     changed=copy.deepcopy(custom);changed['desktopApplications']['rules']['chrome']={'profile':'new-chrome'}

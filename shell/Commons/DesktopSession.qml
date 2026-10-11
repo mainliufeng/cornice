@@ -47,8 +47,9 @@ QtObject {
     ? workspaceIdentity({address:state.workspace, name:state.workspaceName || state.workspace})
     : workspaceIdentity(primaryWorkspace !== null ? primaryWorkspace : Hyprland.focusedWorkspace)
   readonly property var observedWorkspace: {
-    if (!observing) return currentWorkspace
-    const presentation = service.observer.presentationState || ({})
+    const presentation = observing ? service.observer.presentationState || ({})
+      : agentShell ? state.presentation || ({}) : ({})
+    if (!observing && !presentation.active) return currentWorkspace
     if (presentation.following || presentation.workspace === "current") return currentWorkspace
     return workspaceIdentity(presentation.workspace || presentation.viewWorkspace || currentWorkspace)
   }
@@ -171,15 +172,17 @@ QtObject {
       Quickshell.execDetached(["env", "PATH=" + path].concat(argv))
       return true
     }
-    const args = [(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice") + "/bin/cornice", "desktop", "launch", selected]
-    if (!agentShell && (!service || !service.observer || !service.observer.humanControl)) return false
+    if (!service || (!agentShell && (!service.observer || !service.observer.humanControl))) return false
+    const args = ["launch", selected]
     // Native panels belong to this desktop's shell even during physical
     // takeover. The Broker validates the current human seat and generation.
     if (state.controlMode === "human") {
       if (!state.seatId || !state.generation) return false
       args.push("--human-seat", String(state.seatId), String(state.generation))
     } else if (!agentShell) return false
-    Quickshell.execDetached(args.concat(["--"], argv))
+    // A launch is queued through the same result channel as workspace and
+    // control actions, so a failed app/profile policy stays visible and retryable.
+    service.operate(args.concat(["--"], argv))
     return true
   }
   function focusWindow(address, expectedWorkspace) {
@@ -190,7 +193,8 @@ QtObject {
     if (secondary) {
       if (!state.seatId || !state.generation || !["agent", "human"].includes(state.controlMode)) return false
       if (!agentShell && (!observing || !service.observer.humanControl || state.controlMode !== "human")) return false
-      Quickshell.execDetached([prefix + "/bin/cornice-desktop", "view-focus", selected, address,
+      if (!service) return false
+      service.operate(["view-focus", selected, address,
         "--seat", String(state.seatId), String(state.generation), "--workspace", expected.key])
     } else {
       Quickshell.execDetached([prefix + "/bin/cornice-focus-window", address, JSON.stringify(expected)])

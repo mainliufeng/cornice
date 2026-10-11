@@ -108,7 +108,16 @@
   },
   "agentDesktop": {
     "enabled": true,
-    "desktops": []
+    "desktops": [],
+    "resources": {
+      "maxDesktops": 32,
+      "maxPrivatePixels": 134217728,
+      "minAvailableMemoryMiB": 256
+    },
+    "clipboard": {
+      "mode": "shared",
+      "maxBytes": 16777216
+    }
   },
   "desktopApplications": {
     "browser": "chrome",

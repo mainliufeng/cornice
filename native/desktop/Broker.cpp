@@ -1,9 +1,12 @@
 #include "Broker.hpp"
 #include "ApplicationLaunch.hpp"
+#include "ClipboardBridge.hpp"
+#include <algorithm>
 #include <QBuffer>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -22,10 +25,19 @@
 #include <unistd.h>
 
 static void fail(const QString &message) { throw std::runtime_error(message.toStdString()); }
+// Control stays on the event loop while the independently owned browser starts.
+// A first launch already submitted its URL; later launches wait and submit once.
+struct BrowserPending { QString name; bool firstLaunch = false; QStringList warnings; std::shared_ptr<ApplicationLaunchPlan> plan; };
+struct LaunchPending { QString name; };
 static QJsonArray recoveredHandoffs(QJsonArray records) {
     while (records.size() > 20) records.removeFirst();
     for (int i = 0; i < records.size(); ++i) {
         auto record = records[i].toObject();
+        if (!record["restored"].toBool()) {
+            record["resumeUnavailable"] = true;
+            record["interruptionReason"] = "Desktop service restarted; the original task reservation is no longer connected";
+            records[i] = record;
+        }
         if (record["status"] != "requested" && record["status"] != "in_progress") continue;
         record["status"] = "cancelled";
         record["note"] = "Desktop service restarted; request owner disconnected";
@@ -68,7 +80,7 @@ QJsonObject desktopRequest(const QString &path, const QJsonObject &request) {
         fail("Desktop request write timed out");
     QByteArray response;
     while (!response.contains('\n')) {
-        if (!socket.waitForReadyRead(5000))
+        if (!socket.waitForReadyRead(request["method"] == "launch" || request["method"] == "desktop.launch" || request["method"] == "desktop.browser" ? 15000 : 5000))
             fail("Desktop response timed out");
         response += socket.readAll();
         if (response.size() > 64 * 1024 * 1024)
@@ -85,6 +97,7 @@ Broker::Broker(QString instance)
     for (const auto &file : QDir(m_directory).entryList({"frame-*", "shot-*"}, QDir::Files))
         QFile::remove(m_directory + "/" + file);
     const auto caps = json(compositor("seat capabilities", true)).object();
+    m_capabilities = caps;
     const auto features = caps["features"].toArray();
     for (const QString name : {"seat-input", "seat-identity", "atomic-snapshot", "readonly-workspace", "argb-frame",
                                "input-pause", "composed-seat-input", "seat-shell-v1", "native-seat-presentation-v1", "primary-desktop-v1", "managed-seat-config-v1"})
@@ -92,57 +105,54 @@ Broker::Broker(QString instance)
             fail("Required compositor capability missing: " + name);
     if (caps["protocol"].toInt() != 1)
         fail("Unsupported compositor seat protocol");
-    QJsonArray mainHandoffs;
-    QFile file(m_directory + "/desktops.json");
-    if (file.open(QIODevice::ReadOnly)) {
-        const auto saved = json(file.readAll()).object();
-        mainHandoffs = recoveredHandoffs(saved["main"].toObject()["handoffs"].toArray());
-        for (auto it = saved.begin(); it != saved.end(); ++it) {
-            if (it.key() == "main") continue;
-            try {
-                const auto actual = state(it.key());
-                if (actual["seatId"].toString() !=
-                    (it.value().isString() ? it.value().toString() : it.value().toObject()["seatId"].toString()))
-                    continue;
-                m_desktops.emplace(it.key(), Desktop{it.value().isString() ? it.value().toString()
-                                                                           : it.value().toObject()["seatId"].toString(),
-                                                     {},
-                                                     {},
-                                                     {},
-                                                     {}});
-                if (it.value().isObject())
-                    m_desktops.at(it.key()).privateOutput = it.value().toObject()["privateOutput"].toString();
-                auto &recovered = m_desktops.at(it.key());
-                recovered.agentAllowed = it.value().toObject()["agentAllowed"].toBool(true);
-                recovered.handoffs = recoveredHandoffs(it.value().toObject()["handoffs"].toArray());
-                recovered.number = it.value().toObject()["number"].toInt(m_nextDesktopNumber);
-                m_nextDesktopNumber = std::max(m_nextDesktopNumber, recovered.number + 1);
-                initializeSlots(it.key(), it.value().toObject()["workspaceSlots"].toObject());
-                // Recovery revokes survivors; never restore input automatically.
-                pause(it.key());
-                startShell(it.key());
-            } catch (...) {
-            }
-        }
+    const auto stateDirectory = QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + "/cornice";
+    QDir().mkpath(stateDirectory);
+    QFile::setPermissions(stateDirectory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    m_statePath = stateDirectory + "/desktops.json";
+    QFile persistent(m_statePath);
+    if (persistent.exists()) {
+        if (!persistent.open(QIODevice::ReadOnly) || persistent.size() > 1024 * 1024) fail("Cannot read persistent desktop definitions");
+        const auto saved = json(persistent.readAll()).object();
+        if (saved["schema"].toInt() != 1 || !saved["desktops"].isObject()) fail("Unsupported persistent desktop definitions");
+        m_definitions = saved["desktops"].toObject();
     }
+    QJsonObject runtimeDefinitions;
+    QFile file(m_directory + "/desktops.json");
+    if (file.open(QIODevice::ReadOnly)) runtimeDefinitions = json(file.readAll()).object();
+    // Import old runtime definitions once; stable settings never include grants.
+    for (auto it = runtimeDefinitions.begin(); it != runtimeDefinitions.end(); ++it)
+        if (!m_definitions.contains(it.key()) && it.value().isObject()) m_definitions[it.key()] = it.value();
     const auto primary = state("main");
     m_desktops.emplace("main", Desktop{primary["seatId"].toString(), {}, {}, {}, {}});
     auto &main = m_desktops.at("main");
-    main.primary = true; main.number = 1; main.agentAllowed = false;main.handoffs = mainHandoffs;
+    const auto mainDefinition = m_definitions["main"].toObject();
+    main.primary = true; main.number = 1; main.agentAllowed = false;
+    main.stableId = mainDefinition["stableId"].toString(uuid());
+    main.handoffs = recoveredHandoffs(mainDefinition["handoffs"].toArray());
     main.configurationOwner = uuid() + uuid();
     pause("main");
-    // A fresh session provides exactly one task-ready secondary desktop. Reuse
-    // recovered desktops, including ones explicitly created by external tasks.
-    if (m_desktops.size() == 1) {
+    const auto storedDefinitions = m_definitions;
+    for (auto it = storedDefinitions.begin(); it != storedDefinitions.end(); ++it) {
+        if (it.key() == "main") continue;
+        try {
+            restoreDefinition(it.key(), it.value().toObject());
+        } catch (const std::exception &error) { m_restoreErrors[it.key()] = QString::fromUtf8(error.what()); }
+    }
+    // A new installation has one empty desktop. Failed stored definitions are
+    // retained and reported instead of silently replacing the user's desktops.
+    if (m_desktops.size() == 1 && m_definitions.size() <= 1) {
         const auto size = primary["pixelSize"].toArray();
         perform("create", {{"name", "desktop2"}, {"virtual-output",
             QString("%1x%2").arg(size.at(0).toInt()).arg(size.at(1).toInt())}}, nullptr, nullptr);
     }
+    m_restoring = false;
     save();
+    updateClipboard();
     m_configurationHeartbeat.start();
     connect(&m_watchdog, &QTimer::timeout, this, [this] {
         if (m_configurationHeartbeat.elapsed() >= 1000) {
             m_configurationHeartbeat.restart();
+            try { updateClipboard(); } catch (const std::exception &error) { m_clipboardError = QString::fromUtf8(error.what()); }
             for (auto &[name, desktop] : m_desktops) {
                 try { configureDesktop(name); desktop.configurationError.clear(); }
                 catch (const std::exception &error) { desktop.configurationError = QString::fromUtf8(error.what()); }
@@ -159,6 +169,13 @@ Broker::Broker(QString instance)
                 endTakeover("Desktop unavailable");
             }
         }
+        // A connected authenticated long wait is a live task reservation.
+        for (const auto &wait : m_taskWaiters)
+            for (auto it = m_acquisitions.begin(); it != m_acquisitions.end(); ++it)
+                if (it.value()["taskToken"] == wait.taskToken) {
+                    it.value()["heartbeatAt"] = QDateTime::currentMSecsSinceEpoch();
+                    if (m_bindings.contains(it.value()["token"].toString())) m_bindings[it.value()["token"].toString()].heartbeat.restart();
+                }
         QList<QLocalSocket *> expiredAcquisitions;
         for (auto it = m_acquisitions.begin(); it != m_acquisitions.end(); ++it)
             if (QDateTime::currentMSecsSinceEpoch() - it.value()["heartbeatAt"].toVariant().toLongLong() > 5000)
@@ -174,11 +191,23 @@ Broker::Broker(QString instance)
                     actual["controlMode"].toString() == "agent") pause(it->name);
             } catch (...) {}
         }
-        for (auto *owner : expiredAcquisitions) { releaseAcquisition(owner); owner->abort(); }
+        for (auto *owner : expiredAcquisitions) {
+            try { releaseAcquisition(owner); }
+            catch (const std::exception &error) { qWarning() << "Expired task cleanup failed after credential retirement:" << error.what(); }
+            owner->abort();
+        }
+        const auto now = QDateTime::currentMSecsSinceEpoch();
+        for (auto it = m_taskWaiters.begin(); it != m_taskWaiters.end();) {
+            if (it->deadline > now) { ++it; continue; }
+            auto *socket = it.key(); const auto wait = it.value(); it = m_taskWaiters.erase(it);
+            try { socket->write(QJsonDocument(QJsonObject{{"ok",true},{"id",wait.id},{"result",QJsonObject{{"control",state(wait.name)},{"timedOut",true}}}}).toJson(QJsonDocument::Compact) + '\n'); }
+            catch (...) { socket->abort(); }
+        }
         bool invalidateFrames = false;
         for (auto &[name, desktop] : m_desktops) {
             try {
                 startShell(name);
+                publishTaskState(name);
                 const auto actual = state(name);
                 if (!actual["available"].toBool())
                     invalidateFrames = true;
@@ -220,16 +249,34 @@ Broker::Broker(QString instance)
 }
 
 Broker::~Broker() {
+    m_watchdog.stop();
+    QObject::disconnect(&m_events, nullptr, this, nullptr);
+    QObject::disconnect(&m_server, nullptr, this, nullptr);
+    m_server.close();
+    // QLocalServer destroys accepted sockets after the Broker's C++ members.
+    // Detach their callbacks while maps are still alive, so disconnect cannot
+    // enter a half-destructed Broker and access already-freed bookkeeping.
+    for (auto *socket : m_server.findChildren<QLocalSocket *>()) {
+        QObject::disconnect(socket, nullptr, this, nullptr);
+        socket->abort();
+    }
+    for (auto *timer : findChildren<QTimer *>()) timer->stop();
+    for (auto *process : findChildren<QProcess *>()) {
+        QObject::disconnect(process, nullptr, this, nullptr);
+        if (process->state() != QProcess::NotRunning) {
+            process->kill();
+            process->waitForFinished(1000);
+        }
+    }
     for (auto &[name, desktop] : m_desktops) {
+        if (desktop.browser) QObject::disconnect(desktop.browser.get(), nullptr, this, nullptr);
         try {
             pause(name);
             if (!desktop.configurationOwner.isEmpty()) m_compositor.remove(desktop.configurationOwner);
         } catch (...) {
         }
     }
-    for (const auto &file : m_buffers)
-        QFile::remove(file);
-    m_server.close();
+    for (const auto &file : m_buffers) QFile::remove(file);
 }
 
 QByteArray Broker::compositor(const QString &command, bool asJson) {
@@ -239,6 +286,7 @@ QByteArray Broker::compositor(const QString &command, bool asJson) {
 QJsonObject Broker::state(const QString &name) {
     atom(name);
     auto result = json(compositor("seat state " + name, true)).object();
+    result["clipboard"] = clipboardStatus();
     const bool human = m_humanOwner && m_humanBinding.name == name;
     const bool primary = result.value("primary").toBool();
     result["primary"] = primary;
@@ -246,6 +294,40 @@ QJsonObject Broker::state(const QString &name) {
         const auto &desktop = m_desktops.at(name);
         result["agentAllowed"] = desktop.agentAllowed;
         result["number"] = desktop.number;
+        result["stableId"] = desktop.stableId;
+        result["revision"] = static_cast<qint64>(desktop.revision);
+        QJsonArray diagnostics;
+        if (!desktop.configurationError.isEmpty()) diagnostics.append(QJsonObject{{"code","configuration"},{"message",desktop.configurationError}});
+        if (!desktop.primary) diagnostics.append(QJsonObject{{"code","input-compatibility"},
+            {"message","Native Wayland input is supported; Xwayland, touchscreen, tablet and gesture input on secondary desktops remain unsupported."}});
+        result["diagnostics"] = diagnostics;
+        result["inputCapabilities"] = QJsonObject{{"wayland",true},{"xwayland",desktop.primary},{"touch",false},{"tablet",false},{"gestures",false}};
+        result["capabilities"] = m_capabilities;
+        result["browser"] = QJsonObject{{"state",!desktop.browser ? "closed" : desktop.browser->starting() ? "starting" : desktop.browser->running() ? "ready" : "unavailable"},
+            {"error",desktop.browser ? desktop.browser->startupError() : QString{}}};
+        result["continuation"] = QJsonObject{{"eventWait",true},{"notifications",true},{"wakeHarness",false},
+            {"waiting",!desktop.handoffs.isEmpty() &&
+                (desktop.handoffs.last().toObject()["status"] == "completed" || desktop.handoffs.last().toObject()["status"] == "cancelled") &&
+                !desktop.handoffs.last().toObject()["restored"].toBool() &&
+                !desktop.handoffs.last().toObject()["resumeUnavailable"].toBool()}};
+        const auto now = QDateTime::currentMSecsSinceEpoch();
+        if (now - m_windowsAt.value(name) > 250 || !m_windows.contains(name)) {
+            m_windows[name] = json(compositor("seat windows " + name, true)).array(); m_windowsAt[name] = now;
+        }
+        const auto currentWindows = m_windows[name];
+        result["windowCount"] = currentWindows.size();
+        int retained = currentWindows.size();
+        if (!desktop.primary) {
+            if (now - m_clientsAt > 250) { m_clients = json(compositor("clients", true)).array(); m_clientsAt = now; }
+            for (const auto &value : m_clients) {
+                const auto client = value.toObject();
+                const auto ws = "name:" + client["workspace"].toObject()["name"].toString();
+                if (client["mapped"].toBool() && desktop.workspaceSlots.values().contains(ws) && ws != result["workspace"].toString()) ++retained;
+            }
+        }
+        result["retainedWindowCount"] = retained;
+        result["retainedApps"] = retained > 0;
+        result["allocationMode"] = retained > 0 ? "retained" : "empty";
         result["label"] = QString("桌面 %1").arg(desktop.number) + (primary ? " · 主桌面" : "");
     }
     result["controlMode"] = human || (primary && result["paused"].toBool()) ? "human" : result["paused"].toBool() ? "paused" : "agent";
@@ -278,6 +360,10 @@ QJsonObject Broker::state(const QString &name) {
         result["bindingOverrides"] = m_desktops.at(name).bindingOverrides;
         result["configurationError"] = m_desktops.at(name).configurationError;
     }
+    QJsonObject presentation{{"active", false}, {"following", false}, {"workspace", QString{}}};
+    for (const auto &view : m_presentationStates)
+        if (view["active"].toBool() && view["name"] == name) { presentation = view; break; }
+    result["presentation"] = presentation;
     result["workspaceName"] = workspace;
     result["workspaceSlots"] = workspaceSlots;
     return result;
@@ -336,22 +422,147 @@ Broker::Desktop &Broker::managed(const QString &name) {
         fail("Desktop lifecycle changed; stale reference rejected");
     return it->second;
 }
+QJsonObject Broker::clipboardStatus() const {
+    auto result = m_clipboard ? m_clipboard->status() : QJsonObject{{"connected",false}};
+    if (!m_clipboardError.isEmpty()) result["error"] = m_clipboardError;
+    return result;
+}
+void Broker::updateClipboard() {
+    QString mode="shared"; qint64 maxBytes=16777216;
+    const QStringList paths{qEnvironmentVariable("CORNICE_PATH") + "/config/default.json",
+        QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/cornice/config.json"};
+    for (const auto &path : paths) {
+        QFile file(path); if (!file.exists()) continue;
+        if (!file.open(QIODevice::ReadOnly) || file.size()>1024*1024) fail("Cannot read clipboard policy");
+        const auto config=json(file.readAll()).object()["agentDesktop"].toObject()["clipboard"].toObject();
+        if(config.contains("mode"))mode=config["mode"].toString();
+        if(config.contains("maxBytes"))maxBytes=config["maxBytes"].toVariant().toLongLong();
+    }
+    if((mode!="shared" && mode!="isolated") || maxBytes<1 || maxBytes>64*1024*1024)fail("Invalid clipboard policy");
+    const auto primary=json(compositor("seat state main",true)).object();
+    if(!m_clipboard)m_clipboard=std::make_unique<ClipboardBridge>(primary["display"].toString(),this);
+    QStringList names{"Hyprland"};for(const auto &[name,desktop]:m_desktops)if(!desktop.primary)names.append(name);
+    const auto scope=primary["humanLocked"].toBool()?primary["lockScope"].toString("full"):QString{};
+    m_clipboard->configure(names,"Hyprland",mode,maxBytes,scope);m_clipboardError.clear();
+}
+
+QJsonObject Broker::resourceLimits() const {
+    QJsonObject limits{{"maxDesktops",32},{"maxPrivatePixels",134217728},{"minAvailableMemoryMiB",256}};
+    const QStringList paths{qEnvironmentVariable("CORNICE_PATH") + "/config/default.json",
+        QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/cornice/config.json"};
+    for (const auto &path : paths) {
+        QFile file(path); if (!file.exists()) continue;
+        if (!file.open(QIODevice::ReadOnly) || file.size() > 1024*1024) fail("Cannot read desktop resource policy");
+        const auto custom = json(file.readAll()).object()["agentDesktop"].toObject()["resources"].toObject();
+        for (auto it = custom.begin(); it != custom.end(); ++it) {
+            if (!limits.contains(it.key()) || !it.value().isDouble() || it.value().toDouble() != it.value().toVariant().toLongLong()) fail("Invalid desktop resource policy");
+            limits[it.key()] = it.value();
+        }
+    }
+    if (limits["maxDesktops"].toInt() < 2 || limits["maxDesktops"].toInt() > 32 ||
+        limits["maxPrivatePixels"].toVariant().toLongLong() < 320*240 ||
+        limits["minAvailableMemoryMiB"].toInt() < 0) fail("Invalid desktop resource limits");
+    return limits;
+}
+void Broker::checkResources(const QString &geometry, const QString &replacing) {
+    const auto limits = resourceLimits();
+    if (replacing.isEmpty() && m_desktops.size() >= static_cast<size_t>(limits["maxDesktops"].toInt()))
+        fail("Desktop allocation limit reached; release and remove an unused desktop first");
+    auto pixels = [](const QString &value) -> qint64 { const auto size = value.split('x'); return size.size() == 2 ? size[0].toLongLong()*size[1].toLongLong() : 0; };
+    qint64 total = pixels(geometry);
+    for (const auto &[name, desktop] : m_desktops) if (name != replacing && !desktop.primary) total += pixels(desktop.geometry);
+    if (total > limits["maxPrivatePixels"].toVariant().toLongLong()) fail("Private desktop pixel budget exceeded");
+    QFile memory("/proc/meminfo");
+    if (memory.open(QIODevice::ReadOnly)) {
+        const auto match = QRegularExpression("MemAvailable:\\s+([0-9]+)").match(QString::fromUtf8(memory.readAll()));
+        if (match.hasMatch() && match.captured(1).toLongLong()/1024 < limits["minAvailableMemoryMiB"].toInt()) fail("Insufficient available memory for another desktop");
+    }
+}
+QJsonObject Broker::definition(const QString &name) {
+    const auto &desktop = m_desktops.at(name);
+    QJsonObject workspaceMap; for (auto it = desktop.workspaceSlots.begin(); it != desktop.workspaceSlots.end(); ++it) workspaceMap[QString::number(it.key())] = it.value();
+    const auto actual = state(name);
+    return {{"stableId",desktop.stableId},{"number",desktop.number},{"agentAllowed",desktop.agentAllowed},
+        {"workspaceSlots",workspaceMap},{"workspace",actual["workspace"]},{"geometry",desktop.geometry},{"output",desktop.outputName},
+        {"humanLockPolicy",actual["humanLockPolicy"]},{"handoffs",desktop.handoffs}};
+}
+void Broker::restoreDefinition(const QString &name, const QJsonObject &spec) {
+    atom(name); if (!QRegularExpression("^[A-Za-z0-9_-]{1,64}$").match(name).hasMatch()) fail("Invalid stored desktop name");
+    QJsonObject actual; try { actual = state(name); } catch (...) {}
+    const auto number = spec["number"].toInt(m_nextDesktopNumber);
+    if (number < 2 || number > 1000000) fail("Invalid stored desktop number");
+    if (!actual.isEmpty()) {
+        m_desktops.emplace(name, Desktop{actual["seatId"].toString(), {}, {}, {}, {}});
+        auto &desktop = m_desktops.at(name);
+        const auto oldRuntime = [&] { QFile file(m_directory + "/desktops.json"); return file.open(QIODevice::ReadOnly) ? json(file.readAll()).object()[name].toObject() : QJsonObject{}; }();
+        desktop.privateOutput = oldRuntime["privateOutput"].toString();
+        desktop.geometry = spec["geometry"].toString(); desktop.outputName = spec["output"].toString();
+        if (!desktop.privateOutput.isEmpty() && desktop.geometry.isEmpty()) { const auto size=actual["pixelSize"].toArray();desktop.geometry=QString("%1x%2").arg(size[0].toInt()).arg(size[1].toInt()); }
+    } else {
+        auto workspace = spec["workspace"].toString();
+        // Seat snapshots expose a workspace's name. Dispatch selectors require
+        // name: for named workspaces, including fresh compositor sessions.
+        if (!workspace.isEmpty() && !workspace.startsWith("name:") && !QRegularExpression("^[0-9]+$").match(workspace).hasMatch()) workspace.prepend("name:");
+        QJsonObject params{{"name",name},{"human-lock-policy",spec["humanLockPolicy"].toString("pause")}, {"definition",spec}};
+        if (!workspace.isEmpty()) params["workspace"] = workspace;
+        if (!spec["geometry"].toString().isEmpty()) params["virtual-output"] = spec["geometry"];
+        else params["output"] = spec["output"];
+        perform("create",params,nullptr,nullptr);
+    }
+    auto &desktop = m_desktops.at(name);
+    desktop.number = number; desktop.stableId = spec["stableId"].toString(uuid());
+    desktop.agentAllowed = spec["agentAllowed"].toBool(true);
+    desktop.handoffs = recoveredHandoffs(spec["handoffs"].toArray());
+    m_nextDesktopNumber = std::max(m_nextDesktopNumber,number+1);
+    initializeSlots(name,spec["workspaceSlots"].toObject()); pause(name); configureDesktop(name); startShell(name);
+}
 void Broker::save() {
+    if (m_restoring) return;
     QJsonObject saved;
     for (const auto &[name, desktop] : m_desktops) {
-        QJsonObject workspaceMap;
-        for (auto it = desktop.workspaceSlots.begin(); it != desktop.workspaceSlots.end(); ++it)
-            workspaceMap[QString::number(it.key())] = it.value();
-        saved[name] = QJsonObject{{"seatId", desktop.id}, {"privateOutput", desktop.privateOutput},
-                                  {"agentAllowed", desktop.agentAllowed}, {"number", desktop.number}, {"workspaceSlots", workspaceMap}, {"handoffs", desktop.handoffs}};
+        auto spec = definition(name); m_definitions[name] = spec;
+        spec["seatId"] = desktop.id; spec["privateOutput"] = desktop.privateOutput; saved[name] = spec;
     }
-    QSaveFile file(m_directory + "/desktops.json");
-    if (!file.open(QIODevice::WriteOnly))
-        fail("Cannot save desktop lifecycle record");
-    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    file.write(QJsonDocument(saved).toJson());
-    if (!file.commit())
-        fail("Cannot commit desktop lifecycle record");
+    auto write = [](const QString &path, const QJsonObject &document) {
+        QSaveFile file(path); if (!file.open(QIODevice::WriteOnly)) fail("Cannot save desktop lifecycle record");
+        file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);file.write(QJsonDocument(document).toJson());
+        if (!file.commit()) fail("Cannot commit desktop lifecycle record");
+    };
+    write(m_directory + "/desktops.json",saved);
+    if (!m_restoring) write(m_statePath,{{"schema",1},{"desktops",m_definitions}});
+}
+bool Broker::occupied(const QString &name) const {
+    if (m_humanOwner && m_humanBinding.name == name) return true;
+    for (const auto &lease : m_acquisitions) if (lease["name"] == name) return true;
+    for (const auto &binding : m_bindings) if (binding.name == name && !binding.controller.isEmpty()) return true;
+    return false;
+}
+void Broker::closeDesktopApps(const QString &name) {
+    const auto &desktop = managed(name);
+    if (desktop.primary || desktop.privateOutput.isEmpty()) fail("Only a private secondary desktop can be cleared");
+    const auto clients = json(compositor("clients",true)).array();
+    for (const auto &value : clients) {
+        const auto client=value.toObject();const auto ws="name:"+client["workspace"].toObject()["name"].toString();
+        if (!client["mapped"].toBool() || !desktop.workspaceSlots.values().contains(ws)) continue;
+        for (const auto &[other,unused] : m_desktops) if (other != name && state(other)["workspace"] == ws)
+            fail("A retained workspace is being viewed by another desktop; move it away before clearing");
+    }
+    // A managed browser may have moved to a shared workspace. Do not close
+    // its runtime unless every mapped window belongs to this private desktop.
+    if (desktop.browser) for (const auto &value : clients) {
+        const auto client=value.toObject(); const auto ws="name:"+client["workspace"].toObject()["name"].toString();
+        if (client["mapped"].toBool() && client["pid"].toVariant().toLongLong()==desktop.browser->pid() && !desktop.workspaceSlots.values().contains(ws))
+            fail("Managed browser has windows outside this private desktop; move them back before clearing");
+    }
+    BrowserSession::close(m_directory + "/browser-" + name + ".log");
+    for (const auto &value : clients) {
+        const auto client=value.toObject(); const auto ws="name:"+client["workspace"].toObject()["name"].toString();
+        if (!client["mapped"].toBool() || !desktop.workspaceSlots.values().contains(ws)) continue;
+        const auto address=client["address"].toString();
+        if (!QRegularExpression("^0x[0-9a-fA-F]+$").match(address).hasMatch()) fail("Invalid retained window address");
+        const auto reply=compositor("dispatch hl.dsp.window.close('address:"+address+"')");
+        if (reply != "ok") fail(QString::fromUtf8(reply));
+    }
 }
 void Broker::pause(const QString &name) {
     if (m_humanOwner && m_humanBinding.name == name) {
@@ -359,11 +570,13 @@ void Broker::pause(const QString &name) {
         return;
     }
     auto &desktop = managed(name);
+    if (desktop.browser) desktop.browser->revoke();
+    // Local input must be withdrawn even when compositor IPC is unavailable.
+    desktop.driver.reset();
     const auto actual = state(name);
     const auto reply =
         compositor("seat control " + name + " " + desktop.id + " " + actual["generation"].toString() + " pause", true);
     json(reply);
-    desktop.driver.reset();
 }
 
 void Broker::endTakeover(const QString &reason) {
@@ -377,11 +590,16 @@ void Broker::endTakeover(const QString &reason) {
     m_humanRequestId.clear();
     if (!requestId.isEmpty() && m_desktops.contains(name)) {
         const auto last = m_desktops.at(name).handoffs.last().toObject();
-        if (last["id"] == requestId && last["status"] == "in_progress")
-            transitionHandoff(name, requestId, "requested", reason);
+        if (last["id"] == requestId && last["status"] == "in_progress") {
+            try { transitionHandoff(name, requestId, "requested", reason); }
+            catch (const std::exception &error) { qWarning() << "Cannot persist cooperation interruption:" << error.what(); }
+        }
     }
     try {
-        if (m_presentations.contains(owner)) compositor("seat present-control " + m_presentations[owner] + " no");
+        if (m_presentations.contains(owner)) {
+            compositor("seat present-control " + m_presentations[owner] + " no");
+            m_presentationStates[owner]["humanControl"] = false;
+        }
         pause(name);
     } catch (...) {
         if (m_desktops.contains(name))
@@ -438,7 +656,7 @@ void Broker::listen() {
                 socket->deleteLater();
                 continue;
             }
-            auto *input = new QByteArray;
+            auto input = std::make_shared<QByteArray>();
             connect(socket, &QLocalSocket::readyRead, this, [this, socket, input] {
                 *input += socket->readAll();
                 if (input->size() > 1024 * 1024) {
@@ -458,7 +676,15 @@ void Broker::listen() {
                             handleNative(request, socket);
                             continue;
                         }
-                        reply = handle(request, socket);
+                        if(request["method"] == "desktop.task" && request["params"].toObject()["action"] == "wait") {waitTask(request,socket);continue;}
+                        try { reply = handle(request, socket); }
+                        catch (const BrowserPending &pending) {
+                            deferBrowser(request, socket, pending.name, pending.firstLaunch, pending.warnings, pending.plan);
+                            continue;
+                        } catch (const LaunchPending &pending) {
+                            deferLaunch(request, socket, pending.name);
+                            continue;
+                        }
                     } catch (const std::exception &error) {
                         reply = {{"ok", false}, {"id", requestId}, {"error", QString::fromUtf8(error.what())}};
                     }
@@ -468,58 +694,78 @@ void Broker::listen() {
             connect(socket, &QLocalSocket::disconnected, this, [this, socket, input] {
                 if (m_humanOwner == socket)
                     endTakeover("Viewer disconnected");
-                if (m_presentations.contains(socket)) compositor("seat unpresent " + m_presentations.take(socket));
+                if (m_presentations.contains(socket)) {
+                    const auto presentation = m_presentations.take(socket);
+                    try { compositor("seat unpresent " + presentation); }
+                    catch (const std::exception &error) { qWarning() << "Viewer cleanup could not reach compositor:" << error.what(); }
+                }
                 if (m_buffers.contains(socket))
                     QFile::remove(m_buffers.take(socket));
+                m_presentationStates.remove(socket);
                 m_localOverlays.remove(socket);
-                releaseAcquisition(socket);
-                delete input;
+                m_taskWaiters.remove(socket);
+                try { releaseAcquisition(socket); }
+                catch (const std::exception &error) { qWarning() << "Task cleanup failed after credential retirement:" << error.what(); }
                 socket->deleteLater();
             });
         }
     });
 }
 
-void Broker::revokeBindings(const QString &name) {
-    for (auto it = m_bindings.begin(); it != m_bindings.end();) {
-        if (it->name != name) { ++it; continue; }
-        const auto prefix = it.key() + ":";
-        for (auto done = m_completed.begin(); done != m_completed.end();) {
-            if (!done.key().startsWith(prefix)) { ++done; continue; }
-            m_requestHashes.remove(done.key());
-            done = m_completed.erase(done);
+void Broker::retireBinding(const QString &token) {
+    for (auto it = m_launchJobs.begin(); it != m_launchJobs.end(); ++it)
+        if (it.key().startsWith(token + ":") && it.value()) {
+            it.value()->setProperty("corniceCancelReason", "Launch cancelled: task binding revoked");
+            it.value()->kill();
         }
-        // Retire a native helper immediately, before its next event-loop turn.
-        // The eventual completion will discard results and will not restore history.
-        if (auto process = m_nativeJobs.value(it.key())) {
-            process->setProperty("corniceCancelReason", "Native task binding revoked or changed");
-            process->kill();
-        }
-        m_accessibility.invalidate(it->snapshotId);
-        it = m_bindings.erase(it);
+    if (m_bindings.contains(token)) {
+        const auto name = m_bindings[token].name;
+        if (m_desktops.contains(name) && m_desktops.at(name).browser) m_desktops.at(name).browser->revoke();
     }
+    const auto prefix=token+":";
+    for (auto done=m_completed.begin();done!=m_completed.end();) {
+        if (!done.key().startsWith(prefix)) {++done;continue;}
+        m_requestHashes.remove(done.key());done=m_completed.erase(done);
+    }
+    if (auto process=m_nativeJobs.value(token)) {process->setProperty("corniceCancelReason","Native task binding revoked or changed");process->kill();}
+    if (m_bindings.contains(token)) m_accessibility.invalidate(m_bindings[token].snapshotId);
+    m_bindings.remove(token);
 }
-
+void Broker::revokeBindings(const QString &name) {
+    if (m_desktops.contains(name) && m_desktops.at(name).browser) m_desktops.at(name).browser->revoke();
+    QStringList tokens;for (auto it=m_bindings.begin();it!=m_bindings.end();++it)if(it->name==name)tokens.append(it.key());
+    for(const auto &token:tokens)retireBinding(token);
+}
 void Broker::releaseAcquisition(QLocalSocket *owner) {
     if (!m_acquisitions.contains(owner)) return;
     const auto lease = m_acquisitions.take(owner);
     const auto token = lease["token"].toString();
     const auto name = lease["name"].toString();
+    const bool hadBinding = m_bindings.contains(token);
+    retireBinding(token);
+    // Credential/input withdrawal precedes optional cooperation persistence.
+    // A full state directory must not leave the disconnected task controlling
+    // the desktop or throw out of the watchdog's Qt callback.
+    if (hadBinding && m_desktops.contains(name)) {
+        try {
+            const auto actual = state(name);
+            if (actual["seatId"] == lease["seatId"] && actual["generation"] == lease["generation"] &&
+                actual["controlMode"].toString() == "agent") pause(name);
+        } catch (...) { m_desktops.at(name).driver.reset(); }
+    }
     if (m_desktops.contains(name) && !m_desktops.at(name).handoffs.isEmpty()) {
-        const auto record = m_desktops.at(name).handoffs.last().toObject();
-        if (record["controller"] == lease["controller"] && (record["status"] == "requested" || record["status"] == "in_progress")) {
-            transitionHandoff(name, record["id"].toString(), "cancelled", "Harness disconnected");
-            if (m_humanRequestId == record["id"].toString()) endTakeover("Request owner disconnected");
+        auto &records = m_desktops.at(name).handoffs;
+        auto record = records.last().toObject();
+        if (record["controller"] == lease["controller"] && !record["restored"].toBool()) {
+            record["resumeUnavailable"] = true;
+            record["interruptionReason"] = "Task reservation ended; this cooperation record is history";
+            records[records.size()-1] = record;
+            if (record["status"] == "requested" || record["status"] == "in_progress") {
+                if (m_humanRequestId == record["id"].toString()) endTakeover("Request owner disconnected");
+                transitionHandoff(name, record["id"].toString(), "cancelled", "Task reservation ended");
+            } else { save(); publishTaskState(name); }
         }
     }
-    if (!m_bindings.contains(token)) return;
-    m_accessibility.invalidate(m_bindings[token].snapshotId);
-    m_bindings.remove(token);
-    try {
-        const auto actual = state(lease["name"].toString());
-        if (actual["seatId"] == lease["seatId"] && actual["generation"] == lease["generation"] &&
-            actual["controlMode"].toString() == "agent") pause(lease["name"].toString());
-    } catch (...) {}
 }
 
 
@@ -536,7 +782,7 @@ void Broker::transitionHandoff(const QString &name, const QString &id, const QSt
         while (events.size() > 20) events.removeFirst();
         record["events"] = events;
         records[i] = record;
-        save();
+        save();publishTaskState(name);
         return;
     }
     fail("Cooperation request no longer exists");
@@ -614,8 +860,8 @@ QJsonObject Broker::handoff(const QJsonObject &request) {
                 // Never release unrelated manual control on the same desktop.
                 if (m_humanOwner && m_humanBinding.name == name && m_humanRequestId != record["id"].toString())
                     fail("This request does not own the current human takeover");
-                transitionHandoff(name, record["id"].toString(), outcome, note);
                 if (m_humanRequestId == record["id"].toString()) endTakeover("Agent resolved cooperation request");
+                transitionHandoff(name, record["id"].toString(), outcome, note);
                 sealHandoff(name, record["id"].toString());
             }
         } else if (action == "resume") {
@@ -630,17 +876,76 @@ QJsonObject Broker::handoff(const QJsonObject &request) {
                 if (actual["generation"] != record["resumeGeneration"] || actual["lockEpoch"] != record["resumeLockEpoch"] ||
                     record["resumeDecision"].toVariant().toULongLong() != desktop.inputDecision)
                     fail("Subsequent interruption requires explicit operator restoration");
-                resume(name); revokeBindings(name);
-                auto binding = perform("bind", {{"name", name}}, nullptr, lease.key());
-                auto &input = m_bindings[binding["token"].toString()];
-                input.controller = lease.value()["controller"].toString(); input.harness = lease.value()["harness"].toString(); input.heartbeat.start();
-                for (auto it = binding.begin(); it != binding.end(); ++it) lease.value()[it.key()] = it.value();
+                resume(name);
+                renewTaskBinding(lease.key());
                 record["restored"] = true; desktop.handoffs[desktop.handoffs.size()-1] = record; save();
             }
             return {{"state", state(name)}, {"binding", lease.value()}};
         } else fail("Expected cooperation request, status, resolve or resume");
     }
     return {{"state", state(name)}};
+}
+
+QMap<QLocalSocket *, QJsonObject>::iterator Broker::taskLease(const QJsonObject &request) {
+    const auto token=request["token"].toString();
+    for(auto it=m_acquisitions.begin();it!=m_acquisitions.end();++it)
+        if(!token.isEmpty() && it.value()["taskToken"]==token && it.value()["controller"]==request["controller"]){
+            if(managed(it.value()["name"].toString()).id!=it.value()["seatId"].toString())fail("Desktop lifecycle changed");
+            it.value()["heartbeatAt"]=QDateTime::currentMSecsSinceEpoch();return it;
+        }
+    fail("Unknown or foreign task reservation");return m_acquisitions.end();
+}
+QJsonObject Broker::renewTaskBinding(QLocalSocket *owner) {
+    auto &lease=m_acquisitions[owner];const auto name=lease["name"].toString();
+    revokeBindings(name);auto binding=perform("bind",{{"name",name}},nullptr,owner);
+    auto &input=m_bindings[binding["token"].toString()];input.controller=lease["controller"].toString();input.harness=lease["harness"].toString();input.heartbeat.start();
+    for(auto it=binding.begin();it!=binding.end();++it)lease[it.key()]=it.value();
+    lease["restoredDecision"]=static_cast<qint64>(managed(name).inputDecision);
+    lease["restoredLockEpoch"]=state(name)["lockEpoch"];lease["heartbeatAt"]=QDateTime::currentMSecsSinceEpoch();return lease;
+}
+QJsonObject Broker::task(const QJsonObject &request) {
+    auto lease=taskLease(request);const auto name=lease.value()["name"].toString();const auto actual=state(name);
+    const auto action=request["params"].toObject()["action"].toString();
+    if(action=="restore") {
+        if(!m_bindings.contains(lease.value()["token"].toString()) || actual["agentPaused"].toBool() || !actual["available"].toBool() ||
+            !actual["agentAllowed"].toBool() || actual["generation"]!=lease.value()["generation"] || actual["seatId"]!=lease.value()["seatId"] ||
+            lease.value()["restoredDecision"].toVariant().toULongLong()!=managed(name).inputDecision || actual["lockEpoch"]!=lease.value()["restoredLockEpoch"])
+            fail("Explicit operator restoration is required; no input was resumed");
+        return {{"control",actual},{"binding",lease.value()},{"restored",true}};
+    }
+    fail("Expected task restore or event wait");return {};
+}
+void Broker::waitTask(const QJsonObject &request, QLocalSocket *owner) {
+    auto lease=taskLease(request);const auto name=lease.value()["name"].toString();
+    const auto seconds=request["params"].toObject()["seconds"].toInt();if(seconds<1 || seconds>30)fail("Expected wait seconds 1-30");
+    if(m_taskWaiters.contains(owner))fail("One event wait per connection");
+    // Synchronize the revision before subscribing. An already-paused state
+    // must not be delivered later as if it were a new restoration event.
+    publishTaskState(name);
+    const auto actual=state(name);const auto handoff=actual["handoff"].toObject();
+    const bool resolved=(handoff["status"]=="completed" || handoff["status"]=="cancelled") && !handoff["restored"].toBool();
+    if(!actual["agentPaused"].toBool() || resolved) {
+        owner->write(QJsonDocument(QJsonObject{{"ok",true},{"id",request["id"]},{"result",QJsonObject{{"control",actual},{"interrupted",actual["activity"] != "running"},{"cooperationResolved",resolved}}}}).toJson(QJsonDocument::Compact)+'\n');return;
+    }
+    m_taskWaiters[owner]={request["id"].toString(),name,request["token"].toString(),managed(name).revision,QDateTime::currentMSecsSinceEpoch()+seconds*1000};
+}
+void Broker::publishTaskState(const QString &name) {
+    if(!m_desktops.contains(name))return;
+    auto actual=state(name);
+    QJsonObject event;for(const auto &key:{"seatId","generation","workspace","agentAllowed","agentPaused","available","humanLocked","lockEpoch","controlMode","handoff"})event[key]=actual[key];
+    const auto serialized=QJsonDocument(event).toJson(QJsonDocument::Compact);
+    if(m_taskStates.value(name)==serialized)return;
+    m_taskStates[name]=serialized;++m_desktops.at(name).revision;actual["revision"]=static_cast<qint64>(m_desktops.at(name).revision);
+    for(auto it=m_acquisitions.begin();it!=m_acquisitions.end();++it)if(it.value()["name"]==name)
+        it.key()->write(QJsonDocument(QJsonObject{{"event","desktop-state"},{"revision",actual["revision"]},{"state",actual}}).toJson(QJsonDocument::Compact)+'\n');
+    for(auto it=m_taskWaiters.begin();it!=m_taskWaiters.end();) {
+        if(it->name!=name || it->revision==m_desktops.at(name).revision){++it;continue;}
+        auto *owner=it.key();const auto wait=it.value();it=m_taskWaiters.erase(it);
+        bool retained=false;for(const auto &lease:m_acquisitions)if(lease["taskToken"]==wait.taskToken)retained=true;
+        if(!retained){owner->write(QJsonDocument(QJsonObject{{"ok",false},{"id",wait.id},{"error","Task reservation released"}}).toJson(QJsonDocument::Compact)+'\n');continue;}
+        const auto record=actual["handoff"].toObject();const bool resolved=(record["status"]=="completed" || record["status"]=="cancelled")&&!record["restored"].toBool();
+        owner->write(QJsonDocument(QJsonObject{{"ok",true},{"id",wait.id},{"result",QJsonObject{{"control",actual},{"interrupted",actual["activity"] != "running"},{"cooperationResolved",resolved}}}}).toJson(QJsonDocument::Compact)+'\n');
+    }
 }
 
 QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owner) {
@@ -681,7 +986,6 @@ QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owne
         }
     }
     if (name.isEmpty()) {
-        if (m_desktops.size() >= 32) fail("Desktop allocation limit reached (32); remove an unused desktop first");
         name = "desktop-" + uuid().left(12);
         const auto size = state("main")["pixelSize"].toArray();
         const auto geometry = QString("%1x%2").arg(size.at(0).toInt()).arg(size.at(1).toInt());
@@ -700,6 +1004,8 @@ QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owne
         lease["controller"] = controller;
         lease["taskToken"] = uuid() + uuid();
         lease["heartbeatAt"] = QDateTime::currentMSecsSinceEpoch();
+        lease["restoredDecision"] = static_cast<qint64>(managed(name).inputDecision);
+        lease["restoredLockEpoch"] = state(name)["lockEpoch"];
         m_acquisitions[owner] = lease;
         return lease;
     } catch (...) {
@@ -708,7 +1014,7 @@ QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owne
     }
 }
 
-QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
+QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner, const ApplicationLaunchPlan *launchPlan) {
     const auto id = request["id"].toString();
     if (id.isEmpty() || id.size() > 128)
         fail("Request ID required");
@@ -736,6 +1042,8 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
         return {{"ok", true}, {"id", id}, {"result", acquireDesktop(request["params"].toObject(), owner)}};
     }
 
+    if (method == "desktop.task")
+        return {{"ok",true},{"id",id},{"result",task(request)}};
     if (method == "desktop.handoff")
         return {{"ok", true}, {"id", id}, {"result", handoff(request)}};
     const auto token = request["token"].toString();
@@ -745,6 +1053,14 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
     const auto key = token + ":" + id;
     const auto fingerprint =
         QCryptographicHash::hash(QJsonDocument(request).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
+    if (m_pendingLaunchHashes.contains(key)) {
+        if (m_pendingLaunchHashes[key] != fingerprint) fail("Request ID reused for different action");
+        fail("Application launch is being prepared; wait for its result before retrying");
+    }
+    if (m_pendingBrowserHashes.contains(key)) {
+        if (m_pendingBrowserHashes[key] != fingerprint) fail("Request ID reused for different action");
+        fail("Browser request is still in progress; outcome may be uncertain, do not duplicate it");
+    }
     Binding *binding = nullptr;
     if (method.startsWith("desktop.")) {
         if (token.isEmpty())
@@ -782,11 +1098,15 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
             fail("Request ID reused for different action");
         return m_completed[key];
     }
-    if (writing && m_completed.size() >= 4096)
+    if (writing && std::count_if(m_completed.keyBegin(),m_completed.keyEnd(),[&](const QString &done){return done.startsWith(token+":");}) >= 4096)
         fail("Request history full; obtain a new binding after resynchronization");
     QJsonObject reply;
     try {
-        reply = {{"ok", true}, {"id", id}, {"result", perform(method, request["params"].toObject(), binding, owner)}};
+        reply = {{"ok", true}, {"id", id}, {"result", perform(method, request["params"].toObject(), binding, owner, launchPlan)}};
+    } catch (const LaunchPending &) {
+        throw;
+    } catch (const BrowserPending &) {
+        throw;
     } catch (const std::exception &error) {
         if (method == "desktop.input" && binding &&
             QString::fromUtf8(error.what()) != "Screenshot became stale; capture again") {
@@ -804,6 +1124,136 @@ QJsonObject Broker::handle(const QJsonObject &request, QLocalSocket *owner) {
         m_requestHashes[key] = fingerprint;
     }
     return reply;
+}
+
+void Broker::deferLaunch(const QJsonObject &request, QLocalSocket *owner, const QString &name) {
+    const auto expected = state(name);
+    const auto token = request["token"].toString(), id = request["id"].toString(), key = token + ":" + id;
+    const auto fingerprint = QCryptographicHash::hash(QJsonDocument(request).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
+    auto *process = new QProcess(this);
+    auto output = std::make_shared<QByteArray>(), errors = std::make_shared<QByteArray>();
+    auto done = std::make_shared<bool>(false);
+    QPointer<QLocalSocket> weakOwner(owner);
+    m_pendingLaunchHashes[key] = fingerprint; m_launchJobs[key] = process;
+    const auto complete = [this, process, request, expected, name, token, id, key, fingerprint, output, errors, done, weakOwner](QString error) {
+        if (*done) return;
+        *done = true; m_pendingLaunchHashes.remove(key); m_launchJobs.remove(key);
+        QJsonObject reply;
+        try {
+            if (!weakOwner || weakOwner->state() != QLocalSocket::ConnectedState) fail("Launch cancelled before submission: request owner disconnected");
+            if (!error.isEmpty()) fail(error);
+            const auto actual = state(name);
+            for (const QString field : {"seatId", "generation", "workspace", "viewEpoch", "lockEpoch"})
+                if (actual[field] != expected[field]) fail("Desktop changed during preparation; no application was launched");
+            const auto plan = ApplicationLaunchPlan::fromJson(json(*output).object());
+            // Re-enter ordinary controller, permission and human-generation
+            // checks immediately before submitting the real application.
+            reply = handle(request, weakOwner, &plan);
+        } catch (const BrowserPending &pending) {
+            try {
+                deferBrowser(request, weakOwner, pending.name, pending.firstLaunch, pending.warnings, pending.plan);
+                process->deleteLater(); return;
+            } catch (const std::exception &failure) {
+                reply = {{"ok",false},{"id",id},{"error",QString::fromUtf8(failure.what()) + "; browser launch may already have been submitted; inspect state before retrying"}};
+            }
+        } catch (const std::exception &failure) {
+            reply = {{"ok",false},{"id",id},{"error",QString::fromUtf8(failure.what())}};
+        }
+        if (!token.isEmpty() && m_bindings.contains(token)) { m_completed[key] = reply; m_requestHashes[key] = fingerprint; }
+        if (weakOwner && weakOwner->state() == QLocalSocket::ConnectedState)
+            weakOwner->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
+        process->deleteLater();
+    };
+    connect(process, &QProcess::readyReadStandardOutput, this, [process, output] {
+        *output += process->readAllStandardOutput();
+        if (output->size() > 1024 * 1024) { process->setProperty("corniceCancelReason", "Launch preparation response too large"); process->kill(); }
+    });
+    connect(process, &QProcess::readyReadStandardError, this, [process, errors] {
+        *errors += process->readAllStandardError(); if (errors->size() > 8192) *errors = errors->right(8192);
+    });
+    connect(process, &QProcess::finished, this, [process, output, errors, complete](int code, QProcess::ExitStatus status) {
+        *output += process->readAllStandardOutput(); *errors += process->readAllStandardError();
+        auto error = process->property("corniceCancelReason").toString();
+        if (error.isEmpty() && (code || status != QProcess::NormalExit)) error = QString::fromUtf8(errors->right(8192)).trimmed();
+        if (error.isEmpty() && (code || status != QProcess::NormalExit)) error = "Application preparation failed; no application was launched";
+        complete(error);
+    });
+    connect(process, &QProcess::errorOccurred, this, [process, complete](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) complete("Cannot prepare application: " + process->errorString());
+    });
+    auto *deadline = new QTimer(process); deadline->setSingleShot(true); deadline->setInterval(4000);
+    connect(deadline, &QTimer::timeout, process, [process] { process->setProperty("corniceCancelReason", "Application preparation timed out; no application was launched"); process->kill(); });
+    connect(process, &QProcess::finished, deadline, &QTimer::stop);
+    connect(owner, &QLocalSocket::disconnected, process, [process] { process->setProperty("corniceCancelReason", "Launch cancelled before submission"); process->kill(); });
+    process->setChildProcessModifier([] { prctl(PR_SET_PDEATHSIG, SIGKILL); });
+    process->setProgram(QCoreApplication::applicationFilePath());
+    process->setArguments({"plan-launch",name,managed(name).primary ? "true" : "false",QString::fromUtf8(QJsonDocument(request["params"].toObject()["argv"].toArray()).toJson(QJsonDocument::Compact))});
+    deadline->start(); process->start();
+}
+
+void Broker::deferBrowser(const QJsonObject &request, QLocalSocket *owner, const QString &name, bool firstLaunch, const QStringList &warnings, std::shared_ptr<ApplicationLaunchPlan> plan) {
+    auto &desktop = managed(name);
+    if (!desktop.browser) fail("Browser startup disappeared");
+    const auto expected = state(name);
+    const auto token = request["token"].toString(), id = request["id"].toString();
+    const auto key = token + ":" + id;
+    const auto fingerprint = QCryptographicHash::hash(QJsonDocument(request).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
+    m_pendingBrowserHashes[key] = fingerprint;
+    const bool writing = request["method"] == "desktop.browser" || request["method"] == "desktop.launch";
+    QPointer<QLocalSocket> weakOwner(owner);
+    QPointer<BrowserSession> browser(desktop.browser.get());
+    auto completed = std::make_shared<bool>(false);
+    auto complete = [this, request, name, firstLaunch, warnings, token, id, key, fingerprint, expected, writing, weakOwner, browser, completed, plan](QString error) {
+        if (*completed) return;
+        *completed = true;
+        m_pendingBrowserHashes.remove(key);
+        QJsonObject reply;
+        try {
+            if (!weakOwner || weakOwner->state() != QLocalSocket::ConnectedState)
+                fail(firstLaunch ? "Request owner disconnected after browser launch submission; outcome may be uncertain" : "Request owner disconnected; no additional browser action was sent");
+            if (!error.isEmpty()) fail(error);
+            if (!browser || !m_desktops.contains(name) || m_desktops.at(name).browser.get() != browser || !browser->running()) fail("Browser startup disappeared or changed");
+            QJsonObject actual;
+            if (!token.isEmpty()) {
+                auto validation = request; validation["method"] = "desktop.state";
+                const auto validated = handle(validation, weakOwner);
+                if (!validated["ok"].toBool()) fail(validated["error"].toString());
+                actual = validated["result"].toObject();
+                const bool blocked = actual["humanLocked"].toBool() && !(actual["lockScope"] == "human" && actual["humanLockPolicy"] == "continue");
+                if (!actual["agentAllowed"].toBool() || actual["agentPaused"].toBool() || !actual["available"].toBool() || blocked) fail("Browser control interrupted during startup");
+            } else {
+                actual = state(name);
+                const auto params = request["params"].toObject();
+                if (params.contains("humanSeatId")) {
+                    if (!m_humanOwner || m_humanBinding.name != name || params["humanSeatId"] != actual["seatId"] || params["humanGeneration"] != actual["generation"] || actual["controlMode"] != "human") fail("Human takeover ended during browser startup");
+                } else if (actual["humanLocked"].toBool() || actual["paused"].toBool() || !actual["available"].toBool()) fail("Desktop writes interrupted during browser startup");
+            }
+            // Mapping this launch's own browser may change the focus/view epoch.
+            // Its workspace, lock and input grant must still be the same.
+            for (const QString field : {"seatId", "generation", "workspace", "lockEpoch"})
+                if (actual[field] != expected[field]) fail("Desktop grant or view changed during browser startup");
+            if (firstLaunch) {
+                reply = {{"ok",true},{"id",id},{"result",QJsonObject{{"pid",browser->pid()},{"seatId",actual["seatId"]},{"warnings",QJsonArray::fromStringList(warnings)}}}};
+            } else {
+                // Startup did not submit a later launch's URL. Perform it once
+                // after readiness, with the ordinary authorization/dedup path.
+                reply = handle(request, weakOwner, plan.get());
+            }
+        } catch (const std::exception &failure) {
+            reply = {{"ok",false},{"id",id},{"error",QString::fromUtf8(failure.what()) + (firstLaunch ? "; browser launch was submitted; outcome may be uncertain, inspect state before retrying" : QString{})}};
+        } catch (const BrowserPending &) {
+            reply = {{"ok",false},{"id",id},{"error","Browser changed again during startup; inspect state before retrying"}};
+        }
+        if (writing && m_bindings.contains(token)) {
+            m_completed[key] = reply; m_requestHashes[key] = fingerprint;
+        }
+        if (weakOwner && weakOwner->state() == QLocalSocket::ConnectedState)
+            weakOwner->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
+    };
+    // Removing/resetting the desktop cancels the pending response; normal
+    // Broker destruction disconnects this signal before its maps are destroyed.
+    connect(browser, &QObject::destroyed, this, [complete] { complete("Browser startup cancelled by desktop lifecycle change"); });
+    browser->whenReady(complete);
 }
 
 // Accessibility calls may wait on an application's event loop. Never run them
@@ -841,7 +1291,7 @@ void Broker::handleNative(const QJsonObject &request, QLocalSocket *owner) {
         if (m_pendingNativeHashes[key] != fingerprint) fail("Request ID reused for different action");
         fail("Native action is still in progress; outcome is uncertain, do not duplicate the action");
     }
-    if (writing && m_completed.size() >= 4096) fail("Request history full; obtain a new binding after resynchronization");
+    if (writing && std::count_if(m_completed.keyBegin(),m_completed.keyEnd(),[&](const QString &done){return done.startsWith(token+":");}) >= 4096) fail("Request history full; obtain a new binding after resynchronization");
     if (m_nativeJobs.contains(token)) fail("Another native request is in progress for this task; wait for it to finish");
     if (m_nativeJobs.size() >= 8) fail("Native accessibility request limit reached; retry after an existing request finishes");
     auto targetId = params["windowId"].toString(actual["windowId"].toString());
@@ -1009,9 +1459,9 @@ void Broker::validateFrame(const Binding &binding, const QString &frame, const Q
             fail("Screenshot became stale; capture again");
 }
 
-QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Binding *binding, QLocalSocket *owner) {
+QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Binding *binding, QLocalSocket *owner, const ApplicationLaunchPlan *launchPlan) {
     if (method == "doctor")
-        return {{"instance", m_instance}, {"capabilities", json(compositor("seat capabilities", true)).object()}};
+        return {{"instance", m_instance}, {"capabilities", json(compositor("seat capabilities", true)).object()}, {"clipboard",clipboardStatus()}, {"taskHistorySize",m_completed.size()}, {"bindingCount",m_bindings.size()}, {"persistentDefinitions",m_definitions.size()}};
     if (method == "list") {
         QJsonArray desktops;
         desktops.append(state("main"));
@@ -1023,13 +1473,16 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                 desktops.append(QJsonObject{{"name", name}, {"error", QString::fromUtf8(error.what())}});
             }
         }
-        return {{"desktops", desktops}, {"workspaces", json(compositor("workspaces", true)).array()}};
+        for (auto it=m_restoreErrors.begin();it!=m_restoreErrors.end();++it) if(!m_desktops.contains(it.key()))
+            desktops.append(QJsonObject{{"name",it.key()},{"stableId",m_definitions[it.key()].toObject()["stableId"]},{"number",m_definitions[it.key()].toObject()["number"]},{"available",false},{"error",it.value()}});
+        return {{"desktops", desktops}, {"workspaces", json(compositor("workspaces", true)).array()}, {"resources",resourceLimits()}};
     }
     const auto name = binding ? binding->name : params["name"].toString();
     atom(name);
     if (method == "create") {
         if (m_desktops.contains(name))
             fail("Desktop already managed");
+        checkResources(params["virtual-output"].toString(params["output"].toString().isEmpty() ? "1920x1080" : ""));
         const auto workspace = params["workspace"].toString("name:cornice-agent-" + name + "-ws-1");
         atom(workspace);
         auto output = params["output"].toString();
@@ -1064,8 +1517,12 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             const auto actual = state(name);
             m_desktops.emplace(name,
                                Desktop{actual["seatId"].toString(), {}, privateOutput ? output : QString{}, {}, {}});
-            m_desktops.at(name).number = m_nextDesktopNumber++;
-            initializeSlots(name);
+            auto &desktop = m_desktops.at(name);
+            const auto spec=params["definition"].toObject();
+            desktop.number=spec["number"].toInt(m_nextDesktopNumber++);desktop.stableId=spec["stableId"].toString(uuid());
+            desktop.geometry=privateOutput ? geometry : QString{};desktop.outputName=privateOutput ? QString{} : output;
+            desktop.initialWorkspace=workspace;desktop.agentAllowed=spec["agentAllowed"].toBool(true);
+            initializeSlots(name,spec["workspaceSlots"].toObject());
             const auto switched = compositor("seat workspace " + name + " " + workspace);
             if (switched != "ok")
                 fail(QString::fromUtf8(switched));
@@ -1179,8 +1636,8 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         } else {
             if (record["status"] != "in_progress" || (!desktop.primary && (m_humanRequestId != requestId || !m_humanOwner)))
                 fail("Take over the requested desktop before completing it");
-            transitionHandoff(name, requestId, "completed", "Human marked the task completed");
             if (m_humanRequestId == requestId) endTakeover("Cooperation task completed");
+            transitionHandoff(name, requestId, "completed", "Human marked the task completed");
             sealHandoff(name, requestId);
         }
         return state(name);
@@ -1200,10 +1657,11 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         const auto actual = state(name);
         const auto policy = params["policy"].toString();
         atom(policy);
-        return json(compositor("seat lock-policy " + name + " " + desktop.id + " " + actual["generation"].toString() +
-                                   " " + policy,
-                               true))
-            .object();
+        const auto result = json(compositor("seat lock-policy " + name + " " + desktop.id + " " + actual["generation"].toString() +
+                                   " " + policy, true)).object();
+        save();
+        publishTaskState(name);
+        return result;
     }
     if (method == "present") {
         configureDesktop(name);
@@ -1237,17 +1695,19 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         const auto workspace = params["workspace"].toString("current");
         atom(workspace);
         if (workspace != "current") m_compositor.ensureWorkspace(name, desktop.id, workspace);
-        return json(compositor("seat present " + name + " " + desktop.id + " " + output + " " + workspace + " " +
-                                   m_presentations[owner],
-                               true))
-            .object();
+        const auto view = json(compositor("seat present " + name + " " + desktop.id + " " + output + " " + workspace + " " +
+                                   m_presentations[owner], true)).object();
+        m_presentationStates[owner] = view;
+        return view;
     }
     if (method == "present-status") {
         if (!m_presentations.contains(owner))
             return {{"active", false}};
         if (m_humanOwner == owner)
             m_humanHeartbeat.restart();
-        return json(compositor("seat presentation " + m_presentations[owner], true)).object();
+        const auto view = json(compositor("seat presentation " + m_presentations[owner], true)).object();
+        m_presentationStates[owner] = view;
+        return view;
     }
     if (method == "takeover") {
         const auto requestId = params["requestId"].toString();
@@ -1261,6 +1721,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             return json(compositor("seat presentation " + m_presentations[owner], true)).object();
         pause(name);
         auto result = json(compositor("seat present-control " + m_presentations[owner] + " yes", true)).object();
+        m_presentationStates[owner] = result;
         const auto actual = state(name);
         m_humanBinding = Binding{name, desktop.id, actual["generation"].toString(), {}, {}};
         m_humanOwner = owner;
@@ -1278,7 +1739,9 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         if (m_humanOwner != owner)
             fail("This viewer does not own human control");
         endTakeover("Human control ended");
-        return json(compositor("seat presentation " + m_presentations[owner], true)).object();
+        const auto view = json(compositor("seat presentation " + m_presentations[owner], true)).object();
+        m_presentationStates[owner] = view;
+        return view;
     }
     if (method == "fit") {
         if (desktop.privateOutput.isEmpty())
@@ -1289,6 +1752,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         const double scale = params["scale"].toDouble();
         if (width < 320 || height < 240 || width > 8192 || height > 8192 || scale < 1 || scale > 4)
             fail("Invalid viewer geometry");
+        checkResources(QString("%1x%2").arg(width).arg(height),name);
         const auto actual = state(name);
         if (actual["output"].toString() != desktop.privateOutput)
             fail("Private desktop output changed");
@@ -1301,6 +1765,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             if (result != "ok")
                 fail(QString::fromUtf8(result));
         }
+        desktop.geometry=QString("%1x%2").arg(width).arg(height);save();
         return {{"adapted", true}};
     }
     bool humanLaunch = false;
@@ -1316,9 +1781,23 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     if (method == "resume") {
         ++desktop.inputDecision;
         resume(name);
+        for(auto it=m_acquisitions.begin();it!=m_acquisitions.end();++it)if(it.value()["name"]==name){renewTaskBinding(it.key());break;}
+        publishTaskState(name);
         return state(name);
     }
+    if (method == "reset") {
+        if(desktop.primary)fail("Primary desktop cannot be reset");
+        if(occupied(name))fail("Finish the current task and end takeover before resetting this desktop");
+        ++desktop.inputDecision;pause(name);revokeBindings(name);
+        if(params["closeApps"].toBool())closeDesktopApps(name);
+        const auto reply=compositor("seat view-workspace "+name+" "+desktop.workspaceSlots.value(1));
+        if(reply!="ok")fail(QString::fromUtf8(reply));
+        save();publishTaskState(name);
+        auto result=state(name);result["profilesPreserved"]=true;result["closeRequested"]=params["closeApps"].toBool();return result;
+    }
     if (method == "remove") {
+        if(occupied(name))fail("Finish the current task and end takeover before removing this desktop");
+        if(params["closeApps"].toBool())closeDesktopApps(name);
         if (desktop.primary) fail("The primary desktop cannot be removed");
         pause(name);
         const auto reply = compositor("seat remove " + name);
@@ -1326,11 +1805,11 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             fail(QString::fromUtf8(reply));
         const auto privateOutput = desktop.privateOutput;
         revokeBindings(name);
-        m_desktops.erase(name);
+        m_desktops.erase(name);m_definitions.remove(name);m_restoreErrors.remove(name);m_taskStates.remove(name);
         if (!privateOutput.isEmpty())
             compositor("output remove " + privateOutput);
         save();
-        return {{"removed", name}, {"sharedWindowsPreserved", true}};
+        return {{"removed", name}, {"sharedWindowsPreserved",!params["closeApps"].toBool()},{"profilesPreserved",true}};
     }
     if (method == "bind") {
         if (!desktop.agentAllowed) fail("Agent control is disabled for this desktop");
@@ -1368,7 +1847,10 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         const auto actual = state(name);
         if (!binding || actual["paused"].toBool() || !actual["available"].toBool())
             fail("Browser requires an active agent binding");
+        if ((!desktop.browser || !desktop.browser->running()) && m_pendingBrowserHashes.size() >= 8) fail("Browser startup request limit reached; wait for an existing request");
         ensureBrowser(name, params["executable"].toString());
+        if (desktop.browser->starting()) throw BrowserPending{name, false, {}};
+        if (!desktop.browser->running()) fail(desktop.browser->startupError());
         QString token;
         for (auto it = m_bindings.begin(); it != m_bindings.end(); ++it)
             if (&it.value() == binding) {
@@ -1392,11 +1874,18 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                 fail("Invalid application argument");
             args.append(arg.toString());
         }
-        const auto plan = ApplicationLaunch::prepare(args, name, desktop.primary);
+        if (!launchPlan) {
+            if (m_launchJobs.size() >= 8) fail("Application preparation limit reached; wait for an existing request");
+            throw LaunchPending{name};
+        }
+        const auto &plan = *launchPlan;
         if (plan.backend == "chromium") {
-            const bool starting = !desktop.browser || !desktop.browser->running();
-            ensureBrowser(name, args.first(), args.mid(1));
-            if (starting) return {{"pid", desktop.browser->pid()}, {"seatId", desktop.id}};
+            const bool firstLaunch = !desktop.browser || (!desktop.browser->running() && !desktop.browser->starting());
+            if ((!desktop.browser || !desktop.browser->running()) && m_pendingBrowserHashes.size() >= 8) fail("Browser startup request limit reached; wait for an existing request");
+            ensureBrowser(name, plan.program, plan.requestedArguments, &plan);
+            if (desktop.browser->starting()) throw BrowserPending{name, firstLaunch, plan.warnings, std::make_shared<ApplicationLaunchPlan>(plan)};
+            if (!desktop.browser->running()) fail(desktop.browser->startupError());
+            if (firstLaunch) return {{"pid", desktop.browser->pid()}, {"seatId", desktop.id}, {"warnings",QJsonArray::fromStringList(plan.warnings)}};
         }
         args = QStringList{plan.program} + plan.arguments;
         QProcess process;
@@ -1417,7 +1906,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         if (!environment.contains("CORNICE_PRIMARY_SHELL_SOCKET") && environment.contains("CORNICE_SHELL_SOCKET"))
             environment.insert("CORNICE_PRIMARY_SHELL_SOCKET", environment.value("CORNICE_SHELL_SOCKET"));
         const auto localBin = QDir::homePath() + "/.local/bin";
-        environment.insert("PATH", localBin + ":" + environment.value("PATH"));
+        if (!plan.environment.contains("PATH")) environment.insert("PATH", localBin + ":" + environment.value("PATH"));
         process.setStandardOutputFile(m_directory + "/" + name + "-launch.log", QIODevice::Append);
         process.setStandardErrorFile(m_directory + "/" + name + "-launch.log", QIODevice::Append);
         process.setProcessEnvironment(environment);
@@ -1426,9 +1915,20 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         qint64 pid = 0;
         if (!process.startDetached(&pid))
             fail("Application launch failed");
-        return {{"pid", pid}, {"seatId", desktop.id}};
+        return {{"pid", pid}, {"seatId", desktop.id}, {"warnings",QJsonArray::fromStringList(plan.warnings)}};
     }
-    if (method == "desktop.release") { pause(name); return state(name); }
+    if (method == "desktop.release") {
+        QString token;
+        for (auto it = m_bindings.cbegin(); it != m_bindings.cend(); ++it)
+            if (&it.value() == binding) { token = it.key(); break; }
+        pause(name);
+        QLocalSocket *reservation = nullptr;
+        for (auto it = m_acquisitions.cbegin(); it != m_acquisitions.cend(); ++it)
+            if (it.value()["token"].toString() == token) { reservation = it.key(); break; }
+        if (reservation) releaseAcquisition(reservation);
+        else retireBinding(token);
+        return state(name);
+    }
     if (method == "desktop.workspace" || method == "desktop.focus") {
         auto value = params[method == "desktop.workspace" ? "workspace" : "windowId"].toString();
         if (method == "desktop.workspace" && params.contains("slot")) {
@@ -1441,7 +1941,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
                                       (method == "desktop.workspace" ? "workspace " : "focus ") + value);
         if (reply != "ok")
             fail(QString::fromUtf8(reply));
-        return state(name);
+        save();publishTaskState(name);return state(name);
     }
     if (method == "desktop.input") {
         const auto actual = state(name);
@@ -1456,12 +1956,13 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     return {};
 }
 
-void Broker::ensureBrowser(const QString &name, const QString &program, const QStringList &arguments) {
+void Broker::ensureBrowser(const QString &name, const QString &program, const QStringList &arguments, const ApplicationLaunchPlan *prepared) {
     auto &desktop = managed(name);
-    const auto plan = ApplicationLaunch::browser(name, desktop.primary, program, arguments);
-    if (desktop.browser && !desktop.browser->running()) desktop.browser.reset();
+    const auto plan = prepared ? *prepared : ApplicationLaunch::browser(name, desktop.primary, program, arguments);
+    const auto configuration = plan.basePolicy + '\0' + plan.program.toUtf8();
+    if (desktop.browser && !desktop.browser->running() && !desktop.browser->starting()) desktop.browser.reset();
     if (desktop.browser) {
-        if (desktop.browserPolicy != plan.policy)
+        if (desktop.browserConfiguration != configuration || (prepared && desktop.browser->running() && !desktop.browser->matchesLaunchEnvironment(prepared->requestedEnvironment)))
             fail("Managed browser configuration changed; close this desktop's browser before relaunching");
         return;
     }
@@ -1472,11 +1973,16 @@ void Broker::ensureBrowser(const QString &name, const QString &program, const QS
     environment.insert("WAYLAND_DISPLAY", actual["display"].toString());
     environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
     plan.applyEnvironment(environment);
+    environment.insert("CORNICE_BROWSER_DESKTOP",name);
+    environment.insert("CORNICE_DESKTOP_NAME",desktop.primary ? QString{} : name);
+    environment.insert("CORNICE_BROWSER_POLICY",QString::fromLatin1(QCryptographicHash::hash(configuration,QCryptographicHash::Sha256).toHex()));
+    environment.insert("CORNICE_BROWSER_REQUESTED_ENV",QString::fromUtf8(QJsonDocument(plan.requestedEnvironment).toJson(QJsonDocument::Compact)));
+    for(const auto *key:{"HYPRLAND_ACTION_ID","HYPRLAND_SEAT_NAME","HYPRLAND_SEAT_ID","HYPRLAND_SEAT_GENERATION","HYPRLAND_SEAT_OUTPUT"})environment.remove(key);
     const auto localBin = QDir::homePath() + "/.local/bin";
-    environment.insert("PATH", localBin + ":" + environment.value("PATH"));
+    if (!plan.environment.contains("PATH")) environment.insert("PATH", localBin + ":" + environment.value("PATH"));
     auto args = plan.arguments;
     if (arguments.isEmpty()) args.append("about:blank");
-    desktop.browserPolicy = plan.policy;
+    desktop.browserPolicy = plan.policy; desktop.browserConfiguration = configuration;
     desktop.browser = std::make_unique<BrowserSession>(plan.program, args, environment,
         m_directory + "/browser-" + name + ".log", [this, name](const QString &token) {
             if (!m_bindings.contains(token)) return false;
@@ -1522,7 +2028,7 @@ void Broker::configureDesktop(const QString &name) {
     }
     QJsonArray overlays;
     const QStringList shellLayers{"cornice-bar", "cornice-desktop-menu", "cornice-panel",
-                                  "cornice-menu", "cornice-screenshot", "cornice-screenshot-notice", "cornice-status-tooltip", "cornice-window-tooltip", "cornice-notification-popups"};
+                                  "cornice-menu", "cornice-screenshot", "cornice-screenshot-notice", "cornice-status-tooltip", "cornice-window-tooltip", "cornice-notification-popups", "cornice-desktop-cooperation"};
     QSet<qint64> shellPids;
     const auto outputs = json(compositor("layers", true)).object();
     for (auto output = outputs.begin(); output != outputs.end(); ++output) {
@@ -1542,7 +2048,7 @@ void Broker::configureDesktop(const QString &name) {
         for (const auto &space : shellLayers)
             overlays.append(QJsonObject{{"name", space}, {"pid", pid},
                 {"keyboard", space == "cornice-panel" || space == "cornice-menu" || space == "cornice-screenshot"},
-                {"localInView", space == "cornice-bar" || space == "cornice-desktop-menu" || space == "cornice-screenshot" || space == "cornice-screenshot-notice"}});
+                {"localInView", space == "cornice-bar" || space == "cornice-desktop-menu" || space == "cornice-screenshot" || space == "cornice-screenshot-notice" || space == "cornice-desktop-cooperation"}});
     for (const auto &routes : m_localOverlays)
         for (const auto &route : routes) overlays.append(route);
     const QJsonObject configuration{{"owner", desktop.configurationOwner}, {"seatName", name}, {"seatId", desktop.id},

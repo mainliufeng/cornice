@@ -19,18 +19,44 @@ Item {
   function open(json) {
     if (!service || !service.available) return
     const next = json || "{}"
-    if (next !== payloadJson || !isOpen) selectedWorkspace = "current"
+    if (next !== payloadJson || !isOpen) {clearTakeoverIntent();selectedWorkspace = "current"}
     payloadJson = next; isOpen = true
     if (service) service.selectedDesktop = desktopName
     opened()
   }
   function close() {
+    clearTakeoverIntent()
     if (!isOpen) return
     isOpen = false
     if (service) service.selectedDesktop = "main"
     dismissed()
   }
-  function takeControl(enabled, requestId) { if (presentation.item) {if(enabled && requestId) presentation.item.takeHandoff(requestId);else presentation.item.takeControl(enabled)} }
+  property bool requestedTakeover: false
+  property string requestedRequestId: ""
+  property string requestedDesktop: ""
+  function follow() { if (selectedWorkspace === "current") { if (presentation.item) presentation.item.refreshView() } else selectedWorkspace = "current"; return "ok" }
+  function clearTakeoverIntent() {
+    requestedTakeover=false;requestedRequestId="";requestedDesktop=""
+  }
+  function takeControl(enabled, requestId) {
+    clearTakeoverIntent()
+    if (enabled) {requestedTakeover=true;requestedRequestId=requestId || "";requestedDesktop=desktopName}
+    if (presentation.item) {if(enabled && requestId) presentation.item.takeHandoff(requestId);else presentation.item.takeControl(enabled)}
+  }
+  function confirmTakeover() {
+    if (!requestedTakeover || requestedDesktop !== desktopName || !presentation.item) return
+    const state=presentation.item.state
+    if (state.active === true && state.name === requestedDesktop && state.humanControl === true) clearTakeoverIntent()
+  }
+  function viewTargetChanged() {
+    clearTakeoverIntent()
+    if (presentation.item) presentation.item.desktop=desktopName
+  }
+  function returnedFromView() {
+    const takeover=requestedTakeover && requestedDesktop === desktopName
+    if (isOpen && service && presentation.item && presentation.item.error) service.reportViewError(desktopName,presentation.item.error,takeover,takeover ? requestedRequestId : "")
+    clearTakeoverIntent();close()
+  }
   function browseWorkspace(workspace) {
     if (humanControl) return "end-takeover-first"
     selectedWorkspace = workspace
@@ -50,7 +76,10 @@ Item {
       item.workspace = root.selectedWorkspace
       item.active = true
     }
-    onStatusChanged: if (status === Loader.Error) root.close()
+    onStatusChanged: if (status === Loader.Error) {
+      if (root.service) root.service.reportViewError(root.desktopName,"无法加载桌面控制组件，请检查 Cornice 的原生模块安装。",false)
+      root.close()
+    }
   }
   Loader {
     id:previews
@@ -73,12 +102,13 @@ Item {
   }
   Connections {
     target: presentation.item
-    function onReturned() { root.close() }
+    function onReturned() { root.returnedFromView() }
+    function onStateChanged() { root.confirmTakeover() }
   }
   Connections {
     target: root
     function onSelectedWorkspaceChanged() { if (presentation.item) presentation.item.workspace = root.selectedWorkspace }
-    function onDesktopNameChanged() { if (presentation.item) presentation.item.desktop = root.desktopName }
+    function onDesktopNameChanged() { root.viewTargetChanged() }
     function onServiceChanged() { if (presentation.item) presentation.item.socketPath = root.service ? root.service.socketPath : "" }
   }
   ShellIpc {
@@ -94,8 +124,9 @@ Item {
       for (const widget of widgets) if (widget.id === "cn.agent-desktop") out.push(...widget.controls || [])
       return JSON.stringify(out)
     }
+    function actionResult(json: string): string { return root.service ? root.service.acceptActionResult(json) : "service-unavailable" }
     function takeover(enabled: string): string { root.takeControl(enabled === "true"); return "requested" }
     function browse(workspace: string): string { return root.browseWorkspace(workspace) }
-    function follow(): string { if (root.selectedWorkspace === "current") { if (presentation.item) presentation.item.refreshView() } else root.selectedWorkspace = "current"; return "ok" }
+    function follow(): string { return root.follow() }
   }
 }

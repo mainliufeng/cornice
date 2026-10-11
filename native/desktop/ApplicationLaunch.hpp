@@ -5,9 +5,11 @@
 
 struct ApplicationLaunchPlan {
     QString program, backend, profile, rule;
-    QStringList arguments;
-    QJsonObject environment;
-    QByteArray policy;
+    QStringList arguments, requestedArguments, warnings;
+    QJsonObject environment, requestedEnvironment;
+    QByteArray policy, basePolicy;
+    QJsonObject toJson() const;
+    static ApplicationLaunchPlan fromJson(const QJsonObject &value);
     void applyEnvironment(QProcessEnvironment &target) const;
 };
 
