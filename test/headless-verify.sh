@@ -15,8 +15,10 @@ ulimit -c 0   # compositor crashes in a test must not litter the repo with cores
 prefix=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export CORNICE_PATH="$prefix"
 export PATH="$prefix/bin:$PATH"
+source "$prefix/test/hyprctl-test-adapter.sh"
+hyprland_bin=${CORNICE_TEST_HYPRLAND:-Hyprland}
 
-runtime=$(mktemp -d /tmp/menuverify-XXXXXX)   # short: unix socket paths are length-limited
+runtime=$(mktemp -d "${TMPDIR:-/tmp}/menuverify-XXXXXX")   # short: unix socket paths are length-limited
 # Isolated brightness backend: interaction tests must never change host hardware.
 mkdir -p "$runtime/test-bin"
 export CORNICE_TEST_BACKLIGHT="$runtime/backlight-level"
@@ -36,6 +38,7 @@ mutter_pid=""
 dbus_pid=""
 shell_pid=""
 tray_fixture_pid=""
+hypr_pid=""
 hover_pointer_pid=""
 weather_server_pid=""
 result=0
@@ -47,7 +50,7 @@ cleanup() {
   [[ -n $tray_fixture_pid ]] && kill "$tray_fixture_pid" 2>/dev/null
   [[ -n $weather_server_pid ]] && kill "$weather_server_pid" 2>/dev/null
   [[ -n $shell_pid ]] && kill "$shell_pid" 2>/dev/null
-  pkill -f "Hyprland -c $runtime/hyprland.conf" 2>/dev/null
+  [[ -n $hypr_pid ]] && kill "$hypr_pid" 2>/dev/null
   [[ -n $mutter_pid ]] && kill "$mutter_pid" 2>/dev/null
   [[ -n $dbus_pid ]] && kill "$dbus_pid" 2>/dev/null
   sleep 0.4
@@ -126,7 +129,8 @@ else
   exit 1
 fi
 
-cat >"$runtime/hyprland.conf" <<'EOF'
+hypr_config="$runtime/hyprland.conf"
+cat >"$hypr_config" <<'EOF'
 misc {
     disable_hyprland_logo = true
     disable_splash_rendering = true
@@ -136,6 +140,14 @@ misc {
     background_color = 0x111111
 }
 EOF
+
+if [[ ${CORNICE_TEST_HYPRLAND_CONFIG_FORMAT:-legacy} == lua ]]; then
+  hypr_config="$runtime/hyprland.lua"
+  cat >"$hypr_config" <<'EOF'
+hl.monitor({output="",mode="1280x800",position="auto",scale=1})
+hl.config({misc={disable_hyprland_logo=true,disable_splash_rendering=true,force_default_wallpaper=0,background_color=0x111111},debug={enable_stdout_logs=true}})
+EOF
+fi
 
 section "private session bus and compositor (runtime: $runtime)"
 read -r DBUS_ADDR DBUS_PID < <(dbus-daemon --session --fork --print-address=1 --print-pid=1 | tr '\n' ' ')
@@ -164,7 +176,7 @@ export WAYLAND_DISPLAY=menuverify-test
 # AQ_DRM_DEVICES=/dev/null: deny aquamarine any DRM node, so the nested Wayland
 #   backend is the only one it can use.
 LIBSEAT_BACKEND=noop AQ_DRM_DEVICES=/dev/null \
-  Hyprland -c "$runtime/hyprland.conf" >"$runtime/hyprland.log" 2>&1 &
+  "$hyprland_bin" -c "$hypr_config" >"$runtime/hyprland.log" 2>&1 &
 hypr_pid=$!
 
 for _ in $(seq 1 150); do
@@ -189,7 +201,7 @@ if grep -qE "drm: (Starting backend|Registered gpu)" "$hypr_log" 2>/dev/null; th
   fail "Hyprland opened a DRM backend — refusing to continue touching real hardware"
   exit 1
 fi
-pass "no DRM backend was opened (parent GPU untouched)"
+pass "no DRM modesetting backend was opened"
 
 # Aquamarine's noop seat can still open the host's libinput devices even when
 # its DRM backend fails. Disable those devices only in this private compositor,
@@ -205,6 +217,7 @@ while IFS= read -r device; do
 done < <(jq -r '(.mice[]?, .keyboards[]?, .touch[]?) | .name' "$runtime/initial-input-devices.json")
 pass "host input devices disabled in the private compositor"
 
+hyprctl monitors -j >"$runtime/parent-outputs.json"
 hyprctl output create headless >/dev/null 2>&1
 for _ in $(seq 1 50); do
   hyprctl -j monitors 2>/dev/null | jq -e '.[] | select(.name | startswith("HEADLESS"))' >/dev/null 2>&1 && break
@@ -214,6 +227,25 @@ headless_output=$(hyprctl -j monitors 2>/dev/null | jq -r '[.[] | select(.name |
 if [[ -n $headless_output ]]; then
   hyprctl keyword monitor "$headless_output,1280x800,0x0,1" >/dev/null 2>&1
   sleep 0.5
+  # Every coordinate fixture targets one output. Keeping the overlapping
+  # parent output enabled made clicks land on a different bar/panel surface.
+  while IFS= read -r parent_output; do
+    [[ $parent_output != "$headless_output" ]] || continue
+    if [[ ${CORNICE_TEST_HYPRLAND_CONFIG_FORMAT:-legacy} == lua ]]; then
+      selector=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$parent_output")
+      hyprctl eval "hl.monitor({output=$selector,disabled=true})" >/dev/null || { fail "could not disable parent output"; exit 1; }
+    else
+      hyprctl keyword monitor "$parent_output,disable" >/dev/null || { fail "could not disable parent output"; exit 1; }
+    fi
+  done < <(jq -r '.[].name' "$runtime/parent-outputs.json")
+  output_ready=0
+  for _ in $(seq 1 30); do
+    if hyprctl monitors -j | jq -e --arg output "$headless_output" 'length == 1 and .[0].name == $output and .[0].width == 1280 and .[0].height == 800 and .[0].scale == 1 and .[0].x == 0 and .[0].y == 0' >/dev/null; then
+      output_ready=1; break
+    fi
+    sleep .1
+  done
+  ((output_ready)) || { fail "private coordinate fixtures require one 1280x800 output at 0x0 scale 1"; exit 1; }
   pass "headless output ready: $headless_output"
 else
   fail "could not create a headless output in the nested compositor"
@@ -231,7 +263,7 @@ pass "shell display: $WAYLAND_DISPLAY"
 # CORNICE_INSTALLED_PREFIX points the suite at an *installed* tree (install.sh
 # --copy or a package root) instead of the working tree, which is how a fresh
 # install gets tested: the tests stay here, the shell comes from there.
-install_prefix="${CORNICE_INSTALLED_PREFIX:-$prefix}"
+install_prefix="${CORNICE_INSTALLED_PREFIX:-${CORNICE_TEST_PRODUCT:-$prefix}}"
 if [[ $install_prefix != "$prefix" ]]; then
   section "installed tree"
   pass "shell from $install_prefix"

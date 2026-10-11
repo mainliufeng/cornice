@@ -2,6 +2,7 @@
 from desktop_harness import *
 import hashlib
 import threading
+import shutil
 
 class Task:
     def __init__(self, preferred):
@@ -90,12 +91,13 @@ def card_click(name,secondary=False):
 
 
 task=None
+broker=None
 try:
     ENV['XDG_DATA_HOME']=str(BASE/'data')
     applications=BASE/'data/applications';applications.mkdir(parents=True)
     app_argv=['/usr/bin/python3',str(ROOT/'test/agent-desktop-client.py'),'ui-target-window',str(BASE/'ui-target.txt')]
     (applications/'cornice-ui-launch.desktop').write_text('[Desktop Entry]\nType=Application\nName=Cornice UI Launch Target\nExec='+shlex.join(app_argv)+'\n')
-    initialize()
+    broker=initialize()
     config=BASE/'config/cornice';config.mkdir(parents=True,exist_ok=True)
     path=config/'config.json'
     settings={'agentDesktop':{'enabled':True,'resources':{'maxDesktops':2,'minAvailableMemoryMiB':0},'desktops':[{'name':'bootstrap-ui','virtualOutput':'1280x800'}]},'bar':{'layout':{'left':[{'id':'cn.agent-desktop'},{'id':'cn.launcher'},{'id':'cn.workspaces'}],'center':[],'right':[]}},'background':{'enabled':False},'weather':{'intervalMinutes':0},'idle':{'lock':0,'screenOffAc':0,'screenOffBattery':0,'dimAc':0,'dimBattery':0,'lockOnSleep':False,'lockOnLockSignal':False,'lockOnLidClose':False}}
@@ -134,8 +136,9 @@ try:
     record('actual Create Empty Desktop button allocates an empty native desktop and opens it in read-only view')
     shell('ipc','desktop','observe','bootstrap-ui');wait(lambda:observer()['presentation'].get('active'))
     workspace=cli('state','bootstrap-ui')['workspaceSlots'][1]['name']
+    workspace_name=workspace.removeprefix('name:')
     shell('ipc','desktopObserver','browse',workspace)
-    wait(lambda:observer()['presentation'].get('following') is False and observer()['presentation'].get('workspace')==workspace)
+    wait(lambda:observer()['presentation'].get('following') is False and observer()['presentation'].get('workspace')==workspace_name)
     rows=menu('bootstrap-ui')
     follow=next(item for item in rows if item['name']=='control:follow')
     assert follow['enabled'] and follow['target']=='bootstrap-ui',follow
@@ -209,6 +212,22 @@ try:
     assert {k:v for k,v in before.items() if k!='cursor'}=={k:v for k,v in human_state().items() if k!='cursor'}
     record('global request badge and real handoff buttons preserve input: human typing, honest waiting state, and resumed Agent typing reach the same app while primary focus/workspace remain unchanged')
 except Exception:
+    # This PID belongs to the private test child. Never discover a host Broker.
+    if broker and broker.poll() is None:
+        proc=pathlib.Path('/proc')/str(broker.pid)
+        try:
+            assert ('XDG_RUNTIME_DIR='+str(RT)).encode() in (proc/'environ').read_bytes().split(b'\0')
+            evidence={'pid':broker.pid,'command':(proc/'cmdline').read_bytes().replace(b'\0',b' ').decode(errors='replace')}
+            for field in ('wchan','syscall','stack','status'):
+                try:evidence[field]=(proc/field).read_text()
+                except OSError as error:evidence[field]={'error':str(error)}
+            (BASE/'failure-broker-process.json').write_text(json.dumps(evidence,indent=2))
+            if shutil.which('gdb'):
+                with (BASE/'failure-broker-backtrace.log').open('w') as output:
+                    try:subprocess.run(['gdb','-q','-batch','-ex','set pagination off','-ex','thread apply all bt','-p',str(broker.pid)],env=ENV,stdout=output,stderr=subprocess.STDOUT,timeout=10)
+                    except subprocess.TimeoutExpired:output.write('\nPrivate Broker backtrace timed out\n')
+        except (OSError,AssertionError) as error:
+            (BASE/'failure-broker-process.json').write_text(json.dumps({'pid':broker.pid,'error':str(error)}))
     diagnostics={}
     for name,read in [('observer',observer),('status',status),('desktops',lambda:cli('list')),('layers',lambda:ctl('layers',True))]:
         try:diagnostics[name]=read()

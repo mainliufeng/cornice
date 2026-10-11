@@ -48,7 +48,9 @@ try:
     agent_shell('launcher');wait(opened);agent_shell('ipc','launcher','setQuery','Google Chrome')
     wait(lambda:json.loads(agent_shell('ipc','launcher','debug'))['first']=='Google Chrome')
     time.sleep(.35);key(28)
-    def launched():return next((c for c in ctl('clients',True) if 'chrome' in c['class'].lower() and c['workspace']['id']==11),None)
+    def on_agent_workspace(client):
+        return client['workspace']['name']==cli('state','agent1')['workspaceName']
+    def launched():return next((c for c in ctl('clients',True) if 'chrome' in c['class'].lower() and on_agent_workspace(c)),None)
     client=wait(launched);OWNED_PIDS.append(client['pid']);wait(lambda:not opened())
     time.sleep(1)
     def shot(filename):
@@ -80,7 +82,7 @@ try:
     record('launcher starts the same managed browser later used by CDP; Chrome profile sign-in reaches Google login without a lost click')
     # A detached singleton app uses its desktop profile rather than the primary instance.
     chat=cli('launch','agent1','--','chatgpt','--ozone-platform=wayland')
-    def chat_window():return next((c for c in ctl('clients',True) if c['class'].lower()=='chatgpt' and c['workspace']['id']==11),None)
+    def chat_window():return next((c for c in ctl('clients',True) if c['class'].lower()=='chatgpt' and on_agent_workspace(c)),None)
     chat_client=wait(chat_window,timeout=30)
     assert chat_client['pid'] != primary_chat_window['pid']
     assert any(c['address']==primary_chat_window['address'] for c in ctl('clients',True))

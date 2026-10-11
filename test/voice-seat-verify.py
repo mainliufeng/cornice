@@ -126,6 +126,12 @@ try:
     # Exec bindings inherit the compositor environment as well as the probe.
     # Use the fork's genuine CLI, never an RPC test double or host socket.
     ENV['PATH'] = str(FORK / 'build-agent-session/hyprctl') + os.pathsep + ENV['PATH']
+    # This regression asserts clipboard isolation as well as input routing.
+    # Sharing is tested below as a distinct configured policy, and by the
+    # dedicated real cross-seat clipboard suite.
+    cornice_config = BASE / 'config/cornice/config.json'
+    cornice_config.parent.mkdir(parents=True, exist_ok=True)
+    cornice_config.write_text(json.dumps({'agentDesktop': {'clipboard': {'mode': 'isolated'}}}))
     initialize()
     assert 'physical-input-target-v1' in ctl('seat capabilities', True)['features']
     config.write_text('{}')
@@ -252,6 +258,15 @@ try:
     assert clipboard('agent1') == '明确重提。' and clipboard('agent2') == 'Agent 二号语音测试。'
     subprocess.run(['grim', '-o', 'human', str(BASE / 'human-voice-return.png')], env=ENV, check=True)
     check('after leaving native Agent view, the same primary F8 binding and production paste return to the human application')
+    cornice_config.write_text(json.dumps({'agentDesktop': {'clipboard': {'mode': 'shared'}}}))
+    wait(lambda: cli('doctor')['clipboard']['mode'] == 'shared' and all(seat['bound'] for seat in cli('doctor')['clipboard']['seats']))
+    shared_capture, target = capture_hotkey('human-shared')
+    before_shared = contents()
+    probe('paste', shared_capture, '共享剪贴板语音。')
+    wait(lambda: contents()['human-window'] == before_shared['human-window'] + '共享剪贴板语音。')
+    wait(lambda: all(clipboard(seat) == '共享剪贴板语音。' for seat in ('Hyprland', 'agent1', 'agent2')))
+    assert contents()['agent1-window'] == before_shared['agent1-window'] and contents()['agent2-window'] == before_shared['agent2-window']
+    check('shared clipboard policy shares the production voice paste payload across seats, while only the captured human application receives input')
     result = {'checks': checks, 'contents': contents(), 'microphoneAsrTested': False, 'productionDestinationAndPasteTested': True, 'longLivedDesktopAcrossSeats': True}
     (BASE / 'voice-seat-result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))
     print(json.dumps(result, ensure_ascii=False), flush=True)

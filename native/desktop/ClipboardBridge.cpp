@@ -3,6 +3,7 @@
 #include <QMap>
 #include <QJsonArray>
 #include <QSet>
+#include <QPointer>
 #include <QSocketNotifier>
 #include <QTimer>
 #include <QUuid>
@@ -12,6 +13,7 @@
 #include <fcntl.h>
 #include <functional>
 #include <map>
+#include <poll.h>
 #include <unistd.h>
 #include <wayland-client.h>
 
@@ -58,7 +60,7 @@ struct ClipboardBridge::Impl : QObject {
     wl_display *display = nullptr;
     wl_registry *registry = nullptr;
     wl_callback *registrySync = nullptr;
-    QSocketNotifier *notifier = nullptr;
+    QSocketNotifier *notifier = nullptr, *writeNotifier = nullptr;
     std::map<uint32_t, std::unique_ptr<Seat>> seats;
     std::map<zwlr_data_control_offer_v1 *, std::unique_ptr<Offer>> offers;
     std::map<zwlr_data_control_source_v1 *, std::unique_ptr<Source>> sources;
@@ -106,8 +108,8 @@ struct ClipboardBridge::Impl : QObject {
         ++epoch;
         for (auto *child : findChildren<QObject *>(QString(), Qt::FindDirectChildrenOnly))
             if (dynamic_cast<Transfer *>(child)) delete child;
-        delete notifier;
-        notifier = nullptr;
+        delete notifier; delete writeNotifier;
+        notifier = writeNotifier = nullptr;
         // Destroy local proxies even on IO failure; the server releases every
         // associated resource when this connection goes away.
         for (const auto &[proxy, ignored] : sources) wl_proxy_destroy(reinterpret_cast<wl_proxy *>(proxy));
@@ -125,6 +127,49 @@ struct ClipboardBridge::Impl : QObject {
         if (registry) wl_proxy_destroy(reinterpret_cast<wl_proxy *>(registry));
         if (display) wl_display_disconnect(display);
         registry = nullptr; display = nullptr; managerGlobal = managerVersion = 0;
+    }
+    void connectionLost() {
+        error = "Clipboard connection lost; reconnecting";
+        if (notifier) notifier->setEnabled(false);
+        if (writeNotifier) writeNotifier->setEnabled(false);
+        // Flush can fail inside a protocol callback. Destroying its queue in
+        // that callback would invalidate the active Wayland dispatch stack.
+        const QPointer<QSocketNotifier> current(notifier);
+        QTimer::singleShot(0, this, [this, current] {
+            if (current && current == notifier) close();
+        });
+    }
+    void flush() {
+        if (!display) return;
+        const auto result = wl_display_flush(display);
+        if (result < 0 && errno != EAGAIN && errno != EINTR) { connectionLost(); return; }
+        if (writeNotifier) writeNotifier->setEnabled(result < 0);
+    }
+    void dispatchReady() {
+        if (!display) return;
+        auto *current = display;
+        if (wl_display_get_error(current)) { connectionLost(); return; }
+        // A Qt readiness notification is a hint, not a license to wait for
+        // more events. Drain already queued callbacks, then read only bytes
+        // which are presently available. The connection has one reader.
+        while (wl_display_prepare_read(current) != 0) {
+            if (wl_display_dispatch_pending(current) < 0) { connectionLost(); return; }
+            if (current != display) return;
+            if (wl_display_get_error(current)) { connectionLost(); return; }
+        }
+        pollfd fd{wl_display_get_fd(current), POLLIN, 0};
+        int ready;
+        do { ready = poll(&fd, 1, 0); } while (ready < 0 && errno == EINTR);
+        if (ready > 0 && (fd.revents & POLLIN)) {
+            if (wl_display_read_events(current) < 0) { connectionLost(); return; }
+        } else {
+            wl_display_cancel_read(current);
+            if (ready < 0 || (fd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+                connectionLost(); return;
+            }
+        }
+        if (wl_display_dispatch_pending(current) < 0) { connectionLost(); return; }
+        if (current == display) flush();
     }
     void open() {
         display = wl_display_connect(displayName.toUtf8().constData());
@@ -175,10 +220,11 @@ struct ClipboardBridge::Impl : QObject {
             }};
         wl_callback_add_listener(registrySync, &synced, this);
         notifier = new QSocketNotifier(wl_display_get_fd(display), QSocketNotifier::Read, this);
-        connect(notifier, &QSocketNotifier::activated, this, [this] {
-            if (wl_display_dispatch(display) < 0) { error = "Clipboard connection lost; reconnecting"; close(); }
-        });
-        wl_display_flush(display);
+        connect(notifier, &QSocketNotifier::activated, this, [this] { dispatchReady(); });
+        writeNotifier = new QSocketNotifier(wl_display_get_fd(display), QSocketNotifier::Write, this);
+        writeNotifier->setEnabled(false);
+        connect(writeNotifier, &QSocketNotifier::activated, this, [this] { flush(); });
+        flush();
         error.clear();
     }
     void bind(Seat &seat) {
@@ -232,7 +278,7 @@ struct ClipboardBridge::Impl : QObject {
                 if (it != seat->owner->offers.end()) seat->owner->discard(it->second.get());
             }};
         zwlr_data_control_device_v1_add_listener(seat.device, &listener, &seat);
-        wl_display_flush(display);
+        flush();
     }
     void receive(const Seat &, const Offer &offer) {
         cancelTransfers(true);
@@ -268,7 +314,7 @@ struct ClipboardBridge::Impl : QObject {
                 }
             });
         }
-        wl_display_flush(display);
+        flush();
     }
     void publish(const QMap<QString, QByteArray> &payload, Seat *only = nullptr) {
         if (!only) { sharedPayload = payload; sharedSelectionKnown = true; }
@@ -313,7 +359,7 @@ struct ClipboardBridge::Impl : QObject {
             zwlr_data_control_device_v1_set_selection(seat->device, source->proxy);
             const auto proxy = source->proxy; sources[proxy] = std::move(source);
         }
-        wl_display_flush(display);
+        flush();
     }
 };
 
@@ -331,7 +377,7 @@ void ClipboardBridge::configure(const QStringList &seatNames, const QString &pri
     m->maxBytes = std::clamp<qint64>(maxBytes, 1024, 64 * 1024 * 1024);
     if (mode != "shared") { if (m->display) m->close(); return; }
     if (!m->display) m->open();
-    else { for (auto &[id, seat] : m->seats) m->bind(*seat); wl_display_flush(m->display); }
+    else { for (auto &[id, seat] : m->seats) m->bind(*seat); m->flush(); }
 }
 QJsonObject ClipboardBridge::status() const {
     QJsonArray seats;

@@ -60,3 +60,6 @@ function fixture() {
 assert.match(source,/function onReturned\(\) \{ root\.returnedFromView\(\) \}/);
 assert.match(source,/function onStateChanged\(\) \{ root\.confirmTakeover\(\) \}/);
 assert.match(source,/function onDesktopNameChanged\(\) \{ root\.viewTargetChanged\(\) \}/);
+
+assert.match(source,/active:!!root\.service && root\.service\.enabled\s*source:active \? "Cooperation\.qml"/);
+console.log('PASS cooperation notices remain mounted when an enabled desktop service becomes unavailable');

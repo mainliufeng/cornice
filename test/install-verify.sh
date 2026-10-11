@@ -30,7 +30,7 @@ if ((with_package)) && ! command -v makepkg >/dev/null 2>&1; then
 fi
 revision=$(git -C "$prefix" rev-parse HEAD) || exit 1
 
-tmp=$(mktemp -d /tmp/cornice-install-XXXXXX)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/cornice-install-XXXXXX")
 cleanup() { rm -rf "$tmp"; }
 trap cleanup EXIT
 

@@ -88,7 +88,8 @@ Item {
     onLoaded:item.service = root.service
   }
   Loader {
-    active:!!root.service && root.service.available
+    // Service failure is itself a notice; its UI must outlive availability.
+    active:!!root.service && root.service.enabled
     source:active ? "Cooperation.qml" : ""
     onLoaded:item.service=root.service
   }
