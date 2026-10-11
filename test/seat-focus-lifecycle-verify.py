@@ -212,7 +212,7 @@ try:
     wait(lambda: (BASE/'other-window.txt').read_text() == 'other-sentinel')
     other = cli('state','agent2')
     OWNER = socket.socket(socket.AF_UNIX);OWNER.settimeout(5)
-    OWNER.connect(str(RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktop.sock'))
+    OWNER.connect(str(broker_socket()))
     assert rpc(OWNER,'present',{'name':'agent1'})['native']
     assert rpc(OWNER,'takeover',{'name':'agent1'})['humanControl']
     if os.getenv('CORNICE_TEST_FOCUS_PHASE') != 'activation':

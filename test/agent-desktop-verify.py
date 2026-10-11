@@ -76,7 +76,7 @@ try:
 
     before = cli("state", "agent1")
     with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(5); connection.connect(str(RT / "cornice" / ENV["HYPRLAND_INSTANCE_SIGNATURE"] / "desktop.sock"))
+        connection.settimeout(5); connection.connect(str(broker_socket()))
         observed = rpc(connection, "frame", {"name": "agent1", "workspace": "11"})
         assert observed["viewWorkspace"] == "11" and observed["workspace"] == "10" and not observed["cursorVisible"]
         pixels = pathlib.Path(observed["buffer"])
@@ -90,7 +90,7 @@ try:
     tool(agent2_binding, "workspace", {"workspace": "13"})
     unseen = cli("state", "agent2")
     with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(5); connection.connect(str(RT / "cornice" / ENV["HYPRLAND_INSTANCE_SIGNATURE"] / "desktop.sock"))
+        connection.settimeout(5); connection.connect(str(broker_socket()))
         animated = []
         for iteration in range(5):
             observed = rpc(connection, "frame", {"name": "agent1", "workspace": "11"})

@@ -4,10 +4,13 @@ from cdp_client import Cdp
 from PIL import Image, ImageChops
 try:
     initialize()
+    # This suite uses main and agent1; release the unused installation desktop
+    # through the real lifecycle API before starting several native applications.
+    assert cli('windows','desktop2')['windows']==[]
+    cli('remove','desktop2')
+    assert all(item['name']!='desktop2' for item in cli('list')['desktops'])
     config=BASE/'config/cornice';config.mkdir(parents=True,exist_ok=True)
     (config/'config.json').write_text(json.dumps({'agentDesktop':{'enabled':True},'bar':{'layout':{'left':[{'id':'cn.agent-desktop'},{'id':'cn.launcher'}],'center':[],'right':[]}},'background':{'enabled':False},'weather':{'intervalMinutes':0},'idle':{'lock':0,'screenOffAc':0,'screenOffBattery':0,'dimAc':0,'dimBattery':0,'lockOnSleep':False,'lockOnLockSignal':False,'lockOnLidClose':False}}))
-    primary_chat=start(['chatgpt','--ozone-platform=wayland'],'human-chatgpt')
-    primary_chat_window=wait(lambda:next((c for c in ctl('clients',True) if c['class'].lower()=='chatgpt'),None),timeout=30)
     human_browser=start(['google-chrome-stable','--ozone-platform=wayland','--no-first-run','--no-default-browser-check','about:blank'],'human-chrome')
     wait(lambda:any('chrome' in c['class'].lower() for c in ctl('clients',True)))
     cli('create','agent1','--workspace','11','--virtual-output','1280x800');cli('resume','agent1')
@@ -80,7 +83,19 @@ try:
     assert next(c['pid'] for c in ctl('clients',True) if c['address']==client['address'])==client['pid']
     assert human_browser.poll() is None
     record('launcher starts the same managed browser later used by CDP; Chrome profile sign-in reaches Google login without a lost click')
+    # Finish the independent Chrome checks through normal window close before
+    # starting two Electron instances inside the unchanged Tasks512 envelope.
+    chrome_windows=[c for c in ctl('clients',True) if 'chrome' in c['class'].lower()]
+    chrome_pids={c['pid'] for c in chrome_windows}
+    for window in chrome_windows:
+        ok('dispatch hl.dsp.window.close({window='+json.dumps('address:'+window['address'])+'})')
+    wait(lambda:not any('chrome' in c['class'].lower() for c in ctl('clients',True)))
+    wait(lambda:human_browser.poll() is not None)
+    assert human_browser.returncode==0,human_browser.returncode
+    wait(lambda:all(not pathlib.Path('/proc',str(pid)).exists() for pid in chrome_pids))
     # A detached singleton app uses its desktop profile rather than the primary instance.
+    primary_chat=start(['chatgpt','--ozone-platform=wayland'],'human-chatgpt')
+    primary_chat_window=wait(lambda:next((c for c in ctl('clients',True) if c['class'].lower()=='chatgpt'),None),timeout=30)
     chat=cli('launch','agent1','--','chatgpt','--ozone-platform=wayland')
     def chat_window():return next((c for c in ctl('clients',True) if c['class'].lower()=='chatgpt' and on_agent_workspace(c)),None)
     chat_client=wait(chat_window,timeout=30)

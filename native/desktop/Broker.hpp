@@ -16,6 +16,7 @@
 #include <memory>
 
 class ClipboardBridge;
+class ApplicationScope;
 struct ApplicationLaunchPlan;
 
 QString desktopSocket(const QString &instance);
@@ -29,6 +30,7 @@ class Broker : public QObject {
     void listen();
 
   private:
+    friend class BrokerHandoffFixture; // Test-only private transport fixture.
     struct Desktop {
         QString id;
         QString captureGrant, privateOutput;
@@ -62,6 +64,7 @@ class Broker : public QObject {
     QJsonObject state(const QString &name);
     QJsonObject handle(const QJsonObject &, QLocalSocket *, const ApplicationLaunchPlan *launchPlan = nullptr);
     void deferLaunch(const QJsonObject &, QLocalSocket *, const QString &);
+    void deferApplication(const QJsonObject &, QLocalSocket *, const QString &, ApplicationScope *, const QStringList &);
     void handleNative(const QJsonObject &, QLocalSocket *);
     void deferBrowser(const QJsonObject &, QLocalSocket *, const QString &, bool firstLaunch, const QStringList &warnings, std::shared_ptr<ApplicationLaunchPlan> plan = {});
     QJsonObject perform(const QString &method, const QJsonObject &, Binding *, QLocalSocket *, const ApplicationLaunchPlan *launchPlan = nullptr);
@@ -91,12 +94,12 @@ class Broker : public QObject {
     void releaseAcquisition(QLocalSocket *);
     QJsonObject handoff(const QJsonObject &);
     void transitionHandoff(const QString &name, const QString &id, const QString &status, const QString &note);
-    void sealHandoff(const QString &name, const QString &id);
+    void resolveHandoff(const QString &name, const QString &id, const QString &status, const QString &note, const QString &reason);
     QString m_humanRequestId;
     void revokeBindings(const QString &name);
     void startShell(const QString &name);
     void pause(const QString &name);
-    void endTakeover(const QString &reason);
+    void endTakeover(const QString &reason, bool requeueRequest = true);
     void resume(const QString &name);
     void validateFrame(const Binding &, const QString &frame, const QJsonObject &actual);
     int m_nextDesktopNumber = 2;
@@ -126,6 +129,8 @@ class Broker : public QObject {
     QMap<QString, QByteArray> m_pendingBrowserHashes;
     QMap<QString, QByteArray> m_pendingLaunchHashes;
     QMap<QString, QPointer<QProcess>> m_launchJobs;
+    QMap<QString, QPointer<ApplicationScope>> m_applicationJobs;
+    QMap<QString, QByteArray> m_pendingApplicationHashes;
     QLocalSocket *m_humanOwner = nullptr;
     Binding m_humanBinding;
     QElapsedTimer m_humanHeartbeat;

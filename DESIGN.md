@@ -7,7 +7,7 @@
 
 ### P0/P1/P2 实测得到的硬约束（写代码前不知道的）
 
-4. **插件里的 IpcHandler 不会被 Quickshell 的 `qs ipc` 看到**：它只枚举静态声明的树。解决方案是 shell 自己起 Unix socket（`services/IpcServer` + `Commons/IpcRegistry` + `ShellIpc` 包装），CLI 走 socat（约 5ms），omarchy 也是这么做的。
+4. **插件里的 IpcHandler 不会被 Quickshell 的 `qs ipc` 看到**：它只枚举静态声明的树。解决方案是 shell 自己起 Unix socket（`services/IpcServer` + `Commons/IpcRegistry` + `ShellIpc` 包装），CLI 使用 Python 标准库单次提交请求，按总时限等到完整一行响应即关闭连接；空响应、非法响应和超时明确失败，不重放已提交动作。
 5. **Repeater 不能直接挂在 `ShellRoot` 下**：父级不是 Item 时委托根本不会实例化（现象是"count 正确但实例为 0"）。要包一层 `Item`。
 6. **delegate 里写 `registry: registry` 会自引用**（组件自身也有同名属性）→ null。用不同 id（`pluginRegistry`）。
 7. **不能 `clone()` 持 QObject 的映射**：会遍历 parent/children 直到栈溢出；用浅拷贝。

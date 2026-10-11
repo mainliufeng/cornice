@@ -1,6 +1,11 @@
 #include "DesktopPresentation.hpp"
+#include "DesktopEndpoint.hpp"
 #include <QJsonDocument>
 #include <QUuid>
+QJsonObject DesktopPresentation::endpoint(const QString &instance) const {
+    try { return {{"socket", CorniceEndpoint::desktopSocketPath(qEnvironmentVariable("XDG_RUNTIME_DIR"), instance)}}; }
+    catch (const std::exception &error) { return {{"error", QString::fromUtf8(error.what())}}; }
+}
 DesktopPresentation::DesktopPresentation(QObject *parent) : QObject(parent) {
     connect(this, &DesktopPresentation::targetChanged, this, &DesktopPresentation::reset);
     connect(&m_socket, &QLocalSocket::connected, this, &DesktopPresentation::request);

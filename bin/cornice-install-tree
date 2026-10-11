@@ -65,10 +65,12 @@ def validate(candidate):
         with (candidate / name).open() as source:
             json.load(source)
     if (candidate / "native/bin/cornice-desktop-runtime").exists():
-        for name in ("cornice-browser-runtime", "cornice-native-accessibility", "cornice-human-lock", "cornice-session-guard"):
+        for name in ("cornice-browser-runtime", "cornice-native-accessibility", "cornice-human-lock", "cornice-session-guard", "cornice-application-guard"):
             helper = candidate / "native/bin" / name
             if not helper.is_file() or not os.access(helper, os.X_OK):
                 raise RuntimeError("desktop candidate is incomplete: " + name)
+        if not (candidate / "native/agent/desktop-endpoint.mjs").is_file():
+            raise RuntimeError("desktop candidate is incomplete: desktop-endpoint.mjs")
     # Flush only this candidate, never the user's other filesystems.
     for directory, _, files in os.walk(candidate):
         for name in files:

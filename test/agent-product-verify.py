@@ -56,7 +56,7 @@ try:
             frame = tool(binding,'capture')
             tool(binding,'input',dict(event,frameId=frame['frameId']))
     with socket.socket(socket.AF_UNIX) as owner:
-        owner.connect(str(RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktop.sock'))
+        owner.connect(str(broker_socket()))
         rpc(owner,'takeover',{'name':'agent1'})
         assert cli('state','agent1')['controlMode'] == 'human'
         assert 'revoked' in tool(binding,'state',succeeds=False)

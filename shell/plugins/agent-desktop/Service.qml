@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
+import Cornice.Desktop
 import qs.Commons
 import "."
 
@@ -13,7 +14,9 @@ Item {
   readonly property bool enabled: DesktopSession.agentShell || options.enabled === true
   readonly property string prefix: Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
   readonly property string instance: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || ""
-  readonly property string socketPath: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/cornice/" + instance + "/desktop.sock"
+  DesktopPresentation { id: endpointResolver }
+  readonly property var brokerEndpoint: endpointResolver.endpoint(instance)
+  readonly property string socketPath: brokerEndpoint.socket || ""
   property string selectedDesktop: DesktopSession.name || "main"
   property var observer: null
   Component.onCompleted: { DesktopSession.service = root; refresh() }
@@ -346,7 +349,7 @@ Item {
     function status(): string {
       return JSON.stringify({enabled: root.enabled, available: root.available, desktops: root.desktops,
         selected: root.selectedDesktop, active: root.activeDesktops.map(item => item.name), hiddenPreviews:root.hiddenPreviews, previewsEnabled:root.previewsEnabled, alwaysShowPreviews:root.alwaysShowPreviews, allPreviewsVisible:root.allPreviewsVisible,
-        error: root.error, healthError:root.healthError, actionResult:root.actionResult, bootstrapFailures:root.bootstrapFailures, requests:root.humanRequests.map(item => item.name), socket: root.socketPath, busy: root.busy})
+        error: root.error, endpointError: root.brokerEndpoint.error || "", healthError:root.healthError, actionResult:root.actionResult, bootstrapFailures:root.bootstrapFailures, requests:root.humanRequests.map(item => item.name), socket: root.socketPath, busy: root.busy})
     }
     function handoffStart(name: string, requestId: string): string {root.startHandoff(name,requestId);return "requested"}
     function retry(): string {root.retryAction();return "requested"}

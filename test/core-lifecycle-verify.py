@@ -11,7 +11,7 @@ def request(method, params=None, lease=None, identity=None, connection=None, suc
     connection = connection or socket.socket(socket.AF_UNIX)
     if owned:
         connection.settimeout(40)
-        connection.connect(str(RT / 'cornice' / ENV['HYPRLAND_INSTANCE_SIGNATURE'] / 'desktop.sock'))
+        connection.connect(str(broker_socket()))
     identity = identity or str(time.monotonic_ns())
     value = {'id': identity, 'method': method, 'params': params or {}}
     if lease:
@@ -40,7 +40,7 @@ class Task:
     def __init__(self, label, **params):
         self.connection=socket.socket(socket.AF_UNIX)
         self.connection.settimeout(10)
-        self.connection.connect(str(RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktop.sock'))
+        self.connection.connect(str(broker_socket()))
         self.lease=request('acquire-desktop',{'controller':label,'harness':'core-test',**params},connection=self.connection)
         self.done=threading.Event()
         self.thread=threading.Thread(target=self.heartbeat,daemon=True)

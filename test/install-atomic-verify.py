@@ -93,6 +93,17 @@ with tempfile.TemporaryDirectory(prefix="cornice-atomic-") as directory:
     call("activate", target, desktop, success=False)
     assert (target / "version").read_text() == "old"
     print("PASS missing browser runtime rejects a desktop candidate before replacement")
+    for name in ("cornice-desktop-runtime", "cornice-browser-runtime", "cornice-native-accessibility", "cornice-human-lock", "cornice-session-guard"):
+        helper=desktop / "native/bin" / name
+        helper.write_text("#!/bin/sh\nexit 0\n"); helper.chmod(0o755)
+    missing_guard=call("activate",target,desktop,success=False)
+    assert "cornice-application-guard" in missing_guard.stderr and (target / "version").read_text()=="old"
+    print("PASS missing application lifetime guard rejects a desktop candidate before replacement")
+    guard=desktop / "native/bin/cornice-application-guard"
+    guard.write_text("#!/bin/sh\nexit 0\n"); guard.chmod(0o755)
+    missing_endpoint=call("activate",target,desktop,success=False)
+    assert "desktop-endpoint.mjs" in missing_endpoint.stderr and (target / "version").read_text()=="old"
+    print("PASS missing shared endpoint module rejects a desktop candidate before replacement")
     candidate = target.parent / "generation-changed"; tree(candidate, "changed")
     call("activate", target, candidate)
     candidate.rename(target.parent / "moved-unrelated")

@@ -145,6 +145,19 @@ static void disabledTarget() {
             "current target error was incorrectly discarded");
     std::puts("PASS reconnect discards old response IDs and retains current target errors");
 }
+static void endpointIdentity() {
+    QTemporaryDir runtime("/tmp/cornice-endpoint-unit-XXXXXX");
+    require(runtime.isValid(), "endpoint runtime fixture failed");
+    const auto previous = qgetenv("XDG_RUNTIME_DIR"); qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
+    DesktopPresentation resolver;
+    const auto endpoint = resolver.endpoint("test");
+    const auto invalid = resolver.endpoint("..");
+    qputenv("XDG_RUNTIME_DIR", previous);
+    require(endpoint["socket"] == runtime.path() + "/cornice/ipc-9f86d081884c7d659a2feaa0c55ad015/desktop.sock" && !endpoint.contains("error"),
+            "native QML resolver differs from fixed SHA256 endpoint identity");
+    require(invalid["error"].toString().contains("instance") && !invalid.contains("socket"), "native QML resolver accepted non-instance path");
+    std::puts("PASS native QML endpoint resolver matches fixed SHA256 identity and returns explicit invalid-instance diagnostic");
+}
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     try {
@@ -153,6 +166,7 @@ int main(int argc, char **argv) {
                 switchedTarget(change, response);
         }
         disabledTarget();
+        endpointIdentity();
         return 0;
     } catch (const std::exception &failure) {
         std::fprintf(stderr, "FAIL %s\n", failure.what());

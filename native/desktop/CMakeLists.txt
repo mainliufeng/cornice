@@ -17,9 +17,9 @@ foreach(name wlr-data-control-unstable-v1 virtual-keyboard-unstable-v1 wlr-virtu
     DEPENDS protocols/${name}.xml VERBATIM)
   list(APPEND PROTOCOL_SOURCES ${name}.c ${name}.h)
 endforeach()
-add_executable(cornice-desktop-runtime main.cpp Broker.cpp ApplicationLaunch.cpp Accessibility.cpp ClipboardBridge.cpp HyprlandAdapter.cpp SeatDriver.cpp BrowserSession.cpp ${PROTOCOL_SOURCES})
+add_executable(cornice-desktop-runtime main.cpp Broker.cpp ApplicationScope.cpp ApplicationLaunch.cpp Accessibility.cpp ClipboardBridge.cpp HyprlandAdapter.cpp SeatDriver.cpp BrowserSession.cpp ${PROTOCOL_SOURCES})
 target_include_directories(cornice-desktop-runtime PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(cornice-desktop-runtime PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::WebSockets PkgConfig::WAYLAND PkgConfig::XKB)
+target_link_libraries(cornice-desktop-runtime PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::WebSockets Qt6::DBus PkgConfig::WAYLAND PkgConfig::XKB)
 qt_add_qml_module(cornice_desktop_qml URI Cornice.Desktop VERSION 1.0
   OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/qml/Cornice/Desktop
   SOURCES DesktopPresentation.hpp DesktopPresentation.cpp)
@@ -27,9 +27,11 @@ target_link_libraries(cornice_desktop_qml PRIVATE Qt6::Quick Qt6::Network)
 set_target_properties(cornice_desktop_qml cornice_desktop_qmlplugin PROPERTIES INSTALL_RPATH "$ORIGIN")
 add_executable(cornice-native-accessibility accessibility_main.cpp)
 target_link_libraries(cornice-native-accessibility PRIVATE Qt6::Core Qt6::Network Qt6::DBus PkgConfig::ATSPI)
+add_executable(cornice-application-guard application_guard_main.cpp)
+target_link_libraries(cornice-application-guard PRIVATE Qt6::Core Qt6::Network)
 add_executable(cornice-browser-runtime browser_runtime_main.cpp)
 target_link_libraries(cornice-browser-runtime PRIVATE Qt6::Core Qt6::Network)
-install(TARGETS cornice-desktop-runtime cornice-native-accessibility cornice-browser-runtime RUNTIME DESTINATION native/bin)
+install(TARGETS cornice-desktop-runtime cornice-native-accessibility cornice-browser-runtime cornice-application-guard RUNTIME DESTINATION native/bin)
 install(TARGETS cornice_desktop_qml cornice_desktop_qmlplugin LIBRARY DESTINATION native/qml/Cornice/Desktop)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/qml/Cornice/Desktop/qmldir
   ${CMAKE_CURRENT_BINARY_DIR}/qml/Cornice/Desktop/cornice_desktop_qml.qmltypes
@@ -53,7 +55,20 @@ target_link_libraries(cornice-session-guard PRIVATE Qt6::Core Qt6::Network Qt6::
 install(TARGETS cornice-session-guard RUNTIME DESTINATION native/bin)
 
 # Explicit test-only target: no compositor, application or installed artifact.
-add_executable(cornice-browser-startup-unit EXCLUDE_FROM_ALL ../../test/browser-startup-unit.cpp BrowserSession.cpp)
-add_dependencies(cornice-browser-startup-unit cornice-browser-runtime)
+add_executable(cornice-browser-startup-unit EXCLUDE_FROM_ALL ../../test/browser-startup-unit.cpp BrowserSession.cpp ApplicationScope.cpp)
+add_dependencies(cornice-browser-startup-unit cornice-browser-runtime cornice-application-guard)
 target_include_directories(cornice-browser-startup-unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(cornice-browser-startup-unit PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)
+target_link_libraries(cornice-browser-startup-unit PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets Qt6::DBus)
+
+# Real user-manager fixture; creates only private bounded test units.
+add_executable(cornice-application-scope-unit EXCLUDE_FROM_ALL ../../test/application-scope-unit.cpp ApplicationScope.cpp)
+add_dependencies(cornice-application-scope-unit cornice-application-guard)
+target_include_directories(cornice-application-scope-unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(cornice-application-scope-unit PRIVATE Qt6::Core Qt6::Network Qt6::DBus)
+
+# Actual Broker with private test compositor/task transports; never installed.
+get_target_property(HANDOFF_BROKER_SOURCES cornice-desktop-runtime SOURCES)
+list(REMOVE_ITEM HANDOFF_BROKER_SOURCES main.cpp)
+add_executable(cornice-handoff-unit EXCLUDE_FROM_ALL ../../test/desktop-handoff-unit.cpp ${HANDOFF_BROKER_SOURCES})
+target_include_directories(cornice-handoff-unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(cornice-handoff-unit PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::WebSockets Qt6::DBus PkgConfig::WAYLAND PkgConfig::XKB)

@@ -37,6 +37,7 @@ class Runtime : public QObject {
     QMap<qint64, Request> requests;
     QSet<QString> sessions, cleanupSessions;
     QJsonObject version, launchEnvironment;
+    QString startupNonce;
     QString policy;
     QByteArray input;
     std::deque<Write> outgoing;
@@ -221,7 +222,7 @@ class Runtime : public QObject {
                     }
                     owner = socket;
                 }
-                deliver(socket, {{"ok", true}, {"pid", browser.processId()}, {"version", version}, {"launchEnvironment", launchEnvironment}});
+                deliver(socket, {{"ok", true}, {"pid", browser.processId()}, {"version", version}, {"launchEnvironment", launchEnvironment}, {"startupNonce", startupNonce}});
                 socket->setProperty("attached", true);
             } else if (owner == socket && socket->property("attached").toBool()) {
                 if (!message["id"].isDouble() || !message["method"].isString() || requests.size() >= 256) { socket->abort(); return; }
@@ -240,6 +241,8 @@ public:
         close(commands[0]); close(responses[1]); writeFd = commands[1]; readFd = responses[0];
         if (childRead < 0 || childWrite < 0) fail("Cannot map browser pipe");
         auto environment = QProcessEnvironment::systemEnvironment();
+        startupNonce = environment.value("CORNICE_BROWSER_STARTUP_NONCE");
+        environment.remove("CORNICE_BROWSER_STARTUP_NONCE");
         environment.remove("CORNICE_BROWSER_REQUESTED_ENV");
         environment.remove("CORNICE_BROWSER_POLICY");
         for (const auto &key : environment.keys()) launchEnvironment[key] = environment.value(key);

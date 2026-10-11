@@ -45,6 +45,10 @@ try:
         assert any(client['pid'] == browser_pid and 'Browser recovery' in client['title'] for client in ctl('clients', True))
         record(mode + ' Broker replacement keeps the same Chrome process, tab, draft and DOM; old grants stay revoked')
 
+    # Keep an actual compositor capture for visual review of the recovered page.
+    frame = tool(binding, 'capture')
+    (BASE / 'browser-recovery-restored.png').write_bytes(base64.b64decode(frame['pngBase64']))
+
     # The managed browser remains attached to the private desktop after real
     # output geometry changes; this exercises compositor/native topology, not
     # a simulated logind resume event or a physical sleep operation.
@@ -83,7 +87,7 @@ try:
     cli('create', 'slow-desktop', '--virtual-output', '1280x800')
     cli('resume', 'slow-desktop'); slow_binding = bind('slow-desktop')
     viewer = socket.socket(socket.AF_UNIX); viewer.settimeout(2)
-    viewer.connect(str(RT / 'cornice' / ENV['HYPRLAND_INSTANCE_SIGNATURE'] / 'desktop.sock'))
+    viewer.connect(str(broker_socket()))
     assert rpc(viewer, 'present', {'name': 'watch-desktop'})['active']
     assert rpc(viewer, 'takeover', {'name': 'watch-desktop'})['humanControl']
     def request_browser(credential, label):

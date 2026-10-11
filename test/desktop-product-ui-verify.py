@@ -8,7 +8,7 @@ class Task:
     def __init__(self, preferred):
         self.connection = socket.socket(socket.AF_UNIX)
         self.connection.settimeout(5)
-        self.connection.connect(str(RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktop.sock'))
+        self.connection.connect(str(broker_socket()))
         self.lock = threading.RLock()
         self.buffer = b''
         self.stopped = threading.Event()
@@ -75,12 +75,16 @@ def panel_action(action,target=''):
     subprocess.run(['grim','-o','human',str(BASE/('panel-'+action+'-'+stamp+'.png'))],env=ENV,check=True)
     click(layer['x']+button['x']+button['width']/2,layer['y']+button['y']+button['height']/2)
 
-def menu(name):
-    widgets=json.loads(local(name,'ipc','bar','geometry'))
-    controls=next(widget['controls'] for widget in widgets if widget['id']=='cn.agent-desktop')
-    group=next(item for item in controls if item['name']=='group')
+def menu(name=None):
+    def controls():
+        geometry=local(name,'ipc','bar','geometry') if name else shell('ipc','bar','geometry')
+        return next(widget['controls'] for widget in json.loads(geometry) if widget['id']=='cn.agent-desktop')
+    group=next(item for item in controls() if item['name']=='group')
     send(f"motion {round(group['x']+group['width']/2)} {round(group['y']+group['height']/2)}")
-    return wait(lambda:next(widget['controls'] for widget in json.loads(local(name,'ipc','bar','geometry')) if widget['id']=='cn.agent-desktop') if any(item['name']=='control:current-heading' for item in next(widget['controls'] for widget in json.loads(local(name,'ipc','bar','geometry')) if widget['id']=='cn.agent-desktop')) else None)
+    def open_controls():
+        rows=controls()
+        return rows if any(item['name']=='control:current-heading' for item in rows) else None
+    return wait(open_controls)
 
 def card_click(name,secondary=False):
     row=wait(lambda:next((item for item in cooperation(name if secondary else None)['controls'] if item['name']==name),None))
@@ -139,13 +143,15 @@ try:
     workspace_name=workspace.removeprefix('name:')
     shell('ipc','desktopObserver','browse',workspace)
     wait(lambda:observer()['presentation'].get('following') is False and observer()['presentation'].get('workspace')==workspace_name)
-    rows=menu('bootstrap-ui')
+    # The primary shell owns the physical bar during read-only presentation.
+    rows=menu()
     follow=next(item for item in rows if item['name']=='control:follow')
     assert follow['enabled'] and follow['target']=='bootstrap-ui',follow
     def browsed_bar():
-        widget=next(item for item in json.loads(local('bootstrap-ui','ipc','bar','geometry')) if item['id']=='cn.workspaces')
+        widget=next(item for item in json.loads(shell('ipc','bar','geometry')) if item['id']=='cn.workspaces')
         return next(item for item in widget['controls'] if item['active'])['name']=='2'
     wait(browsed_bar)
+    assert cli('state','bootstrap-ui')['workspaceName'].endswith('-ws-1')
     subprocess.run(['grim','-o','human',str(BASE/'product-free-browse.png')],env=ENV,check=True)
     click(follow['x']+follow['width']/2,follow['y']+follow['height']/2)
     wait(lambda:observer()['presentation'].get('following') is True)
@@ -154,6 +160,8 @@ try:
     settings['desktopApplications']={'rules':{'ui-probe':{'executables':['python3'],'scope':'secondary','profile':'../invalid'}}}
     configure();shell('ipc','shell','reloadConfig')
     shell('ipc','desktopObserver','takeover','true');wait(lambda:observer()['humanControl'])
+    # In takeover, the secondary shell owns its native bar and current workspace.
+    wait(lambda:next(item for item in next(widget['controls'] for widget in json.loads(local('bootstrap-ui','ipc','bar','geometry')) if widget['id']=='cn.workspaces') if item['active'])['name']=='1')
     local('bootstrap-ui','launcher');wait(lambda:json.loads(local('bootstrap-ui','ipc','launcher','debug'))['focused'])
     local('bootstrap-ui','ipc','launcher','setQuery','Cornice UI Launch Target')
     wait(lambda:json.loads(local('bootstrap-ui','ipc','launcher','debug'))['first']=='Cornice UI Launch Target')

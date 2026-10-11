@@ -2,9 +2,10 @@
 import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,readFile,chmod,mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {join,resolve,dirname} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const root=resolve(process.env.CORNICE_TEST_PRODUCT || '.');
+const {desktopSocketPath}=await import(pathToFileURL(join(root,'native/agent/desktop-endpoint.mjs')).href);
 const {Client}=await import(pathToFileURL(join(root,'native/agent/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js')).href);
 const {StdioClientTransport}=await import(pathToFileURL(join(root,'native/agent/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js')).href);
 const dir=await mkdtemp(join(tmpdir(),'cornice-mcp-transport-'));
@@ -12,8 +13,9 @@ const dir=await mkdtemp(join(tmpdir(),'cornice-mcp-transport-'));
 // retaining the deleted embedded-executor job bridge in production.
 const {createServer}=await import('node:net');
 let mode='state';
-const runtime=join(dir,'runtime');await mkdir(join(runtime,'cornice/test'),{recursive:true});
-const socketPath=join(runtime,'cornice/test/desktop.sock');
+const runtime=join(dir,'runtime');
+const socketPath=desktopSocketPath(runtime,'test');
+await mkdir(dirname(socketPath),{recursive:true});
 const fixture=createServer(socket=>{
  let input='';socket.on('data',data=>{
   input+=data;const end=input.indexOf('\n');if(end<0)return;

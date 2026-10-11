@@ -9,6 +9,7 @@ import socket
 import subprocess
 import tempfile
 import threading
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -32,6 +33,13 @@ class Endpoint:
             with connection:
                 request = json.loads(connection.makefile().readline())
                 self.requests.append(request)
+                if request['method'] == 'empty':
+                    continue
+                if request['method'] == 'malformed':
+                    connection.sendall(b'{broken\n')
+                    continue
+                if request['method'] in ('delayed', 'timeout'):
+                    time.sleep(.8)
                 if request['method'] == 'rejected' or (request['method'] == 'setDnd' and request['args'] == ['invalid']):
                     reply = {'ok': False, 'error': 'rejected by endpoint'}
                 else:
@@ -41,7 +49,10 @@ class Endpoint:
                     elif request['target'] == 'lock' and request['method'] == 'status':
                         result['secure'] = True
                     reply = {'ok': True, 'result': result}
-                connection.sendall((json.dumps(reply) + '\n').encode())
+                try:
+                    connection.sendall((json.dumps(reply) + '\n').encode())
+                except BrokenPipeError:
+                    assert request['method'] == 'timeout'
 
     def close(self):
         self.closed = True
@@ -122,6 +133,36 @@ with tempfile.TemporaryDirectory(prefix='cornice-routing-', dir='/tmp') as tempo
         arguments = ['a\nmultiline value', '', '--argument']
         assert routed('desktop2', 'ipc', 'local', 'arguments', *arguments, environment=scoped)['args'] == arguments
         print('PASS declared future services and intact empty/multiline IPC arguments use the common route')
+
+        before = len(secondary.requests)
+        started = time.monotonic()
+        routed('desktop2', 'ipc', 'screenshot', 'delayed', environment=scoped)
+        assert .75 <= time.monotonic() - started < 3
+        assert len(secondary.requests) == before + 1
+        print('PASS a real delayed shell reply beyond stdin EOF grace succeeds with one submission')
+        for method, diagnostic in (('empty', 'without a complete reply'), ('malformed', 'invalid shell IPC response')):
+            before = len(secondary.requests)
+            result = run('ipc', 'screenshot', method, environment=scoped, succeeds=False)
+            assert diagnostic in result.stderr, result.stderr
+            assert len(secondary.requests) == before + 1
+            assert not fallback.exists()
+        print('PASS empty and malformed shell replies fail explicitly without action replay or fallback')
+
+        # A real legacy caller has no published endpoint or explicit shell scope.
+        # Once its selected socket accepted a request, a failure cannot fall back
+        # to Quickshell discovery and execute that same action a second time.
+        assert not (base / ('cs-' + digest + '-session.json')).exists()
+        for method, diagnostic in (('empty', 'without a complete reply'), ('malformed', 'invalid shell IPC response'), ('timeout', 'IPC transport failed')):
+            before = len(primary.requests)
+            started = time.monotonic()
+            caller = env | {'CORNICE_IPC_TIMEOUT': '.15'} if method == 'timeout' else env
+            result = run('ipc', 'screenshot', method, environment=caller, succeeds=False)
+            assert diagnostic in result.stderr, result.stderr
+            assert len(primary.requests) == before + 1
+            assert not fallback.exists()
+            if method == 'timeout':
+                assert time.monotonic() - started < 1
+        print('PASS short reply deadline, empty and malformed replies never replay through legacy unscoped discovery')
 
         explicit = scoped | {'CORNICE_PRIMARY_SHELL_SOCKET': str(custom.path)}
         routed('custom-primary', 'ipc', 'lock', 'status', environment=explicit)

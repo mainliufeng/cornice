@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""One-shot SDDM/Hyprland trial; the normal login and installed versions stay intact."""
+"""Select an immutable SDDM/Hyprland session; stable installed versions stay intact."""
 import argparse
 import ctypes
 import fcntl
@@ -24,6 +24,7 @@ if (Path(__file__).resolve().parent / "cornice/bin/cornice").is_file():
     ROOT = Path(__file__).resolve().parent / "cornice"
 STATE = Path(os.environ.get("CORNICE_TRIAL_STATE_DIR",
     str(Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "cornice/session-trial")))
+SELECTION_SCHEMA = 1
 HOOK_BEGIN = "# BEGIN cornice one-shot session trial"
 HOOK_END = "# END cornice one-shot session trial"
 
@@ -144,7 +145,7 @@ def prepare(args):
             build = source / "native/build"
             native_bin = product / "native/bin"
             native_bin.mkdir(parents=True)
-            for name in ("cornice-desktop-runtime", "cornice-human-lock", "cornice-session-guard", "cornice-native-accessibility", "cornice-browser-runtime"):
+            for name in ("cornice-desktop-runtime", "cornice-human-lock", "cornice-session-guard", "cornice-native-accessibility", "cornice-browser-runtime", "cornice-application-guard"):
                 shutil.copy2(build / name, native_bin / name)
             shutil.copytree(source / "native/agent", product / "native/agent")
             module = product / "native/qml/Cornice/Desktop"
@@ -153,10 +154,12 @@ def prepare(args):
             for library in module.glob("*.so"):
                 run(["patchelf", "--set-rpath", "$ORIGIN", library])
         for name in ("cornice-desktop-runtime", "cornice-human-lock", "cornice-session-guard",
-                     "cornice-native-accessibility", "cornice-browser-runtime"):
+                     "cornice-native-accessibility", "cornice-browser-runtime", "cornice-application-guard"):
             binary = product / "native/bin" / name
             if not binary.is_file() or not os.access(binary, os.X_OK):
                 raise RuntimeError("Candidate is missing an executable native component: " + name)
+        if not (product / "native/agent/desktop-endpoint.mjs").is_file():
+            raise RuntimeError("Candidate is missing the native agent endpoint module: desktop-endpoint.mjs")
         platform = source / "native/qml/Cornice/Platform"
         if not platform.is_dir():
             platform = source / "native/platform-build/qml/Cornice/Platform"
@@ -249,6 +252,7 @@ def prepare(args):
                         stable_files[str(path)] = digest(path)
         manifest = {"id": identifier, "release": str(release), "product": str(product),
                     "hashes": {str(p.relative_to(release)): digest(p) for p in files},
+                    "loginSelectionSchema": SELECTION_SCHEMA,
                     "stable": {"entry": "/usr/bin/start-hyprland", "hyprland": digest("/usr/bin/Hyprland"),
                                "cornice": str(stable_cli), "hashes": stable_files}}
         atomic(release / "manifest.json", manifest)
@@ -279,22 +283,183 @@ def arm(args):
                 raise RuntimeError("Prepare a different candidate before arming after the current trial")
         cancel_ticket()
         verify_release(release)
-        profile = Path(os.environ.get("ZDOTDIR", str(Path.home()))) / ".zprofile"
-        profile = profile.resolve()
-        contents = profile.read_text() if profile.exists() else ""
-        if HOOK_BEGIN not in contents:
-            atomic(STATE / "login-profile-backup.json", {"path": str(profile), "existed": profile.exists(), "contents": contents})
-        runner = ("/usr/bin/env " + shlex.quote("CORNICE_TRIAL_STATE_DIR=" + str(STATE)) +
-                  " /usr/bin/python3 " + shlex.quote(str(release / "runner")))
-        hook = (f"\n{HOOK_BEGIN}\n"
-                f"if {runner} is-login \"$$\"; then\n"
-                f"  exec {runner} login\nfi\n{HOOK_END}\n")
-        mode = profile.stat().st_mode & 0o777 if profile.exists() else 0o600
-        atomic(profile, remove_block(contents) + hook)
-        profile.chmod(mode)
+        selected = selection()
+        install_login_hook(Path(selected["release"]) if selected else release)
         # Durable, one-use ticket. Login consumes it before launching any candidate code.
         atomic(STATE / "pending.json", {"release": str(release), "startupSeconds": args.startup_seconds, "armedAt": time.time()})
         print("Armed for ONE SDDM Hyprland login. Current session unchanged.")
+
+
+def install_login_hook(release):
+    profile = Path(os.environ.get("ZDOTDIR", str(Path.home()))) / ".zprofile"
+    profile = profile.resolve()
+    contents = profile.read_text() if profile.exists() else ""
+    if HOOK_BEGIN not in contents:
+        atomic(STATE / "login-profile-backup.json", {"path": str(profile), "existed": profile.exists(), "contents": contents})
+    runner = ("/usr/bin/env " + shlex.quote("CORNICE_TRIAL_STATE_DIR=" + str(STATE)) +
+              " /usr/bin/python3 " + shlex.quote(str(release / "runner")))
+    hook = (f"\n{HOOK_BEGIN}\n"
+            f"if {runner} is-login \"$$\"; then\n"
+            f"  exec {runner} login\nfi\n{HOOK_END}\n")
+    mode = profile.stat().st_mode & 0o777 if profile.exists() else 0o600
+    atomic(profile, remove_block(contents) + hook)
+    profile.chmod(mode)
+
+
+def selection():
+    path = STATE / "selection.json"
+    if not path.exists():
+        return None
+    value = read(path)
+    if (not isinstance(value, dict) or value.get("schema") != SELECTION_SCHEMA or
+            not isinstance(value.get("id"), str) or not re.fullmatch(r"[a-f0-9]{32}", value["id"]) or
+            not isinstance(value.get("release"), str) or
+            type(value.get("startupSeconds")) is not int or not 5 <= value["startupSeconds"] <= 300):
+        raise ValueError("Invalid persistent login selection")
+    release = Path(value["release"])
+    if not release.is_absolute() or release.resolve().parent != (STATE / "releases").resolve():
+        raise ValueError("Selected release is outside the prepared release directory")
+    return value
+
+
+def clear_selection(identity=None, reason=None):
+    # An old session must not revoke a newer selection made while it ran, or
+    # delete the newer session's launch marker.
+    selected_path = STATE / "selection.json"
+    marker_path = STATE / "selection-launch.json"
+    preserve = False
+    if identity is not None:
+        try:
+            selected = selection()
+            preserve = bool(selected and selected["id"] != identity)
+        except (OSError, ValueError):
+            pass
+    if not preserve:
+        selected_path.unlink(missing_ok=True)
+    try:
+        marker = read(marker_path) if marker_path.exists() else None
+    except (OSError, ValueError):
+        marker = None
+    if identity is None or not isinstance(marker, dict) or marker.get("selectionId") == identity:
+        marker_path.unlink(missing_ok=True)
+    descriptor = os.open(STATE, os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    if reason and not preserve:
+        atomic(STATE / "selection-failure.json", {"reason": reason, "at": time.time()})
+
+
+def select_release(args):
+    with locked():
+        release = Path(args.release).resolve() if args.release else Path(read(STATE / "prepared.json")["release"]).resolve()
+        if release.parent != (STATE / "releases").resolve():
+            raise RuntimeError("Select only an immutable release in this state directory")
+        manifest = verify_release(release)
+        if manifest.get("loginSelectionSchema") != SELECTION_SCHEMA:
+            raise RuntimeError("This snapshot runner only supports one-shot login; prepare a fresh snapshot")
+        install_login_hook(release)
+        cancel_ticket()
+        atomic(STATE / "selection.json", {"schema": SELECTION_SCHEMA, "id": uuid.uuid4().hex,
+            "release": str(release), "startupSeconds": args.startup_seconds, "selectedAt": time.time()})
+        print("Selected for future Hyprland logins; previous pending trial cancelled. Current session unchanged.")
+
+
+def selection_marker():
+    path = STATE / "selection-launch.json"
+    if not path.exists():
+        return None
+    value = read(path)
+    if (not isinstance(value, dict) or not isinstance(value.get("selectionId"), str) or
+            not re.fullmatch(r"[a-f0-9]{32}", value["selectionId"]) or
+            type(value.get("pid")) is not int or value["pid"] <= 0 or
+            not isinstance(value.get("processStart"), str) or not value["processStart"].isdigit()):
+        raise ValueError("Invalid persistent launch marker")
+    return value
+
+
+def login_ticket():
+    # Called while holding both session.lock and control.lock. A durable launch
+    # marker survives SIGKILL/power loss, preventing an endless failed login loop.
+    try:
+        selected = selection()
+        marker = selection_marker()
+        if marker is not None:
+            if is_running(marker):
+                raise RuntimeError("A selected session is already running")
+            if selected and selected["id"] == marker["selectionId"]:
+                clear_selection(selected["id"], "Previous selected session did not finish safely; stable login selected")
+                selected = None
+            else:
+                (STATE / "selection-launch.json").unlink(missing_ok=True)
+    except (OSError, ValueError) as error:
+        clear_selection(reason=str(error))
+        selected = None
+    pending = STATE / "pending.json"
+    if pending.exists():
+        pending.replace(STATE / "consumed.json")
+        descriptor = os.open(STATE, os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        ticket = read(STATE / "consumed.json")
+        if not isinstance(ticket, dict) or not isinstance(ticket.get("release"), str) or type(ticket.get("startupSeconds")) is not int or not 5 <= ticket["startupSeconds"] <= 300:
+            raise ValueError("Invalid one-shot ticket")
+        return dict(ticket, persistent=False)
+    if not selected:
+        return None
+    atomic(STATE / "selection-launch.json", {"selectionId": selected["id"], "pid": os.getpid(),
+        "processStart": start_identity(os.getpid())})
+    return dict(selected, selectionId=selected["id"], persistent=True)
+
+
+def finish_selection(ticket, normal_end):
+    if not ticket.get("persistent"):
+        return  # Finishing a one-shot never cancels a separately selected release.
+    with locked():
+        if not normal_end:
+            clear_selection(ticket["selectionId"], "Selected session failed; stable login selected")
+            return
+        marker_path = STATE / "selection-launch.json"
+        marker = read(marker_path) if marker_path.exists() else None
+        if marker and marker.get("selectionId") == ticket["selectionId"]:
+            marker_path.unlink()
+            descriptor = os.open(STATE, os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+
+
+def next_login():
+    error = None
+    try:
+        selected = selection()
+    except (OSError, ValueError) as problem:
+        selected = None
+        error = str(problem)
+    pending = STATE / "pending.json"
+    if pending.exists():
+        try:
+            ticket = read(pending)
+            intent = {"mode": "trial", "release": ticket.get("release")}
+        except (OSError, ValueError, AttributeError) as problem:
+            intent = {"mode": "trial", "error": str(problem)}
+    elif selected:
+        intent = {"mode": "persistent", "release": selected["release"]}
+        marker_path = STATE / "selection-launch.json"
+        if marker_path.exists():
+            try:
+                marker = selection_marker()
+                if marker and marker["selectionId"] == selected["id"] and not is_running(marker):
+                    intent = {"mode": "stable", "reason": "Interrupted selected session; selection will be cleared at login"}
+            except (OSError, ValueError):
+                intent = {"mode": "stable", "reason": "Invalid launch marker; selection will be cleared at login"}
+    else:
+        intent = {"mode": "stable"}
+    return selected, intent, error
 
 
 def login_matches(pid):
@@ -302,7 +467,8 @@ def login_matches(pid):
         arguments = Path(f"/proc/{int(pid)}/cmdline").read_bytes().split(b"\0")
         return (b"/usr/bin/start-hyprland" in arguments and
                 any(a.endswith(b"/wayland-session") for a in arguments) and
-                (STATE / "pending.json").exists())
+                ((STATE / "pending.json").exists() or (STATE / "selection.json").exists() or
+                 (STATE / "selection-launch.json").exists()))
     except (OSError, ValueError):
         return False
 
@@ -315,13 +481,23 @@ def start_identity(pid):
 
 
 def is_running(info):
-    return info.get("pid") and info.get("processStart") == start_identity(info["pid"])
+    if (not isinstance(info, dict) or type(info.get("pid")) is not int or info["pid"] <= 0 or
+            not isinstance(info.get("processStart"), str) or not info["processStart"].isdigit()):
+        return False
+    identity = start_identity(info["pid"])
+    return identity is not None and info["processStart"] == identity
 
 
 def request(action):
     with locked():
-        info = read(STATE / "current.json")
+        info = read(STATE / "current.json") if (STATE / "current.json").exists() else {}
+        if action == "rollback":
+            cancel_ticket()
+            clear_selection()
         if not is_running(info) or info["status"] not in ("starting", "ready", "confirmed"):
+            if action == "rollback":
+                print("Stable login selected; no running trial to end.")
+                return
             raise RuntimeError("No running trial")
         if action == "confirm" and info["status"] == "starting":
             raise RuntimeError("Trial has not passed startup checks")
@@ -385,7 +561,8 @@ class Trial:
                                 HYPRLAND_NO_SD_VARS="1", HYPRLAND_NO_SD_TARGET="1", HYPRLAND_NO_SD_NOTIFY="1",
                                 QS_DISABLE_FILE_WATCHER="1", QS_NO_RELOAD_POPUP="1")
         self.info = {"pid": os.getpid(), "processStart": start_identity(os.getpid()), "run": str(self.directory),
-                     "release": str(self.release), "status": "starting", "stableSelected": True}
+                     "release": str(self.release), "status": "starting", "persistent": bool(ticket.get("persistent")),
+                     "stableSelected": not (STATE / "selection.json").exists()}
         self.interrupted = False
 
     def update(self, status, **kwargs):
@@ -492,7 +669,7 @@ class Trial:
             self.auxiliary_failure("autostart configuration", error)
             commands = []
         notice = ("试运行桌面：启动检查已通过，后台持续检查；无需确认，不会因超时退出。"
-                  "有问题按 Super+Ctrl+Alt+Backspace 回退。下一次登录始终使用稳定版。")
+                  "有问题按 Super+Ctrl+Alt+Backspace 回退；下次登录版本见 session-trial status。")
         starts = [(["/bin/sh", "-c", command], "autostart-" + str(index)) for index, command in enumerate(commands)]
         starts.append((["notify-send", "Cornice 试运行", notice, "--expire-time=0"], "notice"))
         for arguments, name in starts:
@@ -505,9 +682,9 @@ class Trial:
     def supervise_once(self):
         self.check_request()  # An explicit rollback still ends the session.
         if self.compositor.poll() is not None:
-            self.report_health(reason="Hyprland exited; stable login remains selected")
-            self.update("exited" if self.compositor.returncode == 0 else "rolled-back",
-                        reason="Hyprland exited; stable login remains selected")
+            reason = "Hyprland exited normally" if self.compositor.returncode == 0 else "Hyprland exited unexpectedly"
+            self.report_health(reason=reason)
+            self.update("exited" if self.compositor.returncode == 0 else "rolled-back", reason=reason)
             return False
         if (self.directory / "confirm").exists() and self.info["status"] != "confirmed":
             try:
@@ -646,7 +823,9 @@ class Trial:
     def execute(self):
         self.update("starting")
         config = self.directory / "hyprland.lua"
-        runner = shlex.join(["/usr/bin/python3", str(self.release / "runner")])
+        # The control runner may be newer than a prioritized one-shot release.
+        # Its rollback must also revoke the persistent selection it owns.
+        runner = shlex.join(["/usr/bin/python3", str(Path(__file__).resolve())])
         # Additional hotkeys work even when the Cornice UI is broken.
         config.write_text((self.release / "hyprland.lua").read_text() + "\n" +
             'hl.config({misc={disable_watchdog_warning=true}})\n' +
@@ -773,27 +952,21 @@ def login():
     with (STATE / "session.lock").open("a") as stream:
         fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with locked():
-            pending = STATE / "pending.json"
-            if not pending.exists():
+            try:
+                ticket = login_ticket()
+            except (OSError, ValueError) as error:
+                atomic(STATE / "current.json", {"status": "rolled-back", "stableSelected": True,
+                                                "reason": "Invalid login ticket: " + str(error)})
+                return
+            if ticket is None:
                 if sandbox:
                     return
                 os.execv("/usr/bin/start-hyprland", ["/usr/bin/start-hyprland"])
-            # Atomic rename and directory fsync before any candidate launch. A power loss,
-            # SIGKILL or failed login cannot re-enter the candidate on the next login.
-            pending.replace(STATE / "consumed.json")
-            descriptor = os.open(STATE, os.O_DIRECTORY)
-            os.fsync(descriptor)
-            os.close(descriptor)
-            try:
-                ticket = read(STATE / "consumed.json")
-            except (OSError, ValueError) as error:
-                atomic(STATE / "current.json", {"status": "rolled-back", "stableSelected": True,
-                                                "reason": "Invalid one-shot ticket: " + str(error)})
-                return
         trial = Trial(ticket)
         for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
             signal.signal(sig, lambda *_: setattr(trial, "interrupted", True))
         manager_environment = None
+        normal_end = False
         try:
             verify_release(trial.release)
             # Do not send candidate CORNICE_PATH/PATH into the persistent user manager.
@@ -809,11 +982,20 @@ def login():
                 atomic(trial.directory / "manager-environment.json", manager_environment)
                 run(["systemctl", "--user", "stop", "cornice.service"], timeout=10)
             trial.execute()
+            normal_end = trial.info.get("status") == "exited"
         except Exception as error:
-            trial.update("rolled-back", reason=str(error))
-            print("cornice trial: stable login selected; logging out: " + str(error), file=sys.stderr)
+            # SIGTERM/HUP after readiness is a normal session end. Explicit
+            # rollback has its own durable request and already cleared selection.
+            normal_end = (trial.info.get("status") == "exited" or
+                          (trial.interrupted and trial.info.get("status") in ("ready", "confirmed") and
+                           not (trial.directory / "rollback").exists()))
+            trial.update("exited" if normal_end else "rolled-back", reason=str(error))
+            print("cornice session ended: " + str(error), file=sys.stderr)
         finally:
-            trial.cleanup()
+            try:
+                trial.cleanup()
+            finally:
+                finish_selection(ticket, normal_end)
             if manager_environment is not None:
                 try:
                     present = [key + "=" + value for key, value in manager_environment.items() if value is not None]
@@ -839,8 +1021,11 @@ def main():
     arming.add_argument("--seconds", type=int, help="Deprecated and ignored: healthy sessions have no confirmation deadline")
     arming.add_argument("--startup-seconds", type=int, default=60)
     arming.add_argument("--after-current", action="store_true", help="Explicitly select a DIFFERENT candidate for one next login while this trial keeps running")
+    choosing = sub.add_parser("select", help="Persistently select a prepared immutable release for future logins")
+    choosing.add_argument("--release", help="Prepared release path; defaults to the latest prepared snapshot")
+    choosing.add_argument("--startup-seconds", type=int, default=60)
     sub.add_parser("status")
-    sub.add_parser("cancel", help="Cancel the next login ticket; does not terminate any desktop")
+    sub.add_parser("cancel", help="Select stable login by clearing pending and persistent selection; current session unchanged")
     sub.add_parser("remove-hook", help="Cancel and remove only the managed login snippet, keeping other edits")
     sub.add_parser("confirm", help="Optional acknowledgement only; healthy sessions already stay running")
     sub.add_parser("rollback", help="End only the running trial; next login uses the stable version")
@@ -854,6 +1039,10 @@ def main():
         if not 5 <= args.startup_seconds <= 300:
             raise RuntimeError("Startup must be 5..300 seconds")
         arm(args)
+    elif args.action == "select":
+        if not 5 <= args.startup_seconds <= 300:
+            raise RuntimeError("Startup must be 5..300 seconds")
+        select_release(args)
     elif args.action == "is-login":
         return 0 if login_matches(args.pid) else 1
     elif args.action == "login":
@@ -866,6 +1055,7 @@ def main():
             if args.action == "remove-hook" and is_running(current):
                 raise RuntimeError("End the trial before removing its login hook")
             cancel_ticket()
+            clear_selection()
             if args.action == "remove-hook" and (STATE / "login-profile-backup.json").exists():
                 backup = read(STATE / "login-profile-backup.json")
                 profile = Path(backup["path"])
@@ -880,8 +1070,11 @@ def main():
         print("Next login uses the normal stable entry. Current session unchanged.")
     elif args.action == "status":
         current = read(STATE / "current.json") if (STATE / "current.json").exists() else None
+        selected, intent, error = next_login()
         print(json.dumps({"armed": (STATE / "pending.json").exists(), "current": current,
-                          "running": bool(current and is_running(current))}, ensure_ascii=False, indent=2))
+                          "running": bool(current and is_running(current)), "selected": selected,
+                          "nextLogin": intent, "selectionError": error,
+                          "stableSelected": intent["mode"] == "stable"}, ensure_ascii=False, indent=2))
     return 0
 
 

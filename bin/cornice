@@ -59,7 +59,7 @@ Machine
   clock [cmd]         World clocks: list | add <name> <zone> | set | rename | remove | move | zones
   previews [mode]     Floating previews: active (default) | always
   desktop [cmd]       Independent seat-bound desktops (desktop help)
-  session-trial [cmd] One-shot login trial with automatic fallback (session-trial --help)
+  session-trial [cmd] Select login version or one-shot trial; explicit stable fallback (session-trial --help)
   takeover [--apply]  Take over from mako/hypridle/waybar/polkit-gnome (plan first!)
   test [--quick|suite]  Run the test suites (takeover, headless, lock, live)
   session-env         Print compositor env exports (for TTYs / stale shells)
@@ -193,7 +193,7 @@ call_via_socket() {
   shift
   sock=$(socket_path "$scope") || return 4
   [[ -S $sock ]] || return 2
-  command -v socat >/dev/null 2>&1 || return 2
+  command -v python3 >/dev/null 2>&1 || return 2
   command -v jq >/dev/null 2>&1 || return 2
 
   target=$1
@@ -205,8 +205,52 @@ call_via_socket() {
   local request
   request=$(jq -cn --arg t "$target" --arg m "$method" --argjson a "$args" '{target:$t, method:$m, args:$a}')
 
+  # Hold the connection until one framed reply arrives. socat's default
+  # stdin-EOF grace is only 0.5s, which can discard a valid slower shell reply.
+  # One submission, one deadline, and no retry of possibly completed actions.
   local reply
-  reply=$(printf '%s\n' "$request" | timeout "$ipc_timeout" socat - UNIX-CONNECT:"$sock" 2>/dev/null) || return 3
+  reply=$(printf '%s\n' "$request" | python3 -c '
+import re, socket, sys, time
+try:
+    duration = re.fullmatch(r"((?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))([smhd]?)", sys.argv[2])
+    if not duration:
+        raise ValueError("invalid IPC timeout")
+    seconds = float(duration[1]) * {"":1, "s":1, "m":60, "h":3600, "d":86400}[duration[2]]
+    if seconds <= 0:
+        raise ValueError("IPC timeout must be positive")
+    request = sys.stdin.buffer.read(1048577)
+    if len(request) > 1048576:
+        raise ValueError("IPC request exceeds 1 MiB")
+    deadline = time.monotonic() + seconds
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(seconds)
+        connection.connect(sys.argv[1])
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("submission deadline exceeded; no retry was sent")
+        connection.settimeout(remaining)
+        connection.sendall(request)
+        reply = bytearray()
+        while b"\n" not in reply:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("reply deadline exceeded; request outcome is unconfirmed")
+            connection.settimeout(remaining)
+            chunk = connection.recv(65536)
+            if not chunk:
+                raise ConnectionError("shell closed without a complete reply; request outcome is unconfirmed")
+            reply.extend(chunk)
+            if len(reply) > 1048576:
+                raise ValueError("IPC reply exceeds 1 MiB")
+        sys.stdout.buffer.write(reply.split(b"\n", 1)[0])
+except (OSError, ValueError) as error:
+    print("cornice: shell IPC transport failed: " + str(error), file=sys.stderr)
+    sys.exit(3)
+' "$sock" "$ipc_timeout") || return 4
+  if ! jq -e 'type == "object" and (.ok | type == "boolean")' <<<"$reply" >/dev/null 2>&1; then
+    echo "cornice: invalid shell IPC response; request outcome is unconfirmed" >&2
+    return 1
+  fi
   if jq -e '.ok == true' <<<"$reply" >/dev/null 2>&1; then
     jq -r '.result' <<<"$reply"
     return 0

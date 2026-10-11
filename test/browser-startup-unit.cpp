@@ -126,6 +126,10 @@ class PipeFixture : public QObject {
             const auto method = message["method"].toString();
             QJsonObject result;
             if (method == "Browser.getVersion") result = {{"product","Pipe unit browser"}};
+            if (method == "Unit.openURL") {
+                QFile file(gate+".urls"); require(file.open(QIODevice::Append),"pipe fixture request record failed");
+                file.write(message["params"].toObject()["url"].toString().toUtf8()+"\n");
+            }
             if (method == "Target.detachFromTarget") {
                 ++detachedCount;
                 if (detachedCount == cleanupSessionCount) marker(completed);
@@ -169,6 +173,7 @@ static void verifyRuntimePipe(const QString &directory) {
     environment.insert("HYPRLAND_INSTANCE_SIGNATURE","unit"); environment.insert("XDG_RUNTIME_DIR",directory);
     environment.insert("HTTP_PROXY","http://private-unit-proxy.invalid:8080");
     environment.insert("CORNICE_BROWSER_REQUESTED_ENV","{}"); environment.insert("CORNICE_BROWSER_POLICY","unit");
+    environment.insert("CORNICE_BROWSER_STARTUP_NONCE","private-pipe-startup-nonce");
     runtime.setProcessEnvironment(environment);
     runtime.setProgram(QCoreApplication::applicationDirPath()+"/cornice-browser-runtime");
     runtime.setArguments({path,QCoreApplication::applicationFilePath(),
@@ -212,7 +217,8 @@ static void verifyRuntimePipe(const QString &directory) {
         const auto greeting = received.takeFirst();
         require(greeting["ok"].toBool() && greeting["pid"].toInteger() > 0,"real helper attachment failed");
         const auto launched = greeting["launchEnvironment"].toObject();
-        require(launched["HTTP_PROXY"] == environment.value("HTTP_PROXY") && !launched.contains("CORNICE_BROWSER_POLICY") && !launched.contains("CORNICE_BROWSER_REQUESTED_ENV"),"real helper retained the wrong launch environment");
+        require(launched["HTTP_PROXY"] == environment.value("HTTP_PROXY") && !launched.contains("CORNICE_BROWSER_POLICY") && !launched.contains("CORNICE_BROWSER_REQUESTED_ENV") && !launched.contains("CORNICE_BROWSER_STARTUP_NONCE"),"real helper retained the wrong launch environment");
+        require(greeting["startupNonce"]=="private-pipe-startup-nonce","real helper lost its private startup identity");
         const auto browserPid = greeting["pid"].toInteger();
         std::puts("PASS real helper privately reports the actual application environment without internal control metadata");
         QLocalSocket rejected;
@@ -250,6 +256,69 @@ static void verifyRuntimePipe(const QString &directory) {
     } catch (...) { shutdown(); throw; }
 }
 
+static void verifyManagedStartup(const QString &directory) {
+    auto spin=[](std::function<bool()> condition,int timeout=5000) {
+        QElapsedTimer timer; timer.start();
+        while (!condition() && timer.elapsed()<timeout) { QCoreApplication::processEvents(QEventLoop::AllEvents,20); QThread::msleep(2); }
+        return condition();
+    };
+    const auto instance=QString("startup-unit"), log=directory+"/scope-helper-browser.log", gate=directory+"/scope-helper-gate";
+    const auto socketPath=directory+"/hypr/"+instance+"/.socket2.sock";
+    QLocalServer compositor; require(QDir().mkpath(QFileInfo(socketPath).path()) && compositor.listen(socketPath),"managed startup private compositor failed");
+    auto environment=QProcessEnvironment::systemEnvironment();
+    environment.insert("HYPRLAND_INSTANCE_SIGNATURE",instance); environment.insert("CORNICE_BROWSER_POLICY","unit");
+    environment.insert("CORNICE_BROWSER_REQUESTED_ENV","{}");
+    QStringList arguments{"--pipe-browser-fixture",gate,gate+".emitted",gate+".completed"};
+    std::unique_ptr<BrowserSession> session;
+    auto shutdown=[&] { session.reset(); BrowserSession::close(log); };
+    try {
+        session=std::make_unique<BrowserSession>(QCoreApplication::applicationFilePath(),arguments,environment,log,[](const QString &) { return true; });
+        require(session->setStartupSubmissionCheck([] { return QString{}; }),"first helper starter did not own its submission context");
+        require(!session->setStartupSubmissionCheck([] { return QString("later waiter must not replace first starter"); }),"later helper waiter replaced the first starter context");
+        require(spin([&] { return !session->starting(); }) && session->running(),"real BrowserSession helper startup failed");
+        require(session->initialArgumentsSubmitted() && session->launchSubmitted(),"real new helper startup did not acknowledge this constructor's initial arguments");
+        const auto pid=session->pid();
+        QFile processEnvironment("/proc/"+QString::number(pid)+"/environ");
+        require(processEnvironment.open(QIODevice::ReadOnly) && !processEnvironment.readAll().contains("CORNICE_BROWSER_STARTUP_NONCE="),"private startup nonce leaked into the actual browser application environment");
+        std::puts("PASS real helper startup identifies its own initial arguments and removes private nonce from browser environment");
+        session.reset();
+        QElapsedTimer settle; settle.start(); require(spin([&] { return settle.elapsed()>100; }),"helper reuse observation timed out");
+        session=std::make_unique<BrowserSession>(QCoreApplication::applicationFilePath(),QStringList{"unsubmitted-new-argv"},environment,log,[](const QString &) { return true; });
+        require(spin([&] { return !session->starting(); }) && session->running() && session->pid()==pid && !session->initialArgumentsSubmitted(),"real reused helper was confused with newly submitted startup arguments");
+        QUrl url(session->endpoint("unit-token")+"/json/version");
+        QTcpSocket discovery; QByteArray publicData;
+        QObject::connect(&discovery,&QTcpSocket::connected,&discovery,[&] { discovery.write("GET "+url.path().toUtf8()+" HTTP/1.1\r\nHost: localhost\r\n\r\n"); });
+        QObject::connect(&discovery,&QTcpSocket::readyRead,&discovery,[&] { publicData.append(discovery.readAll()); });
+        discovery.connectToHost(url.host(),url.port());
+        require(spin([&] { return publicData.contains("Pipe unit browser"); }),"real helper public discovery failed");
+        require(!publicData.contains("startupNonce") && !publicData.contains("CORNICE_BROWSER_STARTUP_NONCE") && !publicData.contains("launchEnvironment"),"private startup identity leaked through actual public discovery");
+        QWebSocket client; bool replied=false;
+        QObject::connect(&client,&QWebSocket::connected,&client,[&] { client.sendTextMessage(QString::fromUtf8(QJsonDocument(QJsonObject{{"id",201},{"method","Unit.openURL"},{"params",QJsonObject{{"url","https://unit.invalid/new-request"}}}}).toJson(QJsonDocument::Compact))); });
+        QObject::connect(&client,&QWebSocket::textMessageReceived,&client,[&](QString message) { require(!message.contains("startupNonce") && !message.contains("CORNICE_BROWSER_STARTUP_NONCE"),"private nonce leaked through public WebSocket"); if (QJsonDocument::fromJson(message.toUtf8()).object()["id"].toInt()==201) replied=true; });
+        url=QUrl(session->endpoint("unit-token")+"/devtools/browser/cornice"); url.setScheme("ws"); client.open(url);
+        require(spin([&] { return replied; }),"new request did not reach the reused actual helper");
+        QFile requests(gate+".urls"); require(requests.open(QIODevice::ReadOnly) && requests.readAll()=="https://unit.invalid/new-request\n","helper reuse replayed or omitted the newly submitted request");
+        std::puts("PASS actual helper reuse preserves PID, exposes no private nonce and executes one newly submitted request exactly once");
+        shutdown(); require(spin([&] { return ::kill(pid,0)!=0; }),"managed startup fixture explicit close did not remove its actual application");
+    } catch (...) { shutdown(); throw; }
+}
+
+static void verifyLongBrowserPath(const QString &directory) {
+    const auto previous = qgetenv("XDG_RUNTIME_DIR");
+    const auto runtime = directory + "/" + QString(100, 'x');
+    require(QDir().mkpath(runtime), "long browser runtime fixture failed");
+    qputenv("XDG_RUNTIME_DIR", runtime.toUtf8());
+    bool rejected = false;
+    try {
+        BrowserSession session(QCoreApplication::applicationFilePath(), {}, QProcessEnvironment::systemEnvironment(),
+                               directory + "/long-runtime-browser", [](const QString &) { return true; });
+    } catch (const std::exception &failure) { rejected = QString::fromUtf8(failure.what()).contains("exceeds 107"); }
+    qputenv("XDG_RUNTIME_DIR", previous);
+    require(rejected && !QFileInfo::exists(directory + "/long-runtime-browser.runtime"),
+            "overlong browser IPC path did not fail before submitting helper/application");
+    std::puts("PASS overlong browser helper socket fails explicitly before helper/application submission");
+}
+
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     std::signal(SIGPIPE,SIG_IGN);
@@ -270,14 +339,14 @@ int main(int argc, char **argv) {
     QTimer heartbeat; heartbeat.setInterval(20);
     QObject::connect(&heartbeat, &QTimer::timeout, &app, [&] { ++beats; }); heartbeat.start();
     QTimer deadline; deadline.setSingleShot(true); deadline.start(20000);
-    QObject::connect(&deadline, &QTimer::timeout, &app, [&] { qCritical("FAIL async browser unit timed out"); app.quit(); });
+    QObject::connect(&deadline, &QTimer::timeout, &app, [&] { std::fprintf(stderr, "FAIL async browser unit timed out\n"); app.quit(); });
     std::unique_ptr<Fixture> fixture;
     std::unique_ptr<BrowserSession> session;
     auto guarded = [&](std::function<void()> action) {
-        return [&, action] { try { action(); } catch (const std::exception &failure) { qCritical("FAIL %s", failure.what()); app.quit(); } };
+        return [&, action] { try { action(); } catch (const std::exception &failure) { std::fprintf(stderr, "FAIL %s\n", failure.what()); app.quit(); } };
     };
     auto ready = [&](std::function<void(QString)> action) {
-        return [&, action](QString error) { try { action(error); } catch (const std::exception &failure) { qCritical("FAIL %s", failure.what()); app.quit(); } };
+        return [&, action](QString error) { try { action(error); } catch (const std::exception &failure) { std::fprintf(stderr, "FAIL %s\n", failure.what()); app.quit(); } };
     };
     auto connectSession = [&](const QProcessEnvironment &environment) {
         QElapsedTimer elapsed; elapsed.start();
@@ -386,8 +455,29 @@ int main(int argc, char **argv) {
             QTimer::singleShot(800,&app,guarded([&] {
                 require(!destroyedCallback, "destroyed browser session invoked a callback");
                 std::puts("PASS destroyed startup cancels pending callback ownership");
-                fixture.reset(); verifyRuntimePipe(temporary.path()); result = 0; app.quit();
+                fixture.reset(); next();
             }));
+            break;
+        case 6:
+            session=std::make_unique<BrowserSession>(QCoreApplication::applicationFilePath(),QStringList{},env,temporary.path()+"/denied-new-helper",[](const QString &) { return true; });
+            require(session->setStartupSubmissionCheck([] { return QString("Control revoked before initial helper submission"); }),"first startup validation context was not retained");
+            require(!session->setStartupSubmissionCheck([] { return QString{}; }),"later waiter approved a revoked initial helper");
+            session->whenReady(ready([&](QString error) {
+                require(error.contains("Control revoked") && !session->running() && !session->launchSubmitted(),"revoked initial helper was executed before its final submission check");
+                std::puts("PASS initial helper submission uses only the first starter's control context and rejects revoked work before exec");
+                next();
+            }));
+            break;
+        case 7:
+            session.reset();
+            session=std::make_unique<BrowserSession>(QCoreApplication::applicationFilePath(),QStringList{},env,temporary.path()+"/unregistered-new-helper",[](const QString &) { return true; });
+            session->whenReady(ready([&](QString error) {
+                require(error.contains("authorization context missing") && !session->running() && !session->launchSubmitted(),"missing first authorization context allowed a late helper execution");
+                std::puts("PASS missing first helper authorization context fails closed before actual execution"); next();
+            }));
+            break;
+        case 8:
+            session.reset(); verifyLongBrowserPath(temporary.path()); verifyManagedStartup(temporary.path()); verifyRuntimePipe(temporary.path()); result=0; app.quit();
             break;
         }
     });

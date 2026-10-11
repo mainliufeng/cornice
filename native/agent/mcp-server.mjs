@@ -9,6 +9,7 @@ import { readFile, lstat, mkdtemp, chmod, rm } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { desktopSocketPath } from "./desktop-endpoint.mjs";
 import { tmpdir } from "node:os";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -60,12 +61,12 @@ async function brokerEndpoint() {
   const runtime=process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`;
   const instance=process.env.HYPRLAND_INSTANCE_SIGNATURE;
   if(instance && /^[A-Za-z0-9_.-]+$/.test(instance)) {
-    const socket=join(runtime,"cornice",instance,"desktop.sock");
+    const socket=desktopSocketPath(runtime,instance);
     const info=await lstat(socket).catch(()=>undefined);
     if(info?.isSocket() && info.uid===process.getuid()) return {instance,socket};
   }
   const endpoint=await privateJSON(join(runtime,"cornice/active.json")).catch(()=>{throw new Error("Cornice desktop service is unavailable. Start Cornice in the desktop session.");});
-  if(!/^[A-Za-z0-9_.-]+$/.test(endpoint.instance) || endpoint.socket!==join(runtime,"cornice",endpoint.instance,"desktop.sock"))
+  if(!/^[A-Za-z0-9_.-]+$/.test(endpoint.instance) || endpoint.socket!==desktopSocketPath(runtime,endpoint.instance))
     throw new Error("Invalid active desktop endpoint");
   return endpoint;
 }

@@ -207,9 +207,9 @@ Agent 工具截图仍是按需导出，不参与人的观看路径。测试检�
 应用启动参数保存成 argv 数组，显式设置目标 display，清除继承的 `WAYLAND_SOCKET`/`DISPLAY`。
 浏览器使用专用 profile，单例/DBus 行为按实际应用验证；不能复用人的日常浏览器 profile。
 
-建议 runtime 路径为 `$XDG_RUNTIME_DIR/cornice/<instance>/desktop.sock`。
+当前控制端点为 `$XDG_RUNTIME_DIR/cornice/ipc-<hash>/desktop.sock`，其中 `<hash>` 是实例名称 UTF-8 字节的 SHA-256 前 32 位十六进制。C++、MCP 与 shell 使用同一算法，状态和日志目录仍保留完整实例名称。端点在建立桌面、暂停输入或写入状态之前绑定；路径超过 Unix socket 字节上限时直接报错，不能改投其他实例或临时目录。`cornice-desktop endpoint` 只读输出当前实例应使用的路径。
 agent API 严格要求显式 instance，不复用 `cornice-env.sh` 的自动会话发现。
-断线后不寻找另一个会话，不自动重放输入，不自动恢复人或 agent 的控制权。
+断线后不寻找另一个会话，不自动重放输入，不自动恢复人或 agent 的控制权。CLI 在一次提交后等待完整响应或明确超时；传输失败不能再次提交或转交另一个 IPC 路径。
 
 ### 外部接口候选
 

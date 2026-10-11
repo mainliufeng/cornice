@@ -36,6 +36,8 @@ export PATH="$runtime/test-bin:$PATH"
 keep=${CORNICE_KEEP_ARTIFACTS:-0}
 mutter_pid=""
 dbus_pid=""
+system_fixture_pid=""
+system_fixture_control=""
 shell_pid=""
 tray_fixture_pid=""
 hypr_pid=""
@@ -52,6 +54,11 @@ cleanup() {
   [[ -n $shell_pid ]] && kill "$shell_pid" 2>/dev/null
   [[ -n $hypr_pid ]] && kill "$hypr_pid" 2>/dev/null
   [[ -n $mutter_pid ]] && kill "$mutter_pid" 2>/dev/null
+  if [[ -n $system_fixture_pid ]]; then
+    kill "$system_fixture_pid" 2>/dev/null || true
+    wait "$system_fixture_pid" 2>/dev/null || true
+  fi
+  [[ -z $system_fixture_control ]] || exec {system_fixture_control}>&-
   [[ -n $dbus_pid ]] && kill "$dbus_pid" 2>/dev/null
   sleep 0.4
   if ((keep)); then
@@ -102,8 +109,10 @@ if python3 -c "import ast,sys" >/dev/null 2>&1; then
   weather_port=$(cat "$runtime/weather.port" 2>/dev/null || echo "")
 fi
 
-# Sandbox config: point weather at the fake API, and keep the idle chain from
-# locking this private session (the lock suite covers locking deliberately).
+# Sandbox config: this suite exercises the ordinary single-seat shell. Multi-seat
+# cases have their own real compositor suites; legacy wtype selects the last
+# advertised wl_seat and cannot stand in for primary input on those desktops.
+# Point weather at the fixture and keep automatic locks under explicit test control.
 if [[ -n $weather_port ]]; then
   mkdir -p "$XDG_CONFIG_HOME/cornice"
   cat >"$XDG_CONFIG_HOME/cornice/config.json" <<EOF
@@ -119,6 +128,7 @@ if [[ -n $weather_port ]]; then
     ]
   },
   "clock": { "worldClocks": [ { "name": "UTC", "zone": "UTC" } ] },
+  "agentDesktop": { "enabled": false },
   "idle": { "dimAc": 0, "screenOffAc": 0, "lock": 0, "lockOnSleep": false, "lockOnLockSignal": false, "lockOnLidClose": false },
   "background": { "dir": "$prefix/wallpapers" }
 }
@@ -150,7 +160,7 @@ EOF
 fi
 
 section "private session bus and compositor (runtime: $runtime)"
-read -r DBUS_ADDR DBUS_PID < <(dbus-daemon --session --fork --print-address=1 --print-pid=1 | tr '\n' ' ')
+read -r DBUS_ADDR DBUS_PID < <(dbus-daemon --session --address="unix:path=$runtime/session-bus.sock" --fork --print-address=1 --print-pid=1 | tr '\n' ' ')
 if [[ ${DBUS_ADDR:-} != unix:* || ! ${DBUS_PID:-} =~ ^[0-9]+$ ]]; then
   fail "private session bus did not start"
   exit 1
@@ -158,6 +168,43 @@ fi
 dbus_pid=$DBUS_PID
 export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
 pass "private session bus: ${DBUS_ADDR%%guid=*}"
+
+# Standard system-service interfaces live on this same *private* bus. The
+# wrapper hides /run/dbus and the fixture rejects any address outside runtime.
+export DBUS_SYSTEM_BUS_ADDRESS="$DBUS_ADDR"
+mkfifo "$runtime/system-services.control"
+exec {system_fixture_control}<>"$runtime/system-services.control"
+python3 "$prefix/test/fake-system-services.py" "$DBUS_ADDR" "$runtime/system-services.events" \
+  <&"$system_fixture_control" >"$runtime/system-services.log" 2>&1 &
+system_fixture_pid=$!
+system_ready=0
+for _ in $(seq 1 50); do
+  kill -0 "$system_fixture_pid" 2>/dev/null || break
+  if grep -q '"event": "ready"' "$runtime/system-services.events" 2>/dev/null; then
+    system_ready=1; break
+  fi
+  sleep .1
+done
+if ((system_ready)); then
+  pass "private UPower and logind services own their standard names"
+else
+  fail "private system-service fixture did not become ready"
+  cat "$runtime/system-services.log" 2>/dev/null
+  exit 1
+fi
+expect_eq "UPower exposes the standard display-device path" \
+  "(objectpath '/org/freedesktop/UPower/devices/DisplayDevice',)" \
+  "$(gdbus call --system --dest org.freedesktop.UPower --object-path /org/freedesktop/UPower --method org.freedesktop.UPower.GetDisplayDevice)"
+expect_eq "the private battery is present" "(<true>,)" \
+  "$(gdbus call --system --dest org.freedesktop.UPower --object-path /org/freedesktop/UPower/devices/DisplayDevice --method org.freedesktop.DBus.Properties.Get org.freedesktop.UPower.Device IsPresent)"
+expect_eq "the private battery carries its standard percentage" "(<72.0>,)" \
+  "$(gdbus call --system --dest org.freedesktop.UPower --object-path /org/freedesktop/UPower/devices/DisplayDevice --method org.freedesktop.DBus.Properties.Get org.freedesktop.UPower.Device Percentage)"
+if gdbus call --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1 --method org.freedesktop.DBus.Properties.GetAll org.freedesktop.login1.Manager >"$runtime/logind-properties.txt"; then
+  pass "the private logind Manager responds to real Properties.GetAll"
+else
+  fail "private logind Manager properties are unavailable"
+  exit 1
+fi
 
 mutter --headless --wayland --no-x11 --wayland-display=menuverify-test \
   --virtual-monitor 1280x800 >"$runtime/mutter.log" 2>&1 &
@@ -264,6 +311,8 @@ pass "shell display: $WAYLAND_DISPLAY"
 # --copy or a package root) instead of the working tree, which is how a fresh
 # install gets tested: the tests stay here, the shell comes from there.
 install_prefix="${CORNICE_INSTALLED_PREFIX:-${CORNICE_TEST_PRODUCT:-$prefix}}"
+# Exercise the selected tree's CLI as well as its shell/native modules.
+export PATH="$install_prefix/bin:$PATH"
 if [[ $install_prefix != "$prefix" ]]; then
   section "installed tree"
   pass "shell from $install_prefix"
@@ -364,6 +413,17 @@ if [[ ${CORNICE_MENU_ONLY:-0} == 1 ]]; then
   ((result == 0)) && echo "RESULT: all checks passed" || echo "RESULT: failures above"
   exit "$result"
 fi
+
+# Geometry descends only into visible widget content: a discovered plugin by
+# itself does not prove Quickshell consumed the real UPower properties.
+power_ready=0
+for _ in $(seq 1 50); do
+  if cornice ipc bar geometry | jq -e '.[] | select(.id == "cn.power") | .width > 0 and .height > 0 and (.text | length > 0)' >/dev/null; then
+    power_ready=1; break
+  fi
+  sleep .1
+done
+expect_eq "the real battery widget has visible content from UPower" 1 "$power_ready"
 
 source "$prefix/test/bar-alignment-verify.sh"
 source "$prefix/test/window-switcher-verify.sh"
@@ -815,6 +875,20 @@ fi
 section "idle logind signals"
 idle_state=$(cornice ipc idle status)
 expect_eq "the logind monitor is running" "true" "$(jq -r '.logindWatching' <<<"$idle_state")"
+# These are standard service signals on the private bus, not parser injection.
+# Assert both transitions to prove the live gdbus child subscribed and stayed up.
+for event in sleep resume; do
+  printf '{"event":"%s"}\n' "$event" >&"$system_fixture_control"
+  monitor_event=""
+  for _ in $(seq 1 50); do
+    idle_state=$(cornice ipc idle status)
+    monitor_event=$(jq -r '.lastAction' <<<"$idle_state")
+    [[ $monitor_event != "$event" ]] || break
+    sleep .1
+  done
+  expect_eq "the real logind monitor receives the private $event signal" "$event" "$monitor_event"
+  expect_eq "the logind monitor remains running after $event" true "$(jq -r '.logindWatching' <<<"$idle_state")"
+done
 expect_eq "a suspend signal is understood" "sleep" \
   "$(cornice ipc idle feed '/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (true,)')"
 expect_eq "a wake signal is understood" "resume" \

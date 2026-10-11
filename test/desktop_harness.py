@@ -1,4 +1,5 @@
 """cornice CLI + native devices against an isolated real Hyprland fork."""
+import hashlib
 import base64
 import json
 import os
@@ -142,6 +143,10 @@ def displayed_clock(path):
     raise AssertionError("Application clock pixels absent from actual observer output")
 
 
+def broker_socket():
+    identity = hashlib.sha256(ENV["HYPRLAND_INSTANCE_SIGNATURE"].encode("utf-8")).hexdigest()[:32]
+    return RT / "cornice" / ("ipc-" + identity) / "desktop.sock"
+
 def initialize(xwayland=False):
     global BUS_PID
     assert os.getenv("CORNICE_TEST_SANDBOX") == "1", "Use isolated-desktop-test.sh; never discover the host compositor"
@@ -171,7 +176,7 @@ hl.window_rule({name="human-test",match={title="^human-window$"},workspace="1"})
     ok('dispatch hl.dsp.focus({monitor="human"})')
     ok('dispatch hl.dsp.focus({workspace="1"})')
     broker = start([str(PRODUCT / "bin/cornice-desktopd")], "desktopd")
-    wait(lambda: (RT / "cornice" / ENV["HYPRLAND_INSTANCE_SIGNATURE"] / "desktop.sock").is_socket())
+    wait(lambda: broker_socket().is_socket())
     assert cli("doctor")["capabilities"]["protocol"] == 1
     return broker
 

@@ -16,6 +16,8 @@
 
 // Chrome has no listening debug port. Every HTTP discovery, WS command and
 // outbound event passes the current seat/binding authorization check.
+class ApplicationScope;
+
 class BrowserSession : public QObject {
 public:
   BrowserSession(QString program, QStringList args, QProcessEnvironment env,
@@ -27,6 +29,10 @@ public:
   bool starting() const { return !m_startupComplete; }
   QString startupError() const { return m_startupError; }
   void whenReady(std::function<void(QString)> callback);
+  bool setStartupSubmissionCheck(std::function<QString()> check);
+  bool launchSubmitted() const;
+  void cancelUnregisteredStartup(const QString &reason);
+  bool initialArgumentsSubmitted() const { return m_initialArgumentsSubmitted; }
   bool matchesLaunchEnvironment(const QJsonObject &requested) const;
   qint64 pid() const { return m_pid; }
   static bool close(const QString &log);
@@ -48,7 +54,7 @@ private:
     QString token;
   };
   std::unique_ptr<QLocalSocket> m_runtime;
-  QString m_log;
+  QString m_log, m_startupNonce;
   qint64 m_pid = 0;
   QTcpServer m_http;
   QWebSocketServer m_ws{"Cornice seat CDP", QWebSocketServer::NonSecureMode};
@@ -64,12 +70,16 @@ private:
   QMap<qint64, Request> m_requests;
   QJsonObject m_version;
   QJsonObject m_launchEnvironment;
+  QPointer<ApplicationScope> m_helperJob;
   QByteArray m_input;
   QTimer m_watchdog;
   QTimer m_startupRetry;
   QElapsedTimer m_startupTime;
   bool m_startupComplete = false;
   bool m_helperStarted = false;
+  bool m_startupLaunchSubmitted = false;
+  bool m_initialArgumentsSubmitted = false;
+  std::function<QString()> m_startupSubmissionCheck;
   bool m_connectRetrying = false;
   QString m_startupError;
   QList<std::function<void(QString)>> m_readyCallbacks;

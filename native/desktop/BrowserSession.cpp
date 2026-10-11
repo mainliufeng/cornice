@@ -1,4 +1,6 @@
 #include "BrowserSession.hpp"
+#include "ApplicationScope.hpp"
+#include "DesktopEndpoint.hpp"
 #include <QElapsedTimer>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -8,6 +10,7 @@
 #include <QJsonDocument>
 #include <QTcpSocket>
 #include <QUrl>
+#include <QUuid>
 #include <cerrno>
 #include <fcntl.h>
 #include <poll.h>
@@ -22,6 +25,7 @@ BrowserSession::BrowserSession(QString program, QStringList args,
                                std::function<bool(const QString &)> allowed)
     : m_allowed(std::move(allowed)) {
   m_log = log;
+  m_startupNonce = QUuid::createUuid().toString(QUuid::WithoutBraces);
   try {
     QJsonObject requestedEnvironment;
     const auto requestedBytes = env.value("CORNICE_BROWSER_REQUESTED_ENV").toUtf8();
@@ -38,6 +42,7 @@ BrowserSession::BrowserSession(QString program, QStringList args,
     }
     m_runtime = std::make_unique<QLocalSocket>();
     const auto path = qEnvironmentVariable("XDG_RUNTIME_DIR") + "/cb-" + QString::fromLatin1(QCryptographicHash::hash(log.toUtf8(), QCryptographicHash::Sha256).toHex().left(32)) + ".sock";
+    CorniceEndpoint::validateSocketPath(path);
     m_startupRetry.setInterval(100);
     connect(&m_startupRetry, &QTimer::timeout, this, [this, path] {
       if (m_startupComplete) return;
@@ -65,13 +70,18 @@ BrowserSession::BrowserSession(QString program, QStringList args,
       m_connectRetrying = false;
       if (m_startupComplete || m_helperStarted) return;
       m_helperStarted = true;
-      QProcess helper;
-      helper.setProgram(QCoreApplication::applicationDirPath() + "/cornice-browser-runtime");
-      helper.setArguments({path, program, QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(args)).toJson(QJsonDocument::Compact)), log, env.value("CORNICE_BROWSER_POLICY")});
-      helper.setProcessEnvironment(env);
-      helper.setStandardOutputFile(log + ".runtime", QIODevice::Append);
-      helper.setStandardErrorFile(log + ".runtime", QIODevice::Append);
-      if (!helper.startDetached()) finishStartup("Cannot start browser runtime helper");
+      auto helperEnvironment = env; helperEnvironment.insert("CORNICE_BROWSER_STARTUP_NONCE",m_startupNonce);
+      m_helperJob = new ApplicationScope({QCoreApplication::applicationDirPath() + "/cornice-browser-runtime",{},log + ".runtime",
+          {path,program,QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(args)).toJson(QJsonDocument::Compact)),log,env.value("CORNICE_BROWSER_POLICY")},helperEnvironment},this);
+      m_helperJob->setSubmissionCheck([this] {
+        if (m_startupComplete) return QString("Browser startup ended during application preparation");
+        return m_startupSubmissionCheck ? m_startupSubmissionCheck() : QString("Browser startup authorization context missing");
+      });
+      m_helperJob->whenStarted([this](ApplicationScopeResult result) {
+        m_startupLaunchSubmitted = m_helperJob && m_helperJob->submitted();
+        if (!result.error.isEmpty() && !m_startupComplete) finishStartup(result.error);
+        if (m_helperJob) { m_helperJob->deleteLater(); m_helperJob = nullptr; }
+      });
     });
     connect(m_runtime.get(), &QLocalSocket::readyRead, this, [this] { receive(); });
     connect(m_runtime.get(), &QLocalSocket::disconnected, this, [this] {
@@ -220,6 +230,7 @@ BrowserSession::~BrowserSession() {
   m_watchdog.stop();
   m_startupRetry.stop();
   m_readyCallbacks.clear();
+  if (m_helperJob) { delete m_helperJob; m_helperJob = nullptr; }
   QObject::disconnect(&m_ws, nullptr, this, nullptr);
   QObject::disconnect(&m_http, nullptr, this, nullptr);
   for (auto *socket : m_http.findChildren<QTcpSocket *>()) {
@@ -243,6 +254,16 @@ bool BrowserSession::matchesLaunchEnvironment(const QJsonObject &requested) cons
         m_launchEnvironment.value(it.key()) != it.value()) return false;
   return true;
 }
+bool BrowserSession::setStartupSubmissionCheck(std::function<QString()> check) {
+  if (!starting() || m_startupSubmissionCheck) return false;
+  m_startupSubmissionCheck = std::move(check); return true;
+}
+void BrowserSession::cancelUnregisteredStartup(const QString &reason) {
+  if (starting() && !m_startupSubmissionCheck && !launchSubmitted()) finishStartup(reason+"; no helper was submitted");
+}
+bool BrowserSession::launchSubmitted() const {
+  return m_startupLaunchSubmitted || (m_helperJob && m_helperJob->submitted());
+}
 void BrowserSession::whenReady(std::function<void(QString)> callback) {
   if (m_startupComplete) {
     const auto error = m_startupError;
@@ -257,7 +278,10 @@ void BrowserSession::finishStartup(QString error) {
   m_startupComplete = true;
   m_startupError = std::move(error);
   m_startupRetry.stop();
-  if (!m_startupError.isEmpty()) m_runtime->abort();
+  if (!m_startupError.isEmpty()) {
+    if (m_helperJob) m_helperJob->cancel("Browser startup ended before its helper acknowledgement");
+    m_runtime->abort();
+  }
   const auto callbacks = std::move(m_readyCallbacks);
   for (const auto &callback : callbacks) {
     const auto result = m_startupError;
@@ -286,6 +310,7 @@ QString BrowserSession::endpoint(const QString &token) const {
   return QString("http://127.0.0.1:%1/%2").arg(m_http.serverPort()).arg(token);
 }
 void BrowserSession::revoke() {
+  if (m_helperJob && starting()) m_helperJob->cancel("Desktop control revoked during browser startup");
   if (starting()) finishStartup("Desktop control revoked during browser startup");
   const auto peers = m_peers;
   for (const auto &peer : peers)
@@ -385,6 +410,7 @@ void BrowserSession::receive() {
       }
     // Private runtime metadata remains in memory and is never included in the
     // public HTTP discovery object or forwarded as a CDP event.
+    m_initialArgumentsSubmitted = greeting["startupNonce"].toString() == m_startupNonce;
     m_launchEnvironment = launchEnvironment;
     m_pid = greeting["pid"].toInteger();
     m_version = greeting["version"].toObject();
@@ -401,7 +427,7 @@ void BrowserSession::receive() {
     m_input.remove(0, m_input.indexOf('\0') + 1);
     // Only a startup handshake may contain private runtime metadata. A
     // subsequent greeting or malformed non-CDP frame revokes public peers.
-    if (message.contains("op") || message.contains("ok") || message.contains("launchEnvironment") ||
+    if (message.contains("op") || message.contains("ok") || message.contains("launchEnvironment") || message.contains("startupNonce") ||
         (!message["id"].isDouble() && !message["method"].isString())) {
       revoke(); m_input.clear(); return;
     }

@@ -38,7 +38,7 @@ def camera_loop():
     retries = 0
     failed_since = None
     try:
-        connection.connect(str(RT / "cornice" / ENV["HYPRLAND_INSTANCE_SIGNATURE"] / "desktop.sock"))
+        connection.connect(str(broker_socket()))
         while not stop.is_set():
             with scene_lock:
                 current = dict(scene)

@@ -39,6 +39,11 @@ int main(int argc, char **argv) {
             instance = take(args);
         }
         const auto command = take(args);
+        if (command == "endpoint") {
+            if (!args.isEmpty()) throw std::runtime_error("Endpoint takes no arguments");
+            QTextStream(stdout) << desktopSocket(instance) << '\n';
+            return 0;
+        }
         // Internal preparation worker. It reads application policy and resolves
         // desktop-entry handlers without blocking the Broker event loop. Only
         // the Broker can submit the resulting plan after checking a live grant.
@@ -67,9 +72,10 @@ int main(int argc, char **argv) {
             QProcess process;
             process.setProgram(app.applicationFilePath());
             process.setArguments({"--instance", instance, "serve"});
-            process.setStandardOutputFile(QFileInfo(socket).path() + "/desktopd.log", QIODevice::Append);
-            process.setStandardErrorFile(QFileInfo(socket).path() + "/desktopd.log", QIODevice::Append);
-            QDir().mkpath(QFileInfo(socket).path());
+            const auto directory = QDir::cleanPath(qEnvironmentVariable("XDG_RUNTIME_DIR")) + "/cornice/" + instance;
+            process.setStandardOutputFile(directory + "/desktopd.log", QIODevice::Append);
+            process.setStandardErrorFile(directory + "/desktopd.log", QIODevice::Append);
+            QDir().mkpath(directory);
             if (!process.startDetached())
                 throw std::runtime_error("Cannot start desktop service");
             return 0;

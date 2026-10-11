@@ -20,6 +20,7 @@ class DesktopPresentation : public QObject {
     explicit DesktopPresentation(QObject *parent = nullptr);
     QJsonObject state() const { return m_state; }
     bool humanControl() const { return m_state["humanControl"].toBool(); }
+    Q_INVOKABLE QJsonObject endpoint(const QString &instance) const;
     Q_INVOKABLE void takeControl(bool enabled);
     Q_INVOKABLE void takeHandoff(const QString &requestId);
     Q_INVOKABLE void refreshView();

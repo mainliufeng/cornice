@@ -2,15 +2,17 @@
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {join,resolve,dirname} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createServer} from 'node:net';
 const root=resolve(process.env.CORNICE_TEST_PRODUCT || '.');
+const {desktopSocketPath}=await import(pathToFileURL(join(root,'native/agent/desktop-endpoint.mjs')).href);
 const {Client}=await import(pathToFileURL(join(root,'native/agent/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js')).href);
 const {StdioClientTransport}=await import(pathToFileURL(join(root,'native/agent/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js')).href);
 const directory=await mkdtemp(join(tmpdir(),'cornice-mcp-lifecycle-'));
-const runtime=join(directory,'runtime');await mkdir(join(runtime,'cornice/test'),{recursive:true});
-const socketPath=join(runtime,'cornice/test/desktop.sock');
+const runtime=join(directory,'runtime');
+const socketPath=desktopSocketPath(runtime,'test');
+await mkdir(dirname(socketPath),{recursive:true});
 const peers=new Set(),leases=new Map();let serial=0,failedRelease=false;
 const state={name:'fixture',seatId:'fixture-seat',generation:'1',primary:false,number:2,available:true,paused:false,agentPaused:false,controlMode:'agent',agentAllowed:true};
 const fixture=createServer(socket=>{

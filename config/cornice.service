@@ -19,6 +19,9 @@ Type=simple
 ExecStart=%h/.local/bin/cornice-launch
 Restart=always
 RestartSec=2
+# Shell/Broker children belong to this service. Applications launched through
+# Cornice use separate compositor-bound units, so normal service cleanup is safe.
+KillMode=control-group
 
 [Install]
 WantedBy=graphical-session.target

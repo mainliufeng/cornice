@@ -4,6 +4,33 @@ from cdp_client import Cdp
 import urllib.request
 from PIL import Image
 
+
+def provider_secure(process, event_name):
+    """The provider's own locked acknowledgement, not another owner's state."""
+    path = BASE / event_name
+    def acknowledged():
+        assert process.poll() is None, (event_name, process.returncode)
+        if not path.exists():
+            return False
+        for line in path.read_text().splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # A final line may be in the middle of its write.
+            if event.get("event") == "secure" and event.get("secure") is True:
+                return True
+        return False
+    wait(acknowledged, 10)
+
+
+def unlock_provider(process, event_name):
+    provider_secure(process, event_name)
+    process.stdin.write("emergency-unlock\n"); process.stdin.flush()
+    wait(lambda: not ctl("seat lock-state", True)["locked"])
+    process.wait(timeout=5)
+    assert process.returncode == 0, (event_name, process.returncode)
+
+
 try:
     initialize()
     cli("create", "continuing", "--workspace", "10", "--virtual-output", "1280x800", "--human-lock-policy", "continue")
@@ -31,6 +58,9 @@ try:
     wait(lambda: cdp.call("Runtime.evaluate", {"expression": "document.title", "returnByValue": True}, session)["result"].get("value") == "Agent CDP")
     # Force multiple pipe writes without replaying the JavaScript command.
     assert cdp.call("Runtime.evaluate", {"expression": "'" + "x" * 128000 + "'.length", "returnByValue": True}, session)["result"]["value"] == 128000
+    browser_client = wait(lambda: next((client for client in ctl("clients", True) if client["title"].startswith("Agent CDP")), None))
+    browser_pid = browser_client["pid"]
+    OWNED_PIDS.append(browser_pid)
     cli("pause", "continuing")
     try:
         cdp.call("Browser.getVersion")
@@ -141,10 +171,12 @@ try:
     # focus, then wait for the lock client to bind its new wl_keyboard before
     # injecting input; an injector roundtrip alone cannot synchronize clients.
     wait(lambda: any('wl_keyboard#' in line and '.enter(' in line for line in (BASE / 'lock.log').read_text().splitlines()))
+    provider_secure(locker, "lock-events")
     for command in ("motion 640 400", "type secret", "key 28 1", "key 28 0"):
         human.stdin.write(command + "\n"); human.stdin.flush()
         assert select.select([human.stdout], [], [], 5)[0] and human.stdout.readline().strip() == "done"
     wait(lambda: not ctl("seat lock-state", True)["locked"])
+    locker.wait(timeout=5); assert locker.returncode == 0
     assert cli("state", "pausing")["paused"]
     record("real lock field accepts primary keyboard and PAM authentication unlocks; paused seat stays paused")
     cli("resume", "pausing")
@@ -155,6 +187,8 @@ try:
         stdin=subprocess.PIPE, stdout=open(BASE / "full-events", "w"), stderr=open(BASE / "full.log", "w"), start_new_session=True, text=True)
     PROCESSES.append(full)
     wait(lambda: ctl("seat lock-state", True)["scope"] == "session" and ctl("seat lock-state", True)["secure"])
+    provider_secure(full, "full-events")
+    first.wait(timeout=5); assert first.returncode == 0
     assert all(cli("state", name)["paused"] for name in ("continuing", "continuing2", "pausing"))
     assert "revoked" in tool(binding, "capture", succeeds=False).lower()
     try:
@@ -167,9 +201,12 @@ try:
     except urllib.error.HTTPError as error: assert error.code == 403
     cdp.close()
     record("full lock closes CDP and refuses old endpoint credentials")
+    # Its real browser/credential checks are complete. Reap this private app
+    # before unrelated guardian/UI checks, retaining the shared TasksMax budget.
+    os.kill(browser_pid, signal.SIGTERM)
+    wait(lambda: not any(client["pid"] == browser_pid for client in ctl("clients", True)))
     subprocess.run(["grim", "-o", "human", str(BASE / "full-lock.png")], env=ENV, check=True)
-    full.stdin.write("emergency-unlock\n"); full.stdin.flush()
-    wait(lambda: not ctl("seat lock-state", True)["locked"])
+    unlock_provider(full, "full-events")
     assert all(cli("state", name)["paused"] for name in ("continuing", "continuing2", "pausing"))
     record("human-to-full upgrade is secure and revokes every seat; unlock never restores agents")
     # Failed PAM cannot unlock, and a provider crash retains protection.
@@ -188,7 +225,7 @@ try:
     recovery = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--scope", "session", "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"], env=ENV,
         stdin=subprocess.PIPE, stdout=open(BASE / "recovery-events", "w"), stderr=open(BASE / "recovery.log", "w"), start_new_session=True, text=True)
     PROCESSES.append(recovery); wait(lambda: ctl("seat lock-state", True)["secure"] and ctl("seat lock-state", True)["ownerConnected"])
-    recovery.stdin.write("emergency-unlock\n"); recovery.stdin.flush(); wait(lambda: not ctl("seat lock-state", True)["locked"])
+    unlock_provider(recovery, "recovery-events")
     record("real PAM failure keeps secure lock; killed lock owner remains locked; a new native owner recovers")
 
     # Use a private SYSTEM bus: fake logind performs no physical sleep, but the
@@ -210,15 +247,17 @@ try:
     lost = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--pam-service", "permit", "--pam-directory", str(pam)], env=ENV,
         stdin=subprocess.PIPE, stdout=open(BASE / "guardian-lock-events", "w"), stderr=open(BASE / "guardian-lock.log", "w"), start_new_session=True)
     PROCESSES.append(lost); wait(lambda: ctl("seat lock-state", True)["secure"])
+    provider_secure(lost, "guardian-lock-events")
     assert not cli("state", "continuing")["paused"]
     os.kill(guard.pid, signal.SIGKILL); guard.wait()
     wait(lambda: ctl("seat lock-state", True)["scope"] == "session" and ctl("seat lock-state", True)["secure"])
     assert cli("state", "continuing")["paused"] and ctl("seat lock-state", True)["phase"] == "orphaned"
+    lost.wait(timeout=5); assert lost.returncode == 0
     record("guardian death atomically escalates to an orphaned full lock and revokes agent control")
     recovered = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--scope", "session", "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"], env=ENV,
         stdin=subprocess.PIPE, stdout=open(BASE / "guardian-recovery-events", "w"), stderr=open(BASE / "guardian-recovery.log", "w"), start_new_session=True, text=True)
     PROCESSES.append(recovered); wait(lambda: ctl("seat lock-state", True)["ownerConnected"] and ctl("seat lock-state", True)["secure"])
-    recovered.stdin.write("emergency-unlock\n"); recovered.stdin.flush(); wait(lambda: not ctl("seat lock-state", True)["locked"])
+    unlock_provider(recovered, "guardian-recovery-events")
     guard = new_guard("sleep-guard")
     guard.stdin.write("suspend\n"); guard.stdin.flush()
     wait(lambda: 'full-lock-required' in (BASE / "sleep-guard-events").read_text())
@@ -234,7 +273,7 @@ try:
     fixture.stdin.write('{"event":"resume"}\n'); fixture.stdin.flush()
     wait(lambda: 'resumed' in (BASE / "sleep-guard-events").read_text())
     assert ctl("seat lock-state", True)["locked"] and cli("state", "continuing")["paused"]
-    sleep_lock.stdin.write("emergency-unlock\n"); sleep_lock.stdin.flush(); wait(lambda: not ctl("seat lock-state", True)["locked"])
+    unlock_provider(sleep_lock, "sleep-lock-events")
     # Lid policy shares the same gate; verify event handling without suspending.
     fixture.stdin.write('{"LidClosed":true}\n'); fixture.stdin.flush()
     wait(lambda: (BASE / "sleep-guard-events").read_text().count('full-lock-required') >= 2)

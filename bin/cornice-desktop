@@ -33,7 +33,7 @@ if [[ ${1:-} == observe ]]; then
   [[ $# == 2 ]] || { echo 'usage: cornice desktop observe NAME' >&2; exit 2; }
   [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} && -n ${XDG_RUNTIME_DIR:-} ]] || { echo 'explicit compositor environment required' >&2; exit 1; }
   status=$("$bin_dir/cornice" ipc desktop status)
-  expected="$XDG_RUNTIME_DIR/cornice/$HYPRLAND_INSTANCE_SIGNATURE/desktop.sock"
+  expected=$("$runtime" endpoint)
   jq -e --arg expected "$expected" '.socket == $expected' <<<"$status" >/dev/null || {
     echo 'cornice desktop: shell belongs to a different compositor instance' >&2; exit 1;
   }

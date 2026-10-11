@@ -158,7 +158,7 @@ try:
     # desktop; the preview is only a read-only entry into native presentation.
     import threading
     preview_owner=socket.socket(socket.AF_UNIX);preview_owner.settimeout(5)
-    preview_owner.connect(str(RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktop.sock'))
+    preview_owner.connect(str(broker_socket()))
     cli('pause','agent3')
     lease=rpc(preview_owner,'acquire-desktop',{'controller':'preview-ui-codex','harness':'codex','preferredDesktop':'agent3'})
     preview_stop=threading.Event()
@@ -175,7 +175,7 @@ try:
                 preview_errors.append(str(error));return
     preview_thread=threading.Thread(target=heartbeat,args=(preview_owner,lease,'preview-ui-codex'),daemon=True);preview_thread.start()
     pi_owner=socket.socket(socket.AF_UNIX);pi_owner.settimeout(5)
-    pi_owner.connect(str(RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktop.sock'))
+    pi_owner.connect(str(broker_socket()))
     cli('pause','agent2')
     pi_lease=rpc(pi_owner,'acquire-desktop',{'controller':'preview-ui-pi','harness':'pi','preferredDesktop':'agent2'})
     pi_thread=threading.Thread(target=heartbeat,args=(pi_owner,pi_lease,'preview-ui-pi'),daemon=True);pi_thread.start()
@@ -678,7 +678,7 @@ try:
     wait(lambda:not status()['open']);wait(lambda:cli('state','agent2')['paused'])
     assert ctl('activewindow',True)['address']==human['window']
     record('Ctrl+Alt+Esc returns to the human desktop and leaves the Agent paused')
-    path=str(RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktop.sock')
+    path=str(broker_socket())
     ok('eval hl.monitor({output="human",mode="3072x1920@120",position="0x0",scale=2})')
     cli('resume','agent1'); laptop_binding=bind('agent1')
     tool(laptop_binding,'workspace',{'workspace':'name:cornice-agent-agent1-ws-4'})

@@ -39,7 +39,7 @@ def ended(process, reason=None):
     assert process.returncode == 0
     result = status()
     assert not result["armed"] and not result["running"]
-    assert result["current"]["stableSelected"]
+    assert result["stableSelected"]
     if reason:
         assert reason in result["current"]["reason"], result
     assert human_state() == BASELINE
@@ -394,6 +394,26 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
         subprocess.run(["grim", str(BASE / "trial-native-config.png")], env=selected, check=True, timeout=5)
         trial("rollback"); ended(process, "Manual rollback")
         record("actual migrated daily Lua config starts the real candidate with bar and one secondary desktop")
+    configuration.write_text(original_configuration)
+    chosen = json.loads(trial("prepare", "--hyprland", os.environ["CORNICE_TEST_HYPRLAND"],
+                              "--cornice", PRODUCT, "--config", configuration))["prepared"]
+    trial("select", "--release", chosen, "--startup-seconds", "30")
+    for cycle in range(2):
+        process = login_session(); info = ready(process)
+        assert info["persistent"] and info["release"] == chosen
+        selected_environment = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
+        subprocess.run(["hyprctl", "dispatch", "hl.dsp.exit()"], env=selected_environment, check=True, timeout=5)
+        process.wait(timeout=25)
+        current = status()
+        assert process.returncode == 0 and not current["running"]
+        assert current["current"]["status"] == "exited" and current["selected"]["release"] == chosen
+        assert current["nextLogin"] == {"mode": "persistent", "release": chosen}
+        assert human_state() == BASELINE and SENTINEL.poll() is None
+    record("two real profile logins and native compositor exits retain the selected feature snapshot")
+    process = login_session(); info = ready(process)
+    trial("rollback"); ended(process, "Manual rollback")
+    assert status()["selected"] is None and status()["nextLogin"]["mode"] == "stable"
+    record("explicit rollback of a real persistent session selects stable without changing the independent desktop")
     configuration.write_text('error("injected startup failure")\n')
     trial("prepare", "--hyprland", os.environ["CORNICE_TEST_HYPRLAND"], "--cornice", PRODUCT, "--config", configuration)
     trial("arm", "--seconds", "60", "--startup-seconds", "5")
