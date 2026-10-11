@@ -936,18 +936,52 @@ idle_state=$(cornice ipc idle status)
 expect_eq "the logind monitor is running" "true" "$(jq -r '.logindWatching' <<<"$idle_state")"
 # These are standard service signals on the private bus, not parser injection.
 # Assert both transitions to prove the live gdbus child subscribed and stayed up.
+full_sleep_guard=$(cornice ipc lock status | jq -r '.humanLockAvailable')
 for event in sleep resume; do
   printf '{"event":"%s"}\n' "$event" >&"$system_fixture_control"
-  monitor_event=""
-  for _ in $(seq 1 50); do
+  event_boolean=true
+  [[ $event != resume ]] || event_boolean=false
+  monitor_received=false
+  for _ in $(seq 1 100); do
     idle_state=$(cornice ipc idle status)
-    monitor_event=$(jq -r '.lastAction' <<<"$idle_state")
-    [[ $monitor_event != "$event" ]] || break
+    if jq -e --arg value "$event_boolean" '.lastSignal | contains("PrepareForSleep") and contains($value)' <<<"$idle_state" >/dev/null; then
+      monitor_received=true; break
+    fi
     sleep .1
   done
-  expect_eq "the real logind monitor receives the private $event signal" "$event" "$monitor_event"
+  expect_eq "the real logind monitor receives the private $event signal" true "$monitor_received"
   expect_eq "the logind monitor remains running after $event" true "$(jq -r '.logindWatching' <<<"$idle_state")"
+  if [[ $event == sleep && $full_sleep_guard == true ]]; then
+    # The native sleep guard always requires a full session lock before sleep;
+    # legacy lockOnSleep=false only disables the ordinary monitor's request.
+    # Both consumers receive the real private bus signal asynchronously, so the
+    # secure native state is the requirement, not their lastAction write order.
+    for _ in $(seq 1 100); do
+      native_lock=$(hyprctl -j seat lock-state)
+      jq -e '.scope == "session" and .locked == true and .secure == true and .ownerConnected == true' <<<"$native_lock" >/dev/null && break
+      sleep .1
+    done
+    printf '%s\n' "$native_lock" > "$runtime/private-sleep-full-lock-state.json"
+    expect_eq "the real sleep guard presents a secure full session lock" true "$(jq '.scope == "session" and .locked == true and .secure == true and .ownerConnected == true' <<<"$native_lock")"
+  elif [[ $event == sleep ]]; then
+    expect_eq "the ordinary monitor preserves the configured unlocked sleep policy" sleep "$(jq -r '.lastAction' <<<"$idle_state")"
+  else
+    expect_eq "the monitor handles resume after the real private signal" resume "$(jq -r '.lastAction' <<<"$idle_state")"
+  fi
 done
+if [[ $full_sleep_guard == true ]]; then
+  expect_eq "resuming retains the full lock until its owner unlocks" true "$(hyprctl -j seat lock-state | jq '.scope == "session" and .secure == true')"
+  # Test-only release of our own private locker, after its acknowledged frame.
+  # This never reaches the host compositor or performs host authentication.
+  cornice lock emergency-unlock >/dev/null
+  for _ in $(seq 1 100); do
+    [[ $(hyprctl -j seat lock-state | jq -r '.locked') == false && $(cornice ipc lock status | jq -r '.locked') == false ]] && break
+    sleep .1
+  done
+  hyprctl -j seat lock-state > "$runtime/private-sleep-unlocked-state.json"
+  expect_eq "the private full-lock owner acknowledges unlock before UI input" false "$(jq -r '.locked' "$runtime/private-sleep-unlocked-state.json")"
+  expect_eq "the shell acknowledges the private full-lock owner release" false "$(cornice ipc lock status | jq -r '.locked')"
+fi
 expect_eq "a suspend signal is understood" "sleep" \
   "$(cornice ipc idle feed '/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (true,)')"
 expect_eq "a wake signal is understood" "resume" \
