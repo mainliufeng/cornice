@@ -363,6 +363,11 @@ try:
     assert ctl("seat lock-state", True)["scope"] == "session" and cli("state", "continuing")["paused"]
     shell("lock", "emergency-unlock"); wait(lambda: not ctl("seat lock-state", True)["locked"])
     record("forced Cornice UI/guard death retains full lock; restarting restores authentication without restoring agent control")
+    # The high-resolution native appearance proof is complete. Release its
+    # extra private render buffers before the independent output-loss scenario,
+    # keeping the unchanged 3 GiB test budget instead of raising resource caps.
+    ok('eval hl.monitor({output="human",mode="1280x800",position="0x0",scale=1})')
+    wait(lambda: next(m for m in ctl("monitors", True) if m["name"] == "human")["scale"] == 1)
     # Removing the seat's original output must retire it even while it views
     # the human workspace. It cannot fall back to human input or move that view.
     cli("create", "lost-output", "--workspace", "40", "--virtual-output", "640x480")

@@ -280,13 +280,40 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     missing_env = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"], "CORNICE_PATH": str(pathlib.Path(info["release"]) / "cornice")}
     subprocess.run([str(pathlib.Path(info["release"]) / "cornice/bin/cornice"), "desktop", "remove", "desktop2"],
                    env=missing_env, check=True, capture_output=True)
-    wait(lambda: status()["current"].get("degraded") and status()["current"].get("recoveryRequired") == "diagnostics", 15)
+    definition_path = pathlib.Path(TEST_ENV["XDG_STATE_HOME"]) / "cornice/desktops.json"
+    persisted = json.loads(definition_path.read_text())["desktops"]
+    assert set(persisted) == {"main", "dynamic-third"} and persisted["dynamic-third"]["humanLockPolicy"] == "pause", persisted
+    retained_identity = persisted["dynamic-third"]["stableId"]
+    wait(lambda: set(status()["current"].get("desktops", [])) == {"main", "dynamic-third"} and status()["current"]["healthFailures"] == 0, 12)
+    for _ in range(6):
+        current = status()["current"]
+        assert not current.get("degraded") and current["healthFailures"] == 0 and process.poll() is None, current
+        time.sleep(.5)
+    record("legitimate removal updates managed health without stale default-name requirements or reviving a deleted desktop")
+    # Native output loss leaves the managed definition intact. It must still be
+    # detected even though the compositor's surviving live-seat list shrinks.
+    current_cli = pathlib.Path(info["release"]) / "cornice/bin/cornice"
+    target = json.loads(subprocess.check_output([str(current_cli), "desktop", "state", "dynamic-third"], env=missing_env, text=True))
+    subprocess.run(["hyprctl", "output", "remove", target["output"]], env=missing_env, check=True, capture_output=True)
+    wait(lambda: status()["current"].get("degraded") and status()["current"].get("lastHealthError"), 15)
+    assert "dynamic-third" in json.loads(definition_path.read_text())["desktops"]
     assert process.poll() is None and pathlib.Path('/proc/' + str(info["compositorPid"])).exists()
     assert human_state() == BASELINE
     trial("rollback"); ended(process, "Manual rollback")
-    record("missing a required secondary desktop reports degraded diagnostics without terminating the ready compositor")
+    record("missing a managed native output reports degraded diagnostics without terminating the ready compositor")
     trial("arm", "--seconds", "60", "--startup-seconds", "30")
     process = login_session(); info = ready(process)
+    restored_env = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"], "CORNICE_PATH": str(pathlib.Path(info["release"]) / "cornice")}
+    current_cli = pathlib.Path(info["release"]) / "cornice/bin/cornice"
+    restored_desktops = json.loads(subprocess.check_output([str(current_cli), "desktop", "list"], env=restored_env, text=True))["desktops"]
+    assert {desktop["name"] for desktop in restored_desktops} == {"main", "dynamic-third"}, restored_desktops
+    retained = next(desktop for desktop in restored_desktops if desktop["name"] == "dynamic-third")
+    assert retained["stableId"] == retained_identity and retained["humanLockPolicy"] == "pause" and retained["available"]
+    subprocess.run([str(current_cli), "desktop", "create", "policy-continue", "--virtual-output", "640x480"], env=restored_env, check=True, capture_output=True)
+    subprocess.run([str(current_cli), "desktop", "lock-policy", "policy-continue", "continue"], env=restored_env, check=True, capture_output=True)
+    wait(lambda: set(status()["current"].get("desktops", [])) == {"main", "dynamic-third", "policy-continue"} and status()["current"]["healthFailures"] == 0 and not status()["current"].get("initializingDesktops"), 12)
+    preserved_policy_identity = json.loads(definition_path.read_text())["desktops"]["policy-continue"]["stableId"]
+    record("new compositor restores an arbitrary managed name, identity and pause policy; on-demand continue desktop remains healthy")
     # Real Lua dispatcher errors share configerrors with startup diagnostics.
     # They must not terminate an otherwise working logged-in desktop.
     runtime_env = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
@@ -393,7 +420,7 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
         selected = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
         subprocess.run(["grim", str(BASE / "trial-native-config.png")], env=selected, check=True, timeout=5)
         trial("rollback"); ended(process, "Manual rollback")
-        record("actual migrated daily Lua config starts the real candidate with bar and one secondary desktop")
+        record("actual migrated daily Lua config starts the real candidate with bar and retained arbitrary secondary desktops")
     configuration.write_text(original_configuration)
     chosen = json.loads(trial("prepare", "--hyprland", os.environ["CORNICE_TEST_HYPRLAND"],
                               "--cornice", PRODUCT, "--config", configuration))["prepared"]
@@ -401,7 +428,24 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     for cycle in range(2):
         process = login_session(); info = ready(process)
         assert info["persistent"] and info["release"] == chosen
-        selected_environment = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
+        selected_environment = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"], "CORNICE_PATH": str(pathlib.Path(chosen) / "cornice")}
+        persistent_cli = pathlib.Path(chosen) / "cornice/bin/cornice"
+        actual_desktops = json.loads(subprocess.check_output([str(persistent_cli), "desktop", "list"], env=selected_environment, text=True))["desktops"]
+        if cycle == 0:
+            assert {desktop["name"] for desktop in actual_desktops} == {"main", "dynamic-third", "policy-continue"}, actual_desktops
+            policies = {desktop["name"]: desktop for desktop in actual_desktops}
+            assert policies["dynamic-third"]["stableId"] == retained_identity and policies["dynamic-third"]["humanLockPolicy"] == "pause"
+            assert policies["policy-continue"]["stableId"] == preserved_policy_identity and policies["policy-continue"]["humanLockPolicy"] == "continue"
+            for desktop in actual_desktops:
+                if not desktop["primary"]:
+                    subprocess.run([str(persistent_cli), "desktop", "remove", desktop["name"]], env=selected_environment, check=True, capture_output=True)
+            wait(lambda: status()["current"].get("desktops") == ["main"] and status()["current"]["healthFailures"] == 0 and not status()["current"].get("degraded"), 12)
+            assert set(json.loads(definition_path.read_text())["desktops"]) == {"main"}
+            record("arbitrary pause/continue policies survive later logins; legitimate deletion of every secondary leaves a healthy main-only session")
+        else:
+            assert len(actual_desktops) == 1 and actual_desktops[0]["primary"] and actual_desktops[0]["name"] == "main", actual_desktops
+            assert set(json.loads(definition_path.read_text())["desktops"]) == {"main"}
+            record("fresh compositor login respects persisted main-only intent and does not recreate deleted secondary desktops")
         subprocess.run(["hyprctl", "dispatch", "hl.dsp.exit()"], env=selected_environment, check=True, timeout=5)
         process.wait(timeout=25)
         current = status()

@@ -135,11 +135,22 @@ for _ in $(seq 1 160); do
   [[ $(cornice ipc lock status | jq -r '.locked') == true ]] && break
   sleep .1
 done
+# locked means the request was submitted. The provider's acknowledged frame
+# arrives later; requesting emergency unlock before that is not an unlock.
+for _ in $(seq 1 100); do
+  [[ $(cornice ipc lock status | jq -r '.secure') == true ]] && break
+  sleep .1
+done
 cornice ipc idle status > "$runtime/idle-deadline-status.json"
 cornice ipc lock status > "$runtime/lock-deadline-status.json"
+hyprctl -j seat lock-state > "$runtime/lock-deadline-compositor-state.json" 2>/dev/null || true
 expect_eq "ignoring the warning reaches a secure lock" true "$(cornice ipc lock status | jq -r '.secure')"
 cornice lock emergency-unlock >/dev/null
-sleep .3
+for _ in $(seq 1 100); do
+  [[ $(cornice ipc lock status | jq -r '.locked') == false ]] && break
+  sleep .1
+done
+expect_eq "the idle lock owner acknowledges its emergency unlock" false "$(cornice ipc lock status | jq -r '.locked')"
 cp "$runtime/warning-config-before.json" "$XDG_CONFIG_HOME/cornice/config.json"
 cornice ipc shell reloadConfig >/dev/null
 sleep .5

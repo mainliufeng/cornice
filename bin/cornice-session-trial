@@ -543,7 +543,6 @@ class Trial:
         self.directory.mkdir(parents=True, mode=0o700)
         self.children = []
         self.sockets = []
-        self.required_desktops = {"main", "desktop2"}
         self.desktop_startups = {}
         self.ready_desktops = set()
         self.components = {}
@@ -743,6 +742,70 @@ class Trial:
         if self.interrupted or (self.directory / "rollback").exists():
             raise RuntimeError("Manual rollback or session termination requested")
 
+    def desktop_definitions(self, allow_missing=False):
+        directory = Path(self.environment.get("XDG_STATE_HOME") or
+                         str(Path(self.environment["HOME"]) / ".local/state"))
+        path = directory / "cornice/desktops.json"
+        try:
+            with path.open("rb") as stream:
+                contents = stream.read(1024 * 1024 + 1)
+        except FileNotFoundError:
+            if allow_missing:
+                return None
+            raise RuntimeError("Managed desktop definitions are unavailable")
+        if len(contents) > 1024 * 1024:
+            raise RuntimeError("Managed desktop definitions are too large")
+        value = json.loads(contents)
+        if (not isinstance(value, dict) or value.get("schema") != 1 or
+                not isinstance(value.get("desktops"), dict)):
+            raise RuntimeError("Invalid managed desktop definitions")
+        definitions = value["desktops"]
+        if not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name)
+                   and isinstance(spec, dict) for name, spec in definitions.items()):
+            raise RuntimeError("Invalid managed desktop definition entry")
+        return definitions
+
+    def managed_desktops(self):
+        # Broker's list contains managed definitions including restore failures,
+        # not just surviving live seats. Check the persisted intent as well so a
+        # vanished seat/output cannot be mistaken for a legitimate deletion.
+        # Definitions can change legally while IPC is in flight: retry only the
+        # read-only snapshot, never replay a creation or policy operation.
+        for _ in range(3):
+            before = self.desktop_definitions()
+            value = json.loads(self.command("desktop", "list"))
+            if (not isinstance(value, dict) or not isinstance(value.get("desktops"), list) or
+                    not all(isinstance(desktop, dict) and isinstance(desktop.get("name"), str)
+                            for desktop in value["desktops"])):
+                raise RuntimeError("Invalid managed desktop list")
+            desktops = value["desktops"]
+            definitions = self.desktop_definitions()
+            if before != definitions:
+                continue
+            names = [desktop["name"] for desktop in desktops]
+            if len(names) != len(set(names)) or set(names) != set(definitions):
+                raise RuntimeError("Managed desktop list does not match its definitions")
+            if sum(desktop.get("primary") is True for desktop in desktops) != 1:
+                raise RuntimeError("Managed primary desktop is missing")
+            for desktop in desktops:
+                name = desktop["name"]
+                if desktop.get("available") is not True or desktop.get("error"):
+                    raise RuntimeError("Managed desktop is unavailable: " + name +
+                                       ": " + str(desktop.get("error", "native seat unavailable")))
+                if desktop.get("stableId") != definitions[name].get("stableId"):
+                    raise RuntimeError("Managed desktop identity changed: " + name)
+            return desktops
+        raise RuntimeError("Managed desktop definitions changed during health check")
+
+    def initialize_desktops(self, new_installation):
+        desktops = self.managed_desktops()
+        secondary = [desktop for desktop in desktops if not desktop.get("primary")]
+        # Only Broker's newly seeded default gets the deployment's established
+        # continuation policy. Existing names, count and policies are user intent.
+        if new_installation and len(secondary) == 1:
+            self.command("desktop", "lock-policy", secondary[0]["name"], "continue")
+        self.info["desktops"] = [desktop["name"] for desktop in desktops]
+
     def health(self):
         self.check_request()
         for name, component in self.components.items():
@@ -777,12 +840,13 @@ class Trial:
             raise ComponentUnhealthy("cornice", "Cornice bar is missing")
         self.info["healthStage"] = "desktop.list"
         try:
-            desktops = json.loads(self.command("desktop", "list"))["desktops"]
+            desktops = self.managed_desktops()
         except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
             raise ComponentUnhealthy("desktop", str(error)) from error
-        if not self.required_desktops.issubset({d["name"] for d in desktops}):
-            raise RuntimeError("Required desktops are missing")
         self.info["desktops"] = [d["name"] for d in desktops]
+        identities = {(d["name"], d.get("seatId")) for d in desktops}
+        self.ready_desktops.intersection_update(identities)
+        self.desktop_startups = {identity: started for identity, started in self.desktop_startups.items() if identity in identities}
         initializing = []
         self.info["healthStage"] = "desktop.topology"
         for desktop in desktops:
@@ -809,8 +873,8 @@ class Trial:
                        for level in layers.get(desktop["output"], {}).get("levels", {}).values() for layer in level):
                 # Only the first bar map of a new dynamic desktop has a bounded
                 # initialization window. Its output/socket/slots still must be
-                # real and healthy; required and previously-ready bars are strict.
-                if desktop["name"] not in self.required_desktops and identity not in self.ready_desktops:
+                # real and healthy; startup and previously-ready bars are strict.
+                if self.info["status"] != "starting" and identity not in self.ready_desktops:
                     first_seen = self.desktop_startups.setdefault(identity, time.monotonic())
                     if time.monotonic() - first_seen < self.ticket["startupSeconds"]:
                         initializing.append(desktop["name"])
@@ -884,6 +948,9 @@ class Trial:
                 raise RuntimeError("Compositor launch environment export failed")
         finally:
             environment_file.unlink(missing_ok=True)
+        previous_definitions = self.desktop_definitions(allow_missing=True)
+        legacy_definitions = (runtime / "cornice" / self.environment["HYPRLAND_INSTANCE_SIGNATURE"] / "desktops.json")
+        new_installation = previous_definitions is None and not legacy_definitions.exists()
         broker = self.component([self.product / "bin/cornice-desktopd"], "desktop")
         self.info["brokerPid"] = broker.pid
         while time.monotonic() < deadline:
@@ -895,10 +962,7 @@ class Trial:
                 time.sleep(.1)
         else:
             raise RuntimeError("Agent desktop service startup timeout")
-        # Broker initializes one secondary desktop. Preserve this deployment's
-        # established human-only lock policy without widening generic creation.
-        self.command("desktop", "lock-policy", "desktop2", "continue")
-        self.info["desktops"] = ["main", "desktop2"]
+        self.initialize_desktops(new_installation)
         shell = self.component([self.product / "bin/cornice-qs", "-p", self.product / "shell"], "cornice")
         self.info["shellPid"] = shell.pid
         while time.monotonic() < deadline:

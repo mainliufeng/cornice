@@ -90,6 +90,14 @@ class CompositorFixture {
             if (takeover) states["desktop2"]["paused"] = false;
             return object({{"active", true}, {"name", "desktop2"}, {"humanControl", takeover}, {"workspace", states["desktop2"]["workspace"]}});
         }
+        if (command.startsWith("seat create-private-output ") || command.startsWith("eval hl.monitor(")) return "ok";
+        if (command.startsWith("seat create ")) {
+            const auto pieces = command.split(' '); states[pieces.at(2)]["output"] = pieces.at(3); return "ok";
+        }
+        if (command.startsWith("seat workspace ")) {
+            const auto pieces = command.split(' '); states[pieces.at(2)]["workspace"] = pieces.at(3); return "ok";
+        }
+        if (command.startsWith("seat remove ")) { states.remove(command.mid(12)); return "ok"; }
         if (command.startsWith("dispatch hl.dsp.window.close(")) return "ok";
         throw std::runtime_error(("Unexpected private compositor request: " + command).toStdString());
     }
@@ -333,6 +341,55 @@ class BrokerHandoffFixture {
         QLocalSocket probe; probe.connectToServer(broker->m_socketPath); require(probe.waitForConnected(1000), "stale endpoint startup did not create working listener");
         std::puts("PASS verified stale local socket is replaced by a working listener before compositor initialization");
     }
+    void mainOnlyLogin(bool legacy) {
+        broker->perform("remove", {{"name", target}}, nullptr, nullptr);
+        require(broker->m_desktops.size() == 1 && broker->m_definitions.size() == 1, "remove did not persist a main-only topology");
+        const auto statePath = broker->m_statePath;
+        QFile persistent(statePath); require(persistent.open(QIODevice::ReadOnly), "main-only definitions were not saved");
+        const auto definition = QJsonDocument::fromJson(persistent.readAll()).object()["desktops"].toObject(); persistent.close();
+        require(definition.size() == 1 && definition.contains("main"), "secondary deletion left a durable definition");
+        broker.reset(); compositor.reset(); instance += "-new-login";
+        const auto runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+        if (legacy) {
+            require(QFile::remove(statePath), "private legacy fixture could not remove persistent definition");
+            document(runtime + "/cornice/" + instance + "/desktops.json", definition);
+        }
+        compositor = std::make_unique<CompositorFixture>(runtime + "/hypr/" + instance);
+        broker = std::make_unique<Broker>(instance); broker->m_watchdog.stop();
+        require(broker->m_desktops.size() == 1 && broker->m_desktops.contains("main") && !compositor->saw("seat create "), "new compositor login recreated a deleted secondary desktop");
+        require(broker->m_desktops.at("main").stableId == "main-fixture" && broker->state("main")["paused"].toBool(), "main-only restore lost identity or enabled input");
+        std::printf("PASS deleted secondary remains deleted on a new compositor transport with %s main-only definitions\n", legacy ? "legacy runtime" : "persistent");
+    }
+    void firstInstallation() {
+        const auto statePath = broker->m_statePath;
+        broker.reset(); compositor.reset();
+        require(QFile::remove(statePath), "private fresh fixture could not remove saved definitions");
+        instance += "-first-install"; const auto runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+        compositor = std::make_unique<CompositorFixture>(runtime + "/hypr/" + instance);
+        broker = std::make_unique<Broker>(instance); broker->m_watchdog.stop();
+        require(broker->m_desktops.size() == 2 && broker->m_desktops.contains("desktop2") && compositor->saw("seat create desktop2 "), "first installation did not create its default empty secondary desktop");
+        require(broker->state("desktop2")["paused"].toBool() && broker->state("desktop2")["humanLockPolicy"] == "pause", "fresh desktop changed the default paused lock policy");
+        std::puts("PASS genuine first installation seeds exactly one paused default secondary desktop");
+    }
+    void invalidDefinitions() {
+        const auto statePath = broker->m_statePath;
+        broker.reset(); compositor.reset(); instance += "-invalid-definitions";
+        const auto runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+        compositor = std::make_unique<CompositorFixture>(runtime + "/hypr/" + instance);
+        QFile persistent(statePath); require(persistent.open(QIODevice::WriteOnly | QIODevice::Truncate), "broken persistent fixture failed");
+        require(persistent.write("{") == 1, "broken persistent fixture write failed"); persistent.close();
+        bool refused = false;
+        try { Broker invalid(instance); } catch (const std::exception &) { refused = true; }
+        require(refused && !compositor->saw("seat control ") && !compositor->saw("seat create "), "broken persistent definition was treated as fresh or changed input");
+        require(QFile::remove(statePath), "broken persistent fixture removal failed");
+        const auto legacy = runtime + "/cornice/" + instance + "/desktops.json"; QDir().mkpath(QFileInfo(legacy).path());
+        QFile file(legacy); require(file.open(QIODevice::WriteOnly), "broken legacy fixture failed");
+        require(file.write("[]") == 2, "broken legacy fixture write failed"); file.close();
+        refused = false;
+        try { Broker invalid(instance); } catch (const std::exception &failure) { refused = QString::fromUtf8(failure.what()).contains("Unsupported runtime desktop definitions"); }
+        require(refused && !compositor->saw("seat control ") && !compositor->saw("seat create "), "broken legacy definition was treated as fresh or changed input");
+        std::puts("PASS malformed persistent and non-object legacy definitions fail before input changes without fresh seeding");
+    }
     void sharedWorkspace() {
         broker->m_desktops.at(target).privateOutput = "test-private-output";
         compositor->setClients(QJsonArray{QJsonObject{{"mapped", true}, {"workspace", QJsonObject{{"name", "cornice-agent-desktop2-ws-1"}}}, {"address", "0x1234"}}});
@@ -360,6 +417,10 @@ int main(int argc, char **argv) {
         run([](auto &fixture) { fixture.earlyConnection(); });
         run([](auto &fixture) { fixture.duplicateEndpoint(); });
         run([](auto &fixture) { fixture.failedEndpoint(); });
+        run([](auto &fixture) { fixture.mainOnlyLogin(false); });
+        run([](auto &fixture) { fixture.mainOnlyLogin(true); });
+        run([](auto &fixture) { fixture.firstInstallation(); });
+        run([](auto &fixture) { fixture.invalidDefinitions(); });
         { BrokerHandoffFixture fixture("handoff-unit", true); fixture.staleEndpoint(); fixture.verify(); }
         { BrokerHandoffFixture fixture(QString(73, 'a')); fixture.longSignature(); fixture.verify(); }
         return 0;

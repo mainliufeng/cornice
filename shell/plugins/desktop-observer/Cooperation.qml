@@ -6,8 +6,8 @@ import qs.Ui
 Item {
   id:root
   property var service:null
-  readonly property var requests:service && (DesktopSession.agentShell || service.selectedDesktop === "main") ? service.cooperationDesktops : []
-  readonly property bool noticeScope:!!service && (DesktopSession.agentShell || service.selectedDesktop === "main")
+  readonly property var requests:service ? service.cooperationDesktops : []
+  readonly property bool noticeScope:!!service
   PanelWindow {
     id:window
     screen:{

@@ -1,5 +1,6 @@
 """Exercise desktop lifecycle notices and controls on real isolated QML surfaces."""
 from desktop_harness import *
+from cooperation_visual import visible_cooperation
 import hashlib
 import threading
 import shutil
@@ -86,12 +87,9 @@ def menu(name=None):
         return rows if any(item['name']=='control:current-heading' for item in rows) else None
     return wait(open_controls)
 
-def card_click(name,secondary=False):
-    row=wait(lambda:next((item for item in cooperation(name if secondary else None)['controls'] if item['name']==name),None))
-    output=cli('state',name)['output'] if secondary else 'human'
-    layer=next(layer for levels in ctl('layers',True)[output]['levels'].values() for layer in levels if layer['namespace']=='cornice-desktop-cooperation')
-    offset=cli('state',name)['position'] if secondary else [0,0]
-    click(layer['x']-offset[0]+row['x']+row['width']/2,layer['y']-offset[1]+row['y']+row['height']/2)
+def card_click(name):
+    row,layer=visible_cooperation(cooperation,name,'product-card-before-click-'+str(time.monotonic_ns()))
+    click(layer['x']+row['x']+row['width']/2,layer['y']+row['y']+row['height']/2)
 
 
 task=None
@@ -206,11 +204,11 @@ try:
     click(client['at'][0]-current['position'][0]+entry[0]+30,client['at'][1]-current['position'][1]+entry[1]+entry[3]/2)
     for letter in 'human':send('type '+letter);time.sleep(.04)
     wait(lambda:(BASE/'ui-target.txt').read_text()=='human')
-    card_click('bootstrap-ui',secondary=True)
-    wait(lambda:not observer()['humanControl'] and cooperation('bootstrap-ui')['controls'][0]['continuation'])
+    card_click('bootstrap-ui')
+    wait(lambda:not observer()['humanControl'] and cooperation()['controls'][0]['continuation'])
     support=cli('state','bootstrap-ui')['continuation']
     assert support['eventWait'] and support['notifications'] and support['wakeHarness'] is False,support
-    subprocess.run(['grim','-o','human',str(BASE/'product-waiting-continuation.png')],env=ENV,check=True)
+    visible_cooperation(cooperation,'bootstrap-ui','product-waiting-continuation',lambda row:row['continuation'])
     task.handoff(action='resume',requestId=request['id']);task.text('-agent')
     wait(lambda:(BASE/'ui-target.txt').read_text()=='human-agent')
     wait(lambda:not cooperation('bootstrap-ui')['visible'])

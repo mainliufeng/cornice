@@ -1,5 +1,6 @@
 """cornice CLI + native devices against an isolated real Hyprland fork."""
 import hashlib
+import errno
 import base64
 import json
 import os
@@ -50,12 +51,37 @@ def start(args, name, env=None):
 def ctl(command, as_json=False):
     path = RT / "hypr" / ENV["HYPRLAND_INSTANCE_SIGNATURE"] / ".socket.sock"
     assert path.is_relative_to(RT)
+    deadline = time.monotonic() + 4
     with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(4)
-        connection.connect(str(path))
+        # Timeout-mode AF_UNIX connect can return EAGAIN immediately when the
+        # accept backlog is full. No command exists yet, so wait on this exact
+        # instance before submission, within the same total IPC deadline.
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Private compositor IPC connection deadline exceeded")
+            connection.settimeout(remaining)
+            try:
+                connection.connect(str(path))
+                break
+            except BlockingIOError as error:
+                if error.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    raise
+                time.sleep(min(.02, max(0, deadline - time.monotonic())))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Private compositor IPC submission deadline exceeded")
+        connection.settimeout(remaining)
         connection.sendall((("j" if as_json else "") + "/" + command).encode())
         chunks = []
-        while data := connection.recv(65536):
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Private compositor IPC response deadline exceeded")
+            connection.settimeout(remaining)
+            data = connection.recv(65536)
+            if not data:
+                break
             chunks.append(data)
     answer = b"".join(chunks).decode().strip()
     return json.loads(answer) if as_json else answer

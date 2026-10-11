@@ -3,6 +3,7 @@
 import errno
 import importlib.machinery
 import importlib.util
+import json
 from pathlib import Path
 import socket
 import subprocess
@@ -53,6 +54,50 @@ def make_trial(directory):
     return trial
 
 
+def topology_trial(directory):
+    trial = make_trial(directory)
+    base = Path(directory) / "topology"
+    state = base / "state"
+    runtime = base / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    trial.environment = {"XDG_STATE_HOME": str(state), "XDG_RUNTIME_DIR": str(runtime), "HOME": str(base)}
+    trial.version = {"commit": "unit"}
+    trial.ticket = {"startupSeconds": 5}
+    trial.ready_desktops = set()
+    trial.desktop_startups = {}
+    trial.sockets = []
+    desktops = [{"name": "main", "stableId": "main-stable", "seatId": "main-seat", "primary": True,
+                 "available": True, "output": "HEADLESS-1", "workspaceSlots": list(range(10)), "humanLockPolicy": "pause"},
+                {"name": "research-blue", "stableId": "blue-stable", "seatId": "blue-seat", "primary": False,
+                 "available": True, "output": "blue-output", "display": "blue-wayland", "workspaceSlots": list(range(10)), "humanLockPolicy": "pause"}]
+    with socket.socket(socket.AF_UNIX) as private_display:
+        private_display.bind(str(runtime / "blue-wayland"))
+    definition_path = state / "cornice/desktops.json"
+    def save():
+        trial_module.atomic(definition_path, {"schema": 1, "desktops": {
+            desktop["name"]: {"stableId": desktop["stableId"], "humanLockPolicy": desktop["humanLockPolicy"]} for desktop in desktops}})
+    save()
+    calls = []
+    def command(*arguments):
+        calls.append(arguments)
+        if arguments == ("ping",): return "pong fixture"
+        if arguments == ("desktop", "list"): return json.dumps({"desktops": desktops})
+        if arguments[:2] == ("desktop", "lock-policy"):
+            next(desktop for desktop in desktops if desktop["name"] == arguments[2])["humanLockPolicy"] = arguments[3]
+            save(); return "ok"
+        raise AssertionError(arguments)
+    trial.command = command
+    outputs = {"HEADLESS-1", "blue-output"}
+    bars = {"HEADLESS-1", "blue-output"}
+    def ipc_reply(environment, command, structured=True):
+        if command == "version": return {"commit": "unit"}
+        if command == "configerrors": return ""
+        if command == "monitors": return [{"name": name} for name in sorted(outputs)]
+        if command == "layers": return {name: {"levels": {"2": [{"namespace": "cornice-bar"}]}} for name in bars}
+        raise AssertionError(command)
+    return trial, desktops, save, calls, outputs, bars, ipc_reply, definition_path
+
+
 def failure(error):
     def throw():
         raise error
@@ -90,6 +135,73 @@ with tempfile.TemporaryDirectory(prefix="cornice-trial-health-", dir="/tmp") as 
             for client in fillers:
                 client.close()
     print("PASS: real timeout-mode AF_UNIX IPC reports EAGAIN on a private full backlog")
+    # Read the real schema/file and execute the actual health/topology methods.
+    # Service replies are local test doubles, not a replacement health callback.
+    trial, desktops, save, calls, outputs, bars, ipc_reply, definition_path = topology_trial(directory)
+    with patch.object(trial_module, "ipc", side_effect=ipc_reply):
+        trial.initialize_desktops(False)
+        trial.health()
+        assert trial.info["desktops"] == ["main", "research-blue"]
+        assert desktops[1]["humanLockPolicy"] == "pause"
+        assert not any(call[:2] == ("desktop", "lock-policy") for call in calls)
+        trial.initialize_desktops(True)
+        assert calls.count(("desktop", "lock-policy", "research-blue", "continue")) == 1
+        desktops[1]["humanLockPolicy"] = "pause"; save()
+        trial.initialize_desktops(False)
+        assert desktops[1]["humanLockPolicy"] == "pause"
+        assert calls.count(("desktop", "lock-policy", "research-blue", "continue")) == 1
+    print("PASS: arbitrary managed names preserve existing policies; only a genuinely fresh default receives continuation")
+
+    with patch.object(trial_module, "ipc", side_effect=ipc_reply):
+        desktops.pop(); save()
+        trial.health()
+        assert trial.info["desktops"] == ["main"] and trial.ready_desktops == {("main", "main-seat")}
+        trial.initialize_desktops(False)
+        assert not any(call[:2] == ("desktop", "create") for call in calls)
+        desktops.append({"name": "later-green", "stableId": "green-stable", "seatId": "green-seat", "primary": False,
+                         "available": True, "output": "green-output", "display": "green-wayland", "workspaceSlots": list(range(10)), "humanLockPolicy": "continue"})
+        with socket.socket(socket.AF_UNIX) as private_display:
+            private_display.bind(str(Path(trial.environment["XDG_RUNTIME_DIR"]) / "green-wayland"))
+        outputs.add("green-output"); save()
+        trial.health()
+        assert trial.info["initializingDesktops"] == ["later-green"]
+        bars.add("green-output"); trial.health()
+        assert trial.info["initializingDesktops"] == []
+        desktops.pop(); save(); trial.health()
+        assert trial.info["desktops"] == ["main"] and not trial.desktop_startups
+    print("PASS: legal desktop deletion/main-only state and later creation update live health without stale requirements or bookkeeping")
+
+    trial, desktops, save, calls, outputs, bars, ipc_reply, definition_path = topology_trial(directory + '/missing')
+    original = dict(desktops[1])
+    with patch.object(trial_module, "ipc", side_effect=ipc_reply):
+        for mutation in ("missing-from-list", "unavailable-entry", "output-lost"):
+            desktops[:] = [desktops[0], dict(original)]
+            outputs.add("blue-output")
+            if mutation == "missing-from-list": desktops.pop()
+            elif mutation == "unavailable-entry": desktops[1] = {"name": "research-blue", "error": "seat not found"}
+            else: outputs.remove("blue-output")
+            try:
+                trial.health()
+                raise AssertionError("Missing native topology was accepted: " + mutation)
+            except RuntimeError as error:
+                assert any(text in str(error) for text in ("definitions", "unavailable", "output is missing")), str(error)
+            assert trial.compositor.poll() is None
+    print("PASS: surviving live seats cannot hide a missing managed definition, failed native seat or lost output")
+
+    trial, desktops, save, calls, outputs, bars, ipc_reply, definition_path = topology_trial(directory + '/race')
+    original_command = trial.command
+    changed = []
+    def concurrent_delete(*arguments):
+        if arguments == ("desktop", "list") and not changed:
+            changed.append(True); desktops.pop(); save()
+        return original_command(*arguments)
+    trial.command = concurrent_delete
+    with patch.object(trial_module, "ipc", side_effect=ipc_reply):
+        trial.health()
+    assert trial.info["desktops"] == ["main"] and calls.count(("desktop", "list")) == 2
+    assert not any(call[:2] in (("desktop", "create"), ("desktop", "lock-policy")) for call in calls)
+    print("PASS: concurrent legal definition changes retry a consistent read-only snapshot without replaying any mutation")
+
     clock = Clock()
     with patch.object(trial_module.time, "monotonic", lambda: clock.value), patch.object(trial_module.time, "time", lambda: clock.value):
         trial = make_trial(directory)
@@ -234,7 +346,7 @@ with tempfile.TemporaryDirectory(prefix="cornice-trial-health-", dir="/tmp") as 
         # component responses, rather than only replacing health() with a throw.
         for malformed in ("version", "monitors", "desktop"):
             trial = make_trial(directory)
-            trial.environment = {}; trial.version = {"commit": "unit"}
+            trial.environment = {"HOME": directory, "XDG_STATE_HOME": str(Path(directory) / "topology/state")}; trial.version = {"commit": "unit"}
             def ipc_reply(environment, command, structured=True):
                 if command == "version":
                     return [] if malformed == "version" else {"commit": "unit"}

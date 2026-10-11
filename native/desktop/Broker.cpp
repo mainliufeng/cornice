@@ -141,7 +141,8 @@ Broker::Broker(QString instance)
     QFile::setPermissions(stateDirectory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
     m_statePath = stateDirectory + "/desktops.json";
     QFile persistent(m_statePath);
-    if (persistent.exists()) {
+    const bool hasPersistentDefinitions = persistent.exists();
+    if (hasPersistentDefinitions) {
         if (!persistent.open(QIODevice::ReadOnly) || persistent.size() > 1024 * 1024) fail("Cannot read persistent desktop definitions");
         const auto saved = json(persistent.readAll()).object();
         if (saved["schema"].toInt() != 1 || !saved["desktops"].isObject()) fail("Unsupported persistent desktop definitions");
@@ -149,7 +150,13 @@ Broker::Broker(QString instance)
     }
     QJsonObject runtimeDefinitions;
     QFile file(m_directory + "/desktops.json");
-    if (file.open(QIODevice::ReadOnly)) runtimeDefinitions = json(file.readAll()).object();
+    const bool hasRuntimeDefinitions = file.exists();
+    if (hasRuntimeDefinitions) {
+        if (!file.open(QIODevice::ReadOnly) || file.size() > 1024 * 1024) fail("Cannot read runtime desktop definitions");
+        const auto saved = json(file.readAll());
+        if (!saved.isObject()) fail("Unsupported runtime desktop definitions");
+        runtimeDefinitions = saved.object();
+    }
     // Import old runtime definitions once; stable settings never include grants.
     for (auto it = runtimeDefinitions.begin(); it != runtimeDefinitions.end(); ++it)
         if (!m_definitions.contains(it.key()) && it.value().isObject()) m_definitions[it.key()] = it.value();
@@ -169,9 +176,10 @@ Broker::Broker(QString instance)
             restoreDefinition(it.key(), it.value().toObject());
         } catch (const std::exception &error) { m_restoreErrors[it.key()] = QString::fromUtf8(error.what()); }
     }
-    // A new installation has one empty desktop. Failed stored definitions are
-    // retained and reported instead of silently replacing the user's desktops.
-    if (m_desktops.size() == 1 && m_definitions.size() <= 1) {
+    // Only a first installation seeds an empty desktop. An existing main-only
+    // topology means the user removed all secondary desktops; preserve it.
+    // Unreadable or broken stored definitions must never masquerade as fresh.
+    if (!hasPersistentDefinitions && !hasRuntimeDefinitions) {
         const auto size = primary["pixelSize"].toArray();
         perform("create", {{"name", "desktop2"}, {"virtual-output",
             QString("%1x%2").arg(size.at(0).toInt()).arg(size.at(1).toInt())}}, nullptr, nullptr);

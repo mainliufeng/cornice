@@ -1,5 +1,6 @@
 """Task-owned human cooperation with real MCP, native views and QML buttons."""
 from desktop_harness import *
+from cooperation_visual import visible_cooperation
 import hashlib
 class MCP:
  def __init__(self,label,without_session=False):
@@ -41,15 +42,9 @@ def secondary_env(name):
 def send(line):
     keyboard.stdin.write(line+'\n');keyboard.stdin.flush()
     assert select.select([keyboard.stdout],[],[],5)[0] and keyboard.stdout.readline().strip()=='done',line
-def click_banner(name,env=None):
-    row=wait(lambda:next((row for row in banner(env)['controls'] if row['name']==name),None))
-    layers=ctl('layers',True)
-    if env:
-        output=cli('state',name)['output']
-    else:output='human'
-    layer=next(layer for entries in layers[output]['levels'].values() for layer in entries if layer['namespace']=='cornice-desktop-cooperation')
-    position=cli('state',name)['position'] if env else [0,0]
-    x=round(layer['x']-position[0]+row['x']+row['width']/2);y=round(layer['y']-position[1]+row['y']+row['height']/2)
+def click_banner(name):
+    row,layer=visible_cooperation(banner,name,'cooperation-before-click-'+str(time.monotonic_ns()))
+    x=round(layer['x']+row['x']+row['width']/2);y=round(layer['y']+row['y']+row['height']/2)
     for line in (f'motion {x} {y}','button 272 1','button 272 0'):send(line)
 
 try:
@@ -80,7 +75,7 @@ try:
     assert b.call('desktop_handoff',{'desktop':other['desktop'],'action':'resolve','requestId':rid,'outcome':'cancelled','note':'foreign'},False)['isError']
     assert a.call('desktop_handoff',target|{'action':'resume','requestId':rid},False)['isError']
     wait(lambda:banner()['visible'])
-    subprocess.run(['grim','-o','human',str(BASE/'cooperation-request.png')],env=ENV,check=True)
+    visible_cooperation(banner,name,'cooperation-request',lambda row:row['status']=='requested')
     click_banner(name)
     wait(lambda:observer()['humanControl'])
     wait(lambda:a.details('desktop_handoff',target|{'action':'status'})['request']['status']=='in_progress')
@@ -93,10 +88,10 @@ try:
     for line in (f'motion {x} {y}','button 272 1','button 272 0'):send(line)
     for character in 'human':send('type '+character);time.sleep(.04)
     wait(lambda:(BASE/(name+'.txt')).read_text()=='human')
-    subprocess.run(['grim','-o','human',str(BASE/'cooperation-in-progress.png')],env=ENV,check=True)
+    visible_cooperation(banner,name,'cooperation-in-progress',lambda row:row['status']=='in_progress')
     assert 'changed' in cli('handoff-complete',name,'wrong-request',succeeds=False)
     waitingId=a.send('tools/call',{'name':'desktop_wait','arguments':target|{'seconds':30,'reason':'等待人工步骤完成'}})
-    click_banner(name,agent_env)
+    click_banner(name)
     completedAt=time.monotonic()
     waited=a.receive(waitingId)
     assert waited['structuredContent']['cooperationResolved'] and waited['structuredContent']['interrupted'],waited
@@ -105,6 +100,7 @@ try:
     done=wait(lambda:a.details('desktop_handoff',target|{'action':'status'})['request'] if a.details('desktop_handoff',target|{'action':'status'})['request']['status']=='completed' else None)
     assert [event['status'] for event in done['events']]==['requested','in_progress','completed'],done
     assert cli('state',name)['paused']
+    visible_cooperation(banner,name,'cooperation-waiting-continuation',lambda row:row['continuation'])
     a.call('desktop_handoff',target|{'action':'resume','requestId':rid})
     fresh=a.details('desktop_capture',target)
     assert fresh['generation']!=frame['generation']

@@ -42,10 +42,15 @@ shell_pid=""
 tray_fixture_pid=""
 hypr_pid=""
 hover_pointer_pid=""
+keyboard_pid=""
 weather_server_pid=""
 result=0
 
 cleanup() {
+  if [[ -n $keyboard_pid ]]; then
+    kill "$keyboard_pid" 2>/dev/null || true
+    wait "$keyboard_pid" 2>/dev/null || true
+  fi
   [[ -n $hover_pointer_pid ]] && kill "$hover_pointer_pid" 2>/dev/null
   [[ -n ${media_fixture_pid:-} ]] && kill "$media_fixture_pid" 2>/dev/null
   [[ -n ${tooltip_audio_pid:-} ]] && kill "$tooltip_audio_pid" 2>/dev/null
@@ -322,6 +327,26 @@ if [[ $install_prefix != "$prefix" ]]; then
   export CORNICE_PATH="$install_prefix"
   [[ -f $install_prefix/shell/shell.qml ]] || fail "no shell.qml under $install_prefix"
 fi
+
+# A daily desktop already has a keyboard when clients map their panels. Keep
+# one real virtual keyboard connected throughout this ordinary UI suite. An
+# injector roundtrip alone cannot synchronize another client's first binding
+# after a zero-to-one capability change; that transition has its own dedicated
+# keyboard-capability-focus-verify.py protocol/lock regression.
+command -v wtype >/dev/null 2>&1 || { fail "wtype is required for actual keyboard interaction"; exit 1; }
+wtype -s 1200000 >"$runtime/persistent-keyboard.log" 2>&1 &
+keyboard_pid=$!
+keyboard_ready=0
+for _ in $(seq 1 100); do
+  kill -0 "$keyboard_pid" 2>/dev/null || break
+  if hyprctl -j devices | jq -e '.keyboards | length > 0' >/dev/null 2>&1; then
+    keyboard_ready=1; break
+  fi
+  sleep .05
+done
+((keyboard_ready)) || { fail "persistent private keyboard did not become available"; exit 1; }
+hyprctl -j devices > "$runtime/persistent-keyboard-devices.json"
+pass "one real keyboard is available before the shell and application clients start"
 
 source "$prefix/test/tooltip-audio-setup.sh"
 
