@@ -55,7 +55,10 @@ exec nice -n 15 bwrap --unshare-all --die-with-parent --new-session \
   --ro-bind / / --dev /dev --proc /proc --tmpfs /run --tmpfs /tmp \
   --bind "$artifacts" /tmp/t "${product_mount[@]}" "${voice_mount[@]}" \
   --setenv HOME /tmp/t/home --setenv TMPDIR /tmp/t \
-  --setenv XDG_RUNTIME_DIR /tmp/t \
+  --setenv XDG_CONFIG_HOME /tmp/t/home/.config \
+  --setenv XDG_DATA_HOME /tmp/t/home/.local/share \
+  --setenv XDG_STATE_HOME /tmp/t/home/.local/state \
+  --setenv XDG_RUNTIME_DIR /tmp/t --setenv CORNICE_PATH "$prefix" \
   "${render_args[@]}" \
   --setenv LP_NUM_THREADS 2 --setenv OMP_NUM_THREADS 2 \
   --setenv AQ_DRM_DEVICES /dev/null --setenv LIBSEAT_BACKEND noop \
@@ -65,5 +68,7 @@ exec nice -n 15 bwrap --unshare-all --die-with-parent --new-session \
   --unsetenv HYPRLAND_INSTANCE_SIGNATURE --unsetenv DBUS_SESSION_BUS_ADDRESS \
   --unsetenv HYPRLAND_ACTION_ID --unsetenv HYPRLAND_SEAT_NAME --unsetenv HYPRLAND_SEAT_ID \
   --unsetenv HYPRLAND_SEAT_GENERATION --unsetenv HYPRLAND_SEAT_OUTPUT \
-  --unsetenv CORNICE_TRIAL_STATE_DIR \
+  --unsetenv CORNICE_TRIAL_STATE_DIR --unsetenv CORNICE_DESKTOP_NAME \
+  --unsetenv CORNICE_DESKTOP_OUTPUT --unsetenv CORNICE_SHELL_SOCKET \
+  --unsetenv CORNICE_PRIMARY_SHELL_SOCKET \
   -- "$interpreter" "$prefix/test/$suite"
