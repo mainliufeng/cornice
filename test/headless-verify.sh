@@ -334,7 +334,15 @@ fi
 # after a zero-to-one capability change; that transition has its own dedicated
 # keyboard-capability-focus-verify.py protocol/lock regression.
 command -v wtype >/dev/null 2>&1 || { fail "wtype is required for actual keyboard interaction"; exit 1; }
-wtype -s 1200000 >"$runtime/persistent-keyboard.log" 2>&1 &
+# A nonempty keymap models an ordinary attached keyboard without sending keys
+# during the suite. The explicit empty-keymap preflight also verifies the real
+# compositor's no-layout JSON contract, rather than treating parse errors as
+# an unavailable device. The trailing F24 release is parsed before sleeping.
+keyboard_args=(-s 1200000)
+if [[ ${CORNICE_TEST_KEYBOARD_EMPTY_KEYMAP:-0} != 1 ]]; then
+  keyboard_args+=(-p F24)
+fi
+WAYLAND_DEBUG=client wtype "${keyboard_args[@]}" >"$runtime/persistent-keyboard.log" 2>&1 &
 keyboard_pid=$!
 keyboard_ready=0
 for _ in $(seq 1 100); do
@@ -344,9 +352,33 @@ for _ in $(seq 1 100); do
   fi
   sleep .05
 done
-((keyboard_ready)) || { fail "persistent private keyboard did not become available"; exit 1; }
+if ((!keyboard_ready)); then
+  fail "persistent private keyboard did not become available"
+  hyprctl -j devices > "$runtime/persistent-keyboard-failed-devices.json"
+  cat "$runtime/persistent-keyboard.log"
+  exit 1
+fi
 hyprctl -j devices > "$runtime/persistent-keyboard-devices.json"
+if [[ ${CORNICE_TEST_KEYBOARD_EMPTY_KEYMAP:-0} == 1 ]]; then
+  if jq -e '.keyboards | length == 1 and .[0].active_layout_index == null' "$runtime/persistent-keyboard-devices.json" >/dev/null; then
+    pass "a real empty-keymap keyboard has a parseable JSON null layout index"
+  else
+    fail "empty-keymap keyboard must expose a JSON null layout index"
+    exit 1
+  fi
+  hyprctl devices > "$runtime/persistent-keyboard-devices.txt"
+  if grep -q 'active layout index: none' "$runtime/persistent-keyboard-devices.txt"; then
+    pass "text devices output retains none for the missing keyboard layout"
+  else
+    fail "text devices output changed the missing keyboard layout representation"
+    exit 1
+  fi
+fi
 pass "one real keyboard is available before the shell and application clients start"
+if [[ ${CORNICE_TEST_KEYBOARD_FIXTURE_ONLY:-0} == 1 ]]; then
+  pass "keyboard fixture preflight only; shell/product assertions were not run"
+  exit "$result"
+fi
 
 source "$prefix/test/tooltip-audio-setup.sh"
 

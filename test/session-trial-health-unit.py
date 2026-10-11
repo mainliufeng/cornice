@@ -152,6 +152,17 @@ with tempfile.TemporaryDirectory(prefix="cornice-trial-health-", dir="/tmp") as 
         assert calls.count(("desktop", "lock-policy", "research-blue", "continue")) == 1
     print("PASS: arbitrary managed names preserve existing policies; only a genuinely fresh default receives continuation")
 
+    preserved_definitions = definition_path.read_bytes()
+    with patch.object(trial_module, "ipc", side_effect=ipc_reply):
+        for desktop in desktops:
+            desktop["available"] = False
+        trial.health()
+        assert trial.info["healthStage"] == "complete"
+        assert definition_path.read_bytes() == preserved_definitions
+        for desktop in desktops:
+            desktop["available"] = True
+    print("PASS: readonly presentation, DPMS and lock input unavailability preserve healthy native identities and topology")
+
     with patch.object(trial_module, "ipc", side_effect=ipc_reply):
         desktops.pop(); save()
         trial.health()
@@ -174,11 +185,12 @@ with tempfile.TemporaryDirectory(prefix="cornice-trial-health-", dir="/tmp") as 
     trial, desktops, save, calls, outputs, bars, ipc_reply, definition_path = topology_trial(directory + '/missing')
     original = dict(desktops[1])
     with patch.object(trial_module, "ipc", side_effect=ipc_reply):
-        for mutation in ("missing-from-list", "unavailable-entry", "output-lost"):
+        for mutation in ("missing-from-list", "unavailable-entry", "missing-seat-identity", "output-lost"):
             desktops[:] = [desktops[0], dict(original)]
             outputs.add("blue-output")
             if mutation == "missing-from-list": desktops.pop()
             elif mutation == "unavailable-entry": desktops[1] = {"name": "research-blue", "error": "seat not found"}
+            elif mutation == "missing-seat-identity": desktops[1]["seatId"] = ""
             else: outputs.remove("blue-output")
             try:
                 trial.health()
@@ -204,6 +216,33 @@ with tempfile.TemporaryDirectory(prefix="cornice-trial-health-", dir="/tmp") as 
 
     clock = Clock()
     with patch.object(trial_module.time, "monotonic", lambda: clock.value), patch.object(trial_module.time, "time", lambda: clock.value):
+        trial, desktops, save, calls, outputs, bars, ipc_reply, definition_path = topology_trial(directory + '/topology-classification')
+        desktops[1]["error"] = "native seat view is unavailable"
+        with patch.object(trial_module, "ipc", side_effect=ipc_reply), patch.object(trial, "recover_component") as repair:
+            for _ in range(4):
+                assert trial.supervise_once()
+                clock.advance(6)
+            repair.assert_not_called()
+        assert trial.info["degraded"] and trial.info["recoveryRequired"] == "diagnostics"
+        assert trial.compositor.poll() is None and not trial.components["desktop"]["restarts"]
+        assert definition_path.exists() and 'research-blue' in json.loads(definition_path.read_text())["desktops"]
+        print("PASS: a real valid Broker list reporting native topology loss diagnoses degradation without restarting unrelated owners")
+
+        trial, desktops, save, calls, outputs, bars, ipc_reply, definition_path = topology_trial(directory + '/transport-classification')
+        original_command = trial.command
+        def unreachable(*arguments):
+            if arguments == ("desktop", "list"):
+                raise TimeoutError("Private Broker transport deadline")
+            return original_command(*arguments)
+        trial.command = unreachable
+        with patch.object(trial_module, "ipc", side_effect=ipc_reply), patch.object(trial, "recover_component") as repair:
+            for _ in range(3):
+                assert trial.supervise_once()
+                clock.advance(6)
+            repair.assert_called_once_with("desktop", "Private Broker transport deadline")
+        assert trial.compositor.poll() is None and trial.info["status"] == "ready"
+        print("PASS: a genuine Broker transport failure retains the bounded component repair path without ending the compositor")
+
         trial = make_trial(directory)
         trial.health = failure(BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable"))
         for _ in range(12):

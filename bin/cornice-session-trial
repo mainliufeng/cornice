@@ -534,6 +534,10 @@ class ComponentUnhealthy(RuntimeError):
         self.component = component
 
 
+class DesktopTopologyError(RuntimeError):
+    """Managed intent/native topology is invalid; restarting Broker is not repair."""
+
+
 class Trial:
     def __init__(self, ticket):
         self.ticket = ticket
@@ -752,17 +756,22 @@ class Trial:
         except FileNotFoundError:
             if allow_missing:
                 return None
-            raise RuntimeError("Managed desktop definitions are unavailable")
+            raise DesktopTopologyError("Managed desktop definitions are unavailable")
+        except OSError as error:
+            raise DesktopTopologyError("Cannot read managed desktop definitions: " + str(error)) from error
         if len(contents) > 1024 * 1024:
-            raise RuntimeError("Managed desktop definitions are too large")
-        value = json.loads(contents)
+            raise DesktopTopologyError("Managed desktop definitions are too large")
+        try:
+            value = json.loads(contents)
+        except ValueError as error:
+            raise DesktopTopologyError("Invalid managed desktop definitions: " + str(error)) from error
         if (not isinstance(value, dict) or value.get("schema") != 1 or
                 not isinstance(value.get("desktops"), dict)):
-            raise RuntimeError("Invalid managed desktop definitions")
+            raise DesktopTopologyError("Invalid managed desktop definitions")
         definitions = value["desktops"]
         if not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name)
                    and isinstance(spec, dict) for name, spec in definitions.items()):
-            raise RuntimeError("Invalid managed desktop definition entry")
+            raise DesktopTopologyError("Invalid managed desktop definition entry")
         return definitions
 
     def managed_desktops(self):
@@ -784,18 +793,22 @@ class Trial:
                 continue
             names = [desktop["name"] for desktop in desktops]
             if len(names) != len(set(names)) or set(names) != set(definitions):
-                raise RuntimeError("Managed desktop list does not match its definitions")
+                raise DesktopTopologyError("Managed desktop list does not match its definitions")
             if sum(desktop.get("primary") is True for desktop in desktops) != 1:
-                raise RuntimeError("Managed primary desktop is missing")
+                raise DesktopTopologyError("Managed primary desktop is missing")
             for desktop in desktops:
                 name = desktop["name"]
-                if desktop.get("available") is not True or desktop.get("error"):
-                    raise RuntimeError("Managed desktop is unavailable: " + name +
-                                       ": " + str(desktop.get("error", "native seat unavailable")))
+                # View availability is control state: readonly presentation,
+                # DPMS and session lock can make a healthy seat unavailable to
+                # input. Native identity/topology, not input permission, is the
+                # health requirement; failed restores remain explicit errors.
+                if desktop.get("error") or not isinstance(desktop.get("seatId"), str) or not desktop["seatId"]:
+                    raise DesktopTopologyError("Managed desktop is unavailable: " + name +
+                                       ": " + str(desktop.get("error", "native seat identity unavailable")))
                 if desktop.get("stableId") != definitions[name].get("stableId"):
-                    raise RuntimeError("Managed desktop identity changed: " + name)
+                    raise DesktopTopologyError("Managed desktop identity changed: " + name)
             return desktops
-        raise RuntimeError("Managed desktop definitions changed during health check")
+        raise DesktopTopologyError("Managed desktop definitions changed during health check")
 
     def initialize_desktops(self, new_installation):
         desktops = self.managed_desktops()
@@ -841,6 +854,11 @@ class Trial:
         self.info["healthStage"] = "desktop.list"
         try:
             desktops = self.managed_desktops()
+        except DesktopTopologyError:
+            # A valid service response reporting a missing seat/output or bad
+            # persisted intent is diagnostic. Restarting every desktop owner
+            # would change the requested topology and revoke unrelated input.
+            raise
         except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
             raise ComponentUnhealthy("desktop", str(error)) from error
         self.info["desktops"] = [d["name"] for d in desktops]

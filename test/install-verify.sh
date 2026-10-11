@@ -8,6 +8,7 @@
 #
 #   ./test/install-verify.sh            # install.sh --copy into a temp prefix
 #   ./test/install-verify.sh --package  # also build the PKGBUILD and test that
+#   CORNICE_INSTALL_VERIFY_DESKTOP=1 ./test/install-verify.sh  # native desktop + MCP dependencies too
 #
 # Exit code is the suite's, so it works as a release gate.
 set -uo pipefail
@@ -28,10 +29,22 @@ if ((with_package)) && ! command -v makepkg >/dev/null 2>&1; then
   echo "install-verify: --package requires makepkg; package validation was not run" >&2
   exit 1
 fi
+install_args=(--copy)
+case "${CORNICE_INSTALL_VERIFY_DESKTOP:-0}" in
+  0) ;;
+  1) install_args+=(--desktop) ;;
+  *) echo "CORNICE_INSTALL_VERIFY_DESKTOP must be 0 or 1" >&2; exit 2 ;;
+esac
 revision=$(git -C "$prefix" rev-parse HEAD) || exit 1
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/cornice-install-XXXXXX")
-cleanup() { rm -rf "$tmp"; }
+cleanup() {
+  if [[ ${CORNICE_KEEP_ARTIFACTS:-0} == 1 ]]; then
+    echo "install artifacts kept in $tmp"
+  else
+    rm -rf "$tmp"
+  fi
+}
 trap cleanup EXIT
 
 failures=0
@@ -84,8 +97,8 @@ run_against() {
 }
 
 echo "  tracked files: $(git -C "$prefix" ls-files | wc -l), exported: $(find "$tmp/source" -type f | wc -l)"
-echo "== 1/… install.sh --copy (from the exported tree)"
-"$tmp/source/install.sh" --copy --prefix "$tmp/prefix" >"$tmp/install.log" 2>&1 \
+echo "== 1/… install.sh ${install_args[*]} (from committed $revision)"
+"$tmp/source/install.sh" "${install_args[@]}" --prefix "$tmp/prefix" >"$tmp/install.log" 2>&1 \
   || { echo "install.sh failed:"; tail -5 "$tmp/install.log"; exit 1; }
 # Every helper the repo ships must be installed and resolve: a stale install once
 # left a helper out, and the shell then failed to act on tray menu clicks.
@@ -101,7 +114,17 @@ else
   failures=$((failures + 1))
 fi
 
-run_against "install.sh --copy" "$tmp/prefix/share/cornice"
+if [[ ${CORNICE_INSTALL_VERIFY_DESKTOP:-0} == 1 ]]; then
+  for helper in cornice-desktop-runtime cornice-human-lock cornice-session-guard cornice-native-accessibility cornice-browser-runtime cornice-application-guard; do
+    [[ -x "$tmp/prefix/share/cornice/native/bin/$helper" ]] || { echo "  FAIL: native helper is missing: $helper"; exit 1; }
+  done
+  for module in Cornice/Platform Cornice/Desktop; do
+    [[ -f "$tmp/prefix/share/cornice/native/qml/$module/qmldir" ]] || { echo "  FAIL: QML module is missing: $module"; exit 1; }
+  done
+  (cd "$tmp/prefix/share/cornice/native/agent" && node --input-type=module -e 'await import("@modelcontextprotocol/sdk/server/mcp.js"); await import("@playwright/mcp");') || exit 1
+  echo "  all six real native helpers, both QML modules and installed MCP/browser dependencies are present"
+fi
+run_against "install.sh ${install_args[*]}" "$tmp/prefix/share/cornice"
 
 if ((with_package)); then
   echo

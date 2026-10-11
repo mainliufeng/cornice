@@ -297,6 +297,8 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     subprocess.run(["hyprctl", "output", "remove", target["output"]], env=missing_env, check=True, capture_output=True)
     wait(lambda: status()["current"].get("degraded") and status()["current"].get("lastHealthError"), 15)
     assert "dynamic-third" in json.loads(definition_path.read_text())["desktops"]
+    diagnosed = status()["current"]
+    assert diagnosed["brokerPid"] == info["brokerPid"] and diagnosed["componentRecovery"]["desktop"]["attempts"] == 0, diagnosed
     assert process.poll() is None and pathlib.Path('/proc/' + str(info["compositorPid"])).exists()
     assert human_state() == BASELINE
     trial("rollback"); ended(process, "Manual rollback")
