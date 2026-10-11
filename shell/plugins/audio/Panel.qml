@@ -35,7 +35,7 @@ PanelFrame {
   }
 
   function setDefault(node) {
-    Util.exec("wpctl set-default " + node.id);
+    Util.execSession("wpctl set-default " + node.id);
   }
 
   Flickable {
@@ -101,7 +101,7 @@ PanelFrame {
                 label: modelData.node && modelData.node.audio && modelData.node.audio.muted ? I18n.t("common.muted") : ""
                 selected: !!modelData.node && !!modelData.node.audio && modelData.node.audio.muted
                 enabled: !!modelData.node && !!modelData.node.audio
-                onClicked: Util.exec("wpctl set-mute " + modelData.target + " toggle")
+                onClicked: Util.execSession("wpctl set-mute " + modelData.target + " toggle")
               }
             }
             Text {

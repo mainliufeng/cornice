@@ -26,7 +26,7 @@ Item {
   readonly property string body: entry.body !== undefined ? entry.body : (notification ? notification.body : "")
   readonly property string appName: entry.appName !== undefined ? entry.appName : (notification ? notification.appName : "")
   readonly property string appIcon: entry.appIcon !== undefined ? entry.appIcon : (notification ? notification.appIcon : "")
-  readonly property bool canReply: allowReply && notification !== null && notification.hasInlineReply === true
+  readonly property bool canReply: !DesktopSession.readOnly && allowReply && notification !== null && notification.hasInlineReply === true
 
   // Clients that send actions expect a click to invoke the "default" one (that
   // is how the freedesktop spec opens the app). Clients that send none — Paseo,
@@ -64,17 +64,27 @@ Item {
   }
 
   function sendReply(value) {
+    if (DesktopSession.readOnly) return
     const message = String(value || "").trim()
     replying = false
     if (message === "" || !notification) return
     try {
-      notification.sendInlineReply(message)
+      if (notification.sendInlineReply(message) === false) return
     } catch (error) {
       console.warn("cornice: inline reply failed: " + error)
       return
     }
     // A notification you have answered is normally done with.
     root.dismissed()
+  }
+
+  // Coordinates of the real controls support native integration diagnostics.
+  function inspect(target) {
+    function point(item, x, y) { const p = item.mapToItem(target, x, y); return {x:p.x,y:p.y} }
+    return {id:entry.id,readOnly:DesktopSession.readOnly,canReply:canReply,replying:replying,
+      activation:point(root, root.width / 2, Style.space(1)),
+      reply:point(replyChip, replyChip.width / 2, replyChip.height / 2),
+      input:point(replyField, replyField.width / 2, replyField.height / 2)}
   }
 
   function senderPid() {
@@ -91,6 +101,7 @@ Item {
   }
 
   function focusApp() {
+    if (DesktopSession.readOnly) return false
     Util.exec("cornice-focus-app"
       + " --pid " + Util.shellQuote(senderPid())
       + " --desktop " + Util.shellQuote(desktopEntryId())
@@ -100,16 +111,28 @@ Item {
   // A left click is an instruction to act on the notification, not just to
   // throw it away.
   function activate() {
+    if (DesktopSession.readOnly) return false
     if (defaultAction) {
       try {
-        defaultAction.invoke()
+        if (defaultAction.invoke() === false) return false
       } catch (error) {
         console.warn("cornice: default notification action failed: " + error)
+        return false
       }
     } else {
       focusApp()
     }
     if (notification) notification.dismiss()
+    return true
+  }
+
+  Connections {
+    target: DesktopSession
+    function onReadOnlyChanged() {
+      if (!DesktopSession.readOnly) return
+      root.replying = false
+      replyField.text = ""
+    }
   }
 
   // Declared *before* the content: a MouseArea declared later would sit on top
@@ -124,7 +147,7 @@ Item {
         root.dismissed()
         return
       }
-      root.activate()
+      if (!root.activate()) return
       root.activated()
       root.dismissed()
     }
@@ -190,6 +213,8 @@ Item {
       width: parent.width
       spacing: Style.space(1)
       visible: root.visibleActions.length > 0 && !root.replying
+      enabled: !DesktopSession.readOnly
+      opacity: enabled ? 1 : 0.45
 
       Repeater {
         model: root.visibleActions
@@ -219,7 +244,7 @@ Item {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: {
-              modelData.invoke()
+              if (DesktopSession.readOnly || modelData.invoke() === false) return
               root.dismissed()
             }
           }
@@ -229,6 +254,7 @@ Item {
 
     // ---- inline reply ------------------------------------------------------
     Rectangle {
+      id: replyChip
       visible: root.canReply && !root.replying
       width: replyLabel.implicitWidth + Style.space(2)
       height: Style.space(5.5)

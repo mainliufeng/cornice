@@ -80,8 +80,15 @@ QtObject {
     return "'" + text.replace(/'/g, "'\\''") + "'"
   }
 
+  // Application commands use the same desktop permission and launch boundary
+  // as the Launcher. Machine/configuration commands declare their session
+  // scope at the call site rather than inheriting the currently viewed seat.
   function exec(command) {
-    if (DesktopSession.secondary && !DesktopSession.agentShell) return DesktopSession.exec(command)
-    Quickshell.execDetached(["sh", "-c", command])
+    return DesktopSession.launchApplication(["sh", "-c", String(command)])
+  }
+  function execSession(command) {
+    if (command === undefined || String(command).trim() === "") return false
+    Quickshell.execDetached(["sh", "-c", String(command)])
+    return true
   }
 }

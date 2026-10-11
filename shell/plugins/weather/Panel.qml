@@ -18,7 +18,7 @@ PanelFrame {
   readonly property bool editing: !!service && service.editorOpen
   readonly property var places: service ? service.locations || [] : []
   readonly property string placeTitle: service ? service.displayName(service.activeName || service.place || I18n.t("weather.title")) : I18n.t("weather.title")
-  function runCommand(command) { Util.exec("cornice weather " + command) }
+  function runCommand(command) { Util.execSession("cornice weather " + command) }
   function refresh() { if (service) service.refresh(true) }
   onOpened: {
     if (service) { service.editorOpen = false; service.refresh(false) }

@@ -152,7 +152,7 @@ PanelFrame {
               filled: true
               selected: modelData === root.profile
               onClicked: {
-                Util.exec("powerprofilesctl set " + modelData);
+                Util.execSession("powerprofilesctl set " + modelData);
                 root.profile = modelData;
               }
             }
@@ -203,7 +203,7 @@ PanelFrame {
             onClicked: {
               if (modelData.key === "power.suspend")
                 Quickshell.execDetached([(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice") + "/bin/cornice", "suspend"])
-              else Util.exec(modelData.command)
+              else Util.execSession(modelData.command)
             }
           }
         }

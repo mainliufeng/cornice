@@ -1,0 +1,8 @@
+{
+  "services": [
+    {"id": "cn.lock", "scope": "session", "targets": ["lock"]},
+    {"id": "cn.idle", "scope": "session", "targets": ["idle"]},
+    {"id": "cn.notifications", "scope": "session", "targets": ["notifications"]},
+    {"id": "cn.polkit", "scope": "session", "targets": []}
+  ]
+}

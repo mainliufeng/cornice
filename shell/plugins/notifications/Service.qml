@@ -127,7 +127,7 @@ Item {
 
   // The live object for a notification id, or null when it is already gone.
   function liveNotification(id) {
-    const tracked = server.trackedNotifications
+    const tracked = server ? server.trackedNotifications : null
     if (!tracked) return null
     const list = tracked.values ? tracked.values : tracked
     for (const candidate of list) if (candidate && candidate.id === id) return candidate
@@ -226,6 +226,24 @@ Item {
     if (host && typeof host.summon === "function") host.summon("cn.notifications", {})
   }
 
+  // JSON-safe state shared with desktop UI shells. Functions and live Qt
+  // wrappers stay in the daemon; secondary cards refer to notification ids.
+  function sessionSnapshot() {
+    const live = []
+    for (const entry of history) {
+      const notification = liveNotification(entry.id)
+      if (!notification) continue
+      const raw = notification.actions || []
+      const actions = Array.isArray(raw.values) ? raw.values : raw
+      const descriptors = []
+      for (let i = 0; i < actions.length; i++)
+        descriptors.push({identifier:actions[i].identifier,text:actions[i].text})
+      live.push({id:entry.id,hasInlineReply:notification.hasInlineReply === true,
+        inlineReplyPlaceholder:notification.inlineReplyPlaceholder || "",actions:descriptors})
+    }
+    return {history:history,unread:unread,dnd:dnd,serverReady:server !== null && serverRegistered,live:live}
+  }
+
   function historyJson() {
     return JSON.stringify(history)
   }
@@ -245,7 +263,10 @@ Item {
   }
 
   function setDnd(value) {
-    const next = (value === true || value === "true" || value === 1 || value === "1")
+    const token = String(value).toLowerCase()
+    if (["true", "1", "on", "false", "0", "off"].indexOf(token) === -1)
+      throw new Error("Expected on/off or true/false for do-not-disturb")
+    const next = token === "true" || token === "1" || token === "on"
     dnd = next
     if (dnd) {
       for (const popup of popups) root.dismiss(popup.id)
@@ -352,6 +373,31 @@ Item {
       } catch (error) {
         return "failed: " + error
       }
+      return "ok"
+    }
+
+    function invokeAction(id: string, identifier: string): string {
+      const live = root.liveNotification(Number(id))
+      if (!live) throw new Error("Notification is no longer available")
+      const raw = live.actions || []
+      const actions = Array.isArray(raw.values) ? raw.values : raw
+      for (let i = 0; i < actions.length; i++) {
+        if (actions[i].identifier !== identifier) continue
+        actions[i].invoke()
+        return "ok"
+      }
+      throw new Error("Notification action is no longer available")
+    }
+
+    function replyNotification(id: string, message: string): string {
+      const live = root.liveNotification(Number(id))
+      if (!live || live.hasInlineReply !== true) throw new Error("Notification reply is no longer available")
+      live.sendInlineReply(String(message))
+      return "ok"
+    }
+
+    function dismiss(id: string): string {
+      if (!root.dismiss(Number(id))) throw new Error("Notification is no longer available")
       return "ok"
     }
 

@@ -69,7 +69,14 @@ run_against() {
       return 1
     fi
   done
-  echo "  installed files match the committed source"
+  for file in config/session-services.json shell/Commons/SessionServices.qml shell/plugins/notifications/Model.qml; do
+    if [[ ! -f $root/$file ]]; then
+      echo "  FAIL: missing installed session component: $file"
+      failures=$((failures + 1))
+      return 1
+    fi
+  done
+  echo "  installed files match the committed source, including session metadata and shared UI"
   CORNICE_INSTALLED_PREFIX="$root" "$test_dir/headless-verify.sh"
   local status=$?
   if ((status != 0)); then failures=$((failures + 1)); fi

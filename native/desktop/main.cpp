@@ -118,6 +118,17 @@ int main(int argc, char **argv) {
                 params["requestId"] = take(args);
             } else if (command == "view-focus") {
                 params["address"] = take(args);
+                while (!args.isEmpty()) {
+                    const auto flag = take(args);
+                    if (flag == "--seat") {
+                        params["expectedSeatId"] = take(args);
+                        params["expectedGeneration"] = take(args);
+                    } else if (flag == "--workspace") {
+                        params["expectedWorkspace"] = take(args);
+                    } else {
+                        throw std::runtime_error("Expected --seat or --workspace");
+                    }
+                }
             } else if (command == "view-workspace") {
                 params["slot"] = take(args).toInt();
             } else if (command == "allow-agent") {

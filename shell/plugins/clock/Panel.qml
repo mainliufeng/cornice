@@ -25,7 +25,7 @@ PanelFrame {
 
   function runCommand(command) {
     editError = ""
-    Util.exec("cornice clock " + command)
+    Util.execSession("cornice clock " + command)
   }
 
   property int shownYear: 0

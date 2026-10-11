@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "../notifications" as Notifications
 
 // The menu.
 //
@@ -21,7 +22,8 @@ PanelFrame {
   panelWidth: Math.min(page === "themes" ? 640 : 320, window.screen ? window.screen.width - Style.space(2) : 640)
   readonly property int rowHeight: Style.space(5.5)
 
-  readonly property var notifications: host ? host.services["cn.notifications"] : null
+  Notifications.Model { id: notificationModel; host: root.host }
+  readonly property var notifications: notificationModel
   readonly property bool dnd: notifications ? notifications.dnd === true : false
 
   // Theme choices expand beside the persistent root menu.
@@ -45,7 +47,7 @@ PanelFrame {
       command: "cornice language " + (I18n.language === "zh-CN" ? "en" : "zh-CN") },
     { glyph: "\uf03e", label: I18n.t("menu.wallpaper"), command: "cornice background next" },
     { glyph: dnd ? "\uf1f6" : "\uf0f3", label: I18n.t("menu.dnd") + (dnd ? " · " + I18n.t("menu.on") : ""),
-      action: "dnd", selected: dnd },
+      action: "dnd", selected: dnd, enabled: notifications.available },
     { separator: true },
     { glyph: "\uf0c9", label: I18n.t("menu.barLayout"), toggle: "cn.bar-editor" },
     { glyph: "\uf023", label: I18n.t("menu.lock"), call: ["cn.lock", "lock"] },
@@ -75,6 +77,7 @@ PanelFrame {
     Math.max(contentHeight, rootRows.reduce((sum, row) => sum + (row.separator === true ? Style.space(1.4) : rowHeight), 0)) + Style.space(2.4))
 
   function activate(row) {
+    if (row.enabled === false) return
     // Page rows navigate the panel; they must not close it.
     if (row.page === "themes") {
       if (root.page !== "themes") { rootSelection = selection; root.page = "themes" }
@@ -88,7 +91,7 @@ PanelFrame {
       // Confirming keeps the preview: persist it so the choice survives a
       // restart, and mark it before closing so onDismissed does not revert.
       themeConfirmed = true
-      Util.exec("cornice theme " + Util.shellQuote(row.theme))
+      Util.execSession("cornice theme " + Util.shellQuote(row.theme))
     } else if (row.toggle) {
       if (host) host.toggle(row.toggle, {})
     } else if (row.call) {
@@ -96,7 +99,7 @@ PanelFrame {
     } else if (row.action === "dnd") {
       if (notifications) notifications.setDnd(!root.dnd)
     } else if (row.command) {
-      Util.exec(row.command)
+      Util.execSession(row.command)
     }
     root.close()
   }
@@ -307,7 +310,7 @@ PanelFrame {
 
           MouseArea {
             anchors.fill: parent
-            enabled: row.modelData.separator !== true
+            enabled: row.modelData.separator !== true && row.modelData.enabled !== false
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onEntered: {
@@ -363,6 +366,8 @@ PanelFrame {
       const entries = root.rootRows.filter(row => row.separator !== true)
       return JSON.stringify({
         open: root.isOpen,
+        notificationsAvailable: root.notifications.available, dnd: root.dnd,
+        serviceError: root.notifications.error || root.notifications.operationError,
         page: root.page,
         rows: entries.length,
         toggles: entries.filter(row => row.toggle).map(row => row.toggle),

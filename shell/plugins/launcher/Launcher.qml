@@ -107,13 +107,12 @@ PanelFrame {
 
   function runInTerminal(command) {
     if (command === undefined || String(command).trim() === "") return
-    Util.exec(terminal + " -e sh -c " + JSON.stringify(String(command)))
+    DesktopSession.launchApplication([terminal, "-e", "sh", "-c", String(command)])
   }
 
   // .desktop Exec lines carry field codes (%U, %F, %c, %k, %i, ...). We have no
-  // file arguments, so drop the file placeholders and expand the rest — and run
-  // through sh with the user's own bin dir on PATH, because desktop files assume
-  // a login-ish environment.
+  // file arguments, so drop their placeholders and expand the rest. Terminal
+  // commands keep the existing shell syntax; normal launches retain argv.
   function sanitizedCommand(entry) {
     return String(entry.execString || "")
       .replace(/%[uUfFdDnNickvm]/g, code => {
@@ -129,20 +128,17 @@ PanelFrame {
   function launch(entry, forceTerminal) {
     let executable = sanitizedCommand(entry)
     if (!executable) return
-    if (DesktopSession.secondary && !wantsTerminal(entry, forceTerminal)) {
-      const argv = []
-      for (const value of entry.command || []) {
-        const arg = String(value)
-        if (/^%[uUfFdDnNi]$/.test(arg)) continue
-        argv.push(arg.replace(/%[ck%]/g, code => code === "%c" ? (entry.name || "") : code === "%k" ? (entry.id || "") : "%"))
-      }
-      DesktopSession.launchApplication(argv)
+    if (wantsTerminal(entry, forceTerminal)) {
+      runInTerminal("PATH=\"$HOME/.local/bin:$PATH\" " + executable)
       return
     }
-    const command = "PATH=\"$HOME/.local/bin:$PATH\" " + executable
-    if (command.trim() === "") return
-    if (wantsTerminal(entry, forceTerminal)) runInTerminal(command)
-    else Util.exec(command)
+    const argv = []
+    for (const value of entry.command || []) {
+      const arg = String(value)
+      if (/^%[uUfFdDnNi]$/.test(arg)) continue
+      argv.push(arg.replace(/%[ck%]/g, code => code === "%c" ? (entry.name || "") : code === "%k" ? (entry.id || "") : "%"))
+    }
+    DesktopSession.launchApplication(argv)
   }
 
   Column {

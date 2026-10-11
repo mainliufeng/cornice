@@ -97,7 +97,7 @@ QJsonObject settings() {
         for (auto variable = environment.begin(); variable != environment.end(); ++variable) {
             if (!QRegularExpression("^[A-Za-z_][A-Za-z0-9_]*$").match(variable.key()).hasMatch() || !variable.value().isString() || variable.value().toString().contains(QChar(0)))
                 invalid(it.key() + ": invalid environment entry");
-            if (QSet<QString>{"WAYLAND_DISPLAY", "WAYLAND_SOCKET", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE"}.contains(variable.key()))
+            if (QSet<QString>{"WAYLAND_DISPLAY", "WAYLAND_SOCKET", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "CORNICE_DESKTOP_NAME", "CORNICE_DESKTOP_OUTPUT", "CORNICE_SHELL_SOCKET", "CORNICE_PRIMARY_SHELL_SOCKET", "HYPRLAND_ACTION_ID", "HYPRLAND_SEAT_NAME", "HYPRLAND_SEAT_ID", "HYPRLAND_SEAT_GENERATION", "HYPRLAND_SEAT_OUTPUT"}.contains(variable.key()))
                 invalid(it.key() + ": compositor identity environment is managed by the Broker");
         }
         if (backend == "chromium") {

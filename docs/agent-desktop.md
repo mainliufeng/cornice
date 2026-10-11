@@ -295,3 +295,6 @@ agent-qt.png 和 physical-observer.png 为实际执行与绘制结果。测试�
 seat 的发布时序，私有实例已验证两个预创建 Agent 向同一个 Agent 启动的 GTK 输入。
 旧 GTK 应用不一定绑定后新增 seat，Chrome 仍不保证同窗口多 seat；物理修复待重登验证。
 新锁测试的真实画面、FD、应用效果与失败恢复记录见验证文档；没有拿当前会话锁屏或睡眠试验。
+
+Desktop state, IPC routing and shared daemon ownership are documented in
+[desktop context](desktop-context.md).

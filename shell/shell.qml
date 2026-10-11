@@ -348,6 +348,14 @@ ShellRoot {
       const result = service[method](argument)
       return result === undefined ? "ok" : String(result)
     }
+    // Missing session-owned services live in the primary shell. This follows
+    // the same declaration as CLI routing and service lifetime, not plugin ids.
+    if (SessionServices.secondary && SessionServices.sessionOwned(id)) {
+      const entry = SessionServices.declaration(id)
+      if (!entry.targets || entry.targets.length === 0) return "unavailable"
+      const args = argument === undefined ? [] : [String(argument)]
+      return SessionServices.invoke(id, entry.targets[0], method, args) ? "requested" : "unavailable"
+    }
     return "not-loaded"
   }
 
@@ -528,6 +536,7 @@ ShellRoot {
   }
 
   Component.onCompleted: {
+    SessionServices.host = shell
     // Both FileViews load as soon as they are created; the user file is retried
     // by the poller above until it exists.
     refreshHyprlandState()

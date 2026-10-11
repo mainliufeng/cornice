@@ -55,7 +55,7 @@ Item {
       if (mouse.button === Qt.LeftButton && root.host)
         root.host.toggle("cn.audio", {})
       else if (mouse.button === Qt.RightButton)
-        Util.exec("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")
+        Util.execSession("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")
       else if (mouse.button === Qt.MiddleButton)
         Util.exec("pavucontrol-qt || pavucontrol")
     }
@@ -65,7 +65,7 @@ Item {
       // lowers. Passing a negative number with "+" (which is what this used to
       // do) is parsed as an option, so scrolling down did nothing.
       const direction = wheel.angleDelta.y > 0 ? "+" : "-"
-      Util.exec("wpctl set-volume @DEFAULT_AUDIO_SINK@ " + root.step + "%" + direction)
+      Util.execSession("wpctl set-volume @DEFAULT_AUDIO_SINK@ " + root.step + "%" + direction)
     }
   }
 

@@ -6,7 +6,7 @@ sandbox=$(mktemp -d /tmp/cornice-installer-XXXXXX)
 trap 'rm -rf "$sandbox"' EXIT
 tools="$sandbox/tools"
 mkdir -p "$tools" "$sandbox/config/systemd/user"
-for cmd in bash dirname readlink realpath basename mkdir cp chmod find rm mv ln ls wc mktemp grep head install jq flock socat cmake ninja; do
+for cmd in bash dirname readlink realpath basename mkdir cp chmod find rm mv ln ls wc mktemp grep head install jq python3 flock socat cmake ninja; do
   ln -s "$(command -v "$cmd")" "$tools/$cmd"
 done
 cat >"$tools/quickshell" <<'EOF'
@@ -25,6 +25,10 @@ if [[ $* == *'enable --now'* ]]; then
   [[ -x $CORNICE_TEST_LAUNCHER ]] || exit 9
 fi
 EOF
+for cmd in wf-recorder ffprobe; do
+  printf '#!/usr/bin/bash\nexit 0\n' >"$tools/$cmd"
+  chmod +x "$tools/$cmd"
+done
 chmod +x "$tools/quickshell" "$tools/hyprctl" "$tools/systemctl"
 export XDG_CONFIG_HOME="$sandbox/config"
 export CORNICE_QS=""
@@ -56,6 +60,25 @@ description='missing dependencies never call systemctl'; check test ! -e "$CORNI
 description='missing dependencies never install helpers'; check test ! -d "$sandbox/missing/bin"
 mv "$sandbox/quickshell" "$tools/quickshell"
 
+# A missing runtime dependency must be reported before any install or service
+# change. Keeping jq installed proves Python is not a manifest-reader fallback.
+mv "$tools/python3" "$sandbox/python3"
+if PATH="$tools" "$repo/install.sh" --service --prefix "$sandbox/missing-python" >"$sandbox/missing-python.log" 2>&1; then
+  echo 'FAIL: missing Python accepted'; exit 1
+fi
+description='Python is independently required for the primary endpoint'; check grep -q 'python3 not found' "$sandbox/missing-python.log"
+description='missing Python preserves the existing unit'; check cmp "$unit" "$sandbox/original.service"
+description='missing Python never calls systemctl'; check test ! -e "$CORNICE_TEST_SYSTEMCTL_LOG"
+description='missing Python never installs helpers'; check test ! -d "$sandbox/missing-python/bin"
+if PATH="$tools" HYPRLAND_INSTANCE_SIGNATURE=installer-fixture XDG_RUNTIME_DIR="$sandbox/runtime" "$repo/bin/cornice-doctor" >"$sandbox/doctor-python.log" 2>&1; then
+  echo 'FAIL: doctor accepted missing Python'; exit 1
+fi
+description='doctor reports the missing primary endpoint dependency'; check grep -q 'python3 not found' "$sandbox/doctor-python.log"
+mv "$sandbox/python3" "$tools/python3"
+# The doctor fixture never talks to the real user manager. Clear its read-only
+# diagnostic entries before proving the following install service operations.
+rm -f "$CORNICE_TEST_SYSTEMCTL_LOG"
+
 mkdir -p "$sandbox/install % prefix/bin"
 ln -s "$repo/bin/cornice-agent-runtime" "$sandbox/install % prefix/bin/cornice-agent-runtime"
 PATH="$tools" "$repo/install.sh" --service --prefix "$sandbox/install % prefix" >"$sandbox/service.log" 2>&1
@@ -81,4 +104,12 @@ if PATH="$tools" "$repo/install.sh" --copy --service --prefix "$sandbox/failed-s
 fi
 description='service failure still leaves a complete installation'; check test -x "$sandbox/failed-service/bin/cornice-launch"
 description='service failure reports the actual failure'; check grep -q 'could not enable cornice.service' "$sandbox/failed.log"
+for file in config/session-services.json shell/Commons/SessionServices.qml shell/plugins/notifications/Model.qml; do
+  description="copy installation includes $file"
+  check test -f "$sandbox/failed-service/share/cornice/$file"
+done
+# Use the actual packaging declaration, rather than mirroring the installer.
+package_dependencies=$(startdir="$repo" bash -c 'source "$1"; printf "%s\n" "${depends[@]}"' shell "$repo/PKGBUILD")
+description='package declares Python as an installed runtime dependency'; check grep -qx python <<<"$package_dependencies"
+description='package declares jq independently of Python'; check grep -qx jq <<<"$package_dependencies"
 echo 'install-test: all checks passed'

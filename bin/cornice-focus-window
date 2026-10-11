@@ -5,14 +5,26 @@
 set -euo pipefail
 address="${1:-}"
 workspace="${2:-}"
-[[ $address =~ ^0x[0-9a-fA-F]+$ && $workspace =~ ^-?[0-9]+$ ]] || exit 2
+[[ $address =~ ^0x[0-9a-fA-F]+$ ]] || exit 2
+# New callers pass the common workspace identity. Keep the public numeric
+# argument compatible with official Hyprland and existing installations.
+if [[ $workspace =~ ^-?[0-9]+$ ]]; then
+  identity=$(jq -cn --argjson id "$workspace" '{id:$id,name:($id|tostring)}')
+else
+  identity=$(jq -ce 'select(type == "object") | {address:(.address // ""),name:(.name // ""),id:(.id // null)}' <<<"$workspace") || exit 2
+fi
+match_workspace='def identity: {address:((.address // "") | ltrimstr("name:")),name:((.name // .address // "") | ltrimstr("name:")),id:(.id // null)};
+  def matches($target): identity as $actual | ($target | identity) as $want |
+    if $actual.address != "" and $want.address != "" then $actual.address == $want.address
+    elif $actual.name != "" and $want.name != "" then $actual.name == $want.name
+    else $actual.id != null and $want.id != null and $actual.id == $want.id end;'
 exec 9>"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/cornice-window-focus.lock"
 flock -w 2 9 || exit 1
 # A queued click must not pull the user back after they change workspaces or
 # after the selected window is closed/moved.
-[[ $(hyprctl activeworkspace -j | jq -r '.id') == "$workspace" ]] || exit 0
-hyprctl clients -j | jq -e --arg address "$address" --argjson workspace "$workspace" \
-  'any(.address == $address and .workspace.id == $workspace and .mapped)' >/dev/null || exit 0
+hyprctl activeworkspace -j | jq -e --argjson workspace "$identity" "$match_workspace matches(\$workspace)" >/dev/null || exit 0
+hyprctl clients -j | jq -e --arg address "$address" --argjson workspace "$identity" \
+  "$match_workspace any(.address == \$address and (.workspace | matches(\$workspace)) and .mapped)" >/dev/null || exit 0
 warps=$(hyprctl -j getoption cursor:no_warps | jq -er 'if has("bool") then (if .bool then 1 else 0 end) else .int end')
 under_fullscreen=$(hyprctl -j getoption misc:on_focus_under_fullscreen | jq -er '.int')
 [[ $warps =~ ^[01]$ && $under_fullscreen =~ ^[012]$ ]] || exit 1

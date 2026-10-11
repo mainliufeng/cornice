@@ -1,7 +1,5 @@
 import QtQuick
 import Quickshell
-import Quickshell.Hyprland
-import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
@@ -20,20 +18,20 @@ Item {
   readonly property int slotWidth: Style.widgetHeight
   readonly property real budget: availableWidth >= 0 ? availableWidth : maxWidth + slotWidth * maxIcons
 
-  property var snapshot: []
+  readonly property var snapshot: DesktopSession.windowSnapshot
   property var windowOrder: []
-  readonly property int workspaceId: DesktopSession.secondary ? ((snapshot.find(window => window.workspace && (window.workspace.name === DesktopSession.state.workspaceName || window.workspace.name === "name:" + DesktopSession.state.workspaceName)) || {}).workspace || {}).id || -1 : Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+  readonly property var workspace: DesktopSession.observedWorkspace
+  // Numeric workspace remains in debug IPC for existing consumers only.
+  readonly property int workspaceId: workspace.id !== null ? workspace.id : -1
+  readonly property string workspaceKey: workspace.key
   readonly property var windows: {
-    const list = snapshot.filter(window => window.workspace && window.workspace.id === workspaceId)
+    const list = snapshot.filter(window => DesktopSession.workspaceMatches(window.workspace, workspace))
     list.sort((a, b) => windowOrder.indexOf(a.address) - windowOrder.indexOf(b.address))
     return list
   }
-  readonly property string focusedAddress: DesktopSession.secondary ? ((windows.find(window => window.title === DesktopSession.state.window) || {}).address || "") : Hyprland.activeToplevel
-    ? "0x" + Hyprland.activeToplevel.address.replace(/^0x/, "")
-    : ((snapshot.find(window => window.focusHistoryID === 0) || {}).address || "")
-  readonly property var focusedWindow: windows.find(window => window.address === focusedAddress) || null
-  readonly property string title: focusedWindow
-    ? (!DesktopSession.secondary && Hyprland.activeToplevel ? Hyprland.activeToplevel.title : focusedWindow.title) : ""
+  readonly property string focusedAddress: DesktopSession.focusedWindowAddress
+  readonly property var focusedWindow: windows.find(window => DesktopSession.windowAddress(window.address) === focusedAddress) || null
+  readonly property string title: focusedWindow ? (DesktopSession.focusedWindowTitle || focusedWindow.title) : ""
   // Reserve a More button before filling slots; the title uses what's left.
   readonly property real moreWidth: Math.min(slotWidth + Style.space(1), budget)
   readonly property bool needsOverflow: windows.length > maxIcons || windows.length * slotWidth > budget
@@ -49,8 +47,13 @@ Item {
   implicitWidth: Math.min(budget, stripWidth + (titleWidth > 0 && stripWidth > 0 ? Style.space(0.7) : 0) + titleWidth)
   visible: windows.length > 0 || title !== ""
 
-  property bool refreshPending: false
-  function requestRefresh() { refreshPending = true; refreshTimer.restart() }
+  function requestRefresh() { DesktopSession.refreshWindows() }
+  onSnapshotChanged: {
+    const addresses = snapshot.map(window => window.address)
+    const order = windowOrder.filter(address => addresses.indexOf(address) !== -1)
+    for (const address of addresses) if (order.indexOf(address) === -1) order.push(address)
+    windowOrder = order
+  }
   function appEntry(window) {
     const name = String(window.class || window.initialClass || "")
     if (name === "") return null
@@ -70,7 +73,7 @@ Item {
     return icon !== "" && Quickshell.hasThemeIcon(icon) ? Quickshell.iconPath(icon) : ""
   }
   function focusWindow(address) {
-    if (!windows.some(window => window.address === address)) return
+    if (DesktopSession.readOnly || !windows.some(window => window.address === address)) return
     picker.close()
     hoveredWindow = null
     // The popup must release its focus grab before focusing the chosen client.
@@ -82,49 +85,14 @@ Item {
     id: focusTimer
     interval: 60
     onTriggered: {
-      if (DesktopSession.secondary) {
-        Quickshell.execDetached([(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice") + "/bin/cornice-desktop", "view-focus", DesktopSession.selected, root.pendingFocus])
-      } else if (root.windows.some(window => window.address === root.pendingFocus))
-        Quickshell.execDetached([(Quickshell.env("CORNICE_PATH") || "/usr/share/cornice")
-          + "/bin/cornice-focus-window", root.pendingFocus, String(root.workspaceId)])
+      if (root.windows.some(window => window.address === root.pendingFocus))
+        DesktopSession.focusWindow(root.pendingFocus, root.workspace)
       root.pendingFocus = ""
       root.requestRefresh()
     }
   }
-  Timer {
-    id: refreshTimer
-    interval: 60
-    onTriggered: if (!poller.running) { root.refreshPending = false; poller.running = true }
-  }
-  Process {
-    id: poller
-    command: ["hyprctl", "-j", "clients"]
-    onRunningChanged: if (!running && root.refreshPending) refreshTimer.restart()
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          const list = JSON.parse(text).filter(window => window.mapped && !window.hidden
-            && (window.class !== "" || window.title !== ""))
-          const addresses = list.map(window => window.address)
-          const order = root.windowOrder.filter(address => addresses.indexOf(address) !== -1)
-          for (const address of addresses) if (order.indexOf(address) === -1) order.push(address)
-          root.windowOrder = order
-          root.snapshot = list
-        } catch (e) { console.warn("cornice: window list failed: " + e) }
-      }
-    }
-  }
   Component.onCompleted: requestRefresh()
-  Connections {
-    target: Hyprland
-    function onRawEvent(event) {
-      if (/^(openwindow|closewindow|movewindow|windowtitle|activewindow|workspace|focusedmon|changegroup|togglegroup|minimize)/.test(event.name))
-        root.requestRefresh()
-    }
-  }
-  onWorkspaceIdChanged: { picker.close(); hoveredWindow = null; requestRefresh() }
-  // Also resync after a reload or a missed event; never poll on every frame.
-  Timer { interval: 3000; repeat: true; running: true; onTriggered: root.requestRefresh() }
+  onWorkspaceKeyChanged: { picker.close(); hoveredWindow = null; pendingFocus = ""; focusTimer.stop(); requestRefresh() }
 
   property var hoveredWindow: null
   property Item hoverAnchor: null
@@ -367,7 +335,7 @@ Item {
             x: Math.round(point.x), y: Math.round(point.y) })
         }
       }
-      return JSON.stringify({ workspace: root.workspaceId, focused: root.focusedAddress,
+      return JSON.stringify({ workspace: root.workspaceId, workspaceIdentity: root.workspace, focused: root.focusedAddress,
         windows: root.windows.map(window => ({ address: window.address, title: window.title, app: root.appName(window) })),
         buttons: buttons, overflow: root.overflowWindows.map(window => window.address),
         moreX: Math.round(origin.x + more.x + more.width / 2), pickerOpen: picker.isOpen,

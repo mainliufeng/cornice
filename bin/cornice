@@ -77,15 +77,89 @@ ipc_timeout="${CORNICE_IPC_TIMEOUT:-5}"
 # socket is an error; Quickshell's config-wide discovery can select another seat.
 shell_desktop="${CORNICE_DESKTOP_NAME:-}"
 if [[ -n ${HYPRLAND_SEAT_ID:-} ]]; then
-  shell_desktop="${HYPRLAND_SEAT_NAME:?Missing native seat name}"
+  shell_desktop="${HYPRLAND_SEAT_NAME:-}"
 fi
+# Services declare their lifetime once; the CLI and shell both read this table.
+# An invalid/missing table must not turn a session action into a desktop action.
+target_scope() {
+  local scope
+  scope=$(jq -er --arg target "$1" '
+    .services as $services |
+    if ($services | type) != "array" or
+       any($services[]; (.id | type) != "string" or .id == "" or
+           (.scope != "session" and .scope != "desktop") or
+           (.targets | type) != "array" or any(.targets[]; type != "string" or . == "")) or
+       ([$services[].id] | length) != ([$services[].id] | unique | length) or
+       ([$services[].targets[]] | length) != ([$services[].targets[]] | unique | length)
+    then error("invalid service scope declaration") else
+      [$services[] | select(.targets | index($target)) | .scope] |
+      if length == 0 then "desktop" elif length == 1 then .[0]
+      else error("ambiguous IPC target scope") end
+    end' "$prefix/config/session-services.json" 2>/dev/null) || {
+      echo "cornice: invalid or missing service scope declaration" >&2
+      return 2
+    }
+  printf '%s\n' "$scope"
+}
+
+runtime_dir() {
+  local dir="${XDG_RUNTIME_DIR:-}"
+  if [[ -z $dir && -d /run/user/$(id -u) ]]; then dir="/run/user/$(id -u)"; fi
+  printf '%s\n' "${dir:-/tmp}"
+}
+
+primary_endpoint_path() {
+  [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || return 2
+  local instance_digest
+  instance_digest=$(printf '%s' "$HYPRLAND_INSTANCE_SIGNATURE" | sha256sum)
+  printf '%s/cs-%.8s-session.json\n' "$(runtime_dir)" "$instance_digest"
+}
+
+primary_socket_path() {
+  if [[ -n ${CORNICE_PRIMARY_SHELL_SOCKET:-} ]]; then
+    printf '%s\n' "$CORNICE_PRIMARY_SHELL_SOCKET"; return
+  fi
+  # Hyprland's exec environment cannot inherit a running shell's custom socket.
+  # The primary shell publishes its endpoint for those native shortcuts.
+  local endpoint sock
+  endpoint=$(primary_endpoint_path) || endpoint=""
+  if [[ -n $endpoint && -f $endpoint ]]; then
+    sock=$(jq -er '.socket | select(type == "string" and startswith("/"))' "$endpoint" 2>/dev/null) || {
+      echo "cornice: invalid primary shell endpoint" >&2; return 2
+    }
+    printf '%s\n' "$sock"; return
+  fi
+  # Legacy sessions without an instance may explicitly configure their socket.
+  # With an instance, a socket-only caller can also be a secondary shell.
+  if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} && -z $shell_desktop && -n ${CORNICE_SHELL_SOCKET:-} ]]; then
+    printf '%s\n' "$CORNICE_SHELL_SOCKET"; return
+  fi
+  printf '%s/cornice-%s.sock\n' "$(runtime_dir)" "${USER:-user}"
+}
+
 scoped_shell() {
-  [[ -n $shell_desktop || -n ${CORNICE_SHELL_SOCKET:-} ]]
+  [[ ${1:-desktop} == session || -n $shell_desktop ||
+     -n ${CORNICE_SHELL_SOCKET:-} || -n ${CORNICE_PRIMARY_SHELL_SOCKET:-} ]] && return 0
+  local endpoint
+  endpoint=$(primary_endpoint_path) || return 1
+  [[ -f $endpoint ]]
+}
+
+validate_native_seat() {
+  [[ -n ${HYPRLAND_SEAT_ID:-} ]] || return 0
+  local state
+  if [[ -z $shell_desktop || -z ${HYPRLAND_SEAT_GENERATION:-} ]] ||
+     ! state=$(timeout "$ipc_timeout" hyprctl -j seat state "$shell_desktop" 2>/dev/null) ||
+     ! jq -e --arg id "$HYPRLAND_SEAT_ID" --arg generation "$HYPRLAND_SEAT_GENERATION" \
+         '.seatId == $id and (.generation | tostring) == $generation' <<<"$state" >/dev/null 2>&1; then
+    echo "cornice: stale or unavailable native seat: $shell_desktop" >&2
+    return 2
+  fi
 }
 
 shell_running() {
   local status
-  call_via_socket shell ping >/dev/null 2>&1
+  call_via_socket desktop shell ping >/dev/null 2>&1
   status=$?
   ((status == 0)) && return 0
   scoped_shell && return "$status"
@@ -102,6 +176,7 @@ require_shell() {
 
 # Request framing for the shell's own socket, matching services/IpcServer.qml.
 socket_path() {
+  if [[ ${1:-desktop} == session ]]; then primary_socket_path; return; fi
   if [[ -n $shell_desktop ]]; then
     [[ $shell_desktop =~ ^[a-zA-Z0-9_-]+$ ]] || return 2
     local instance_digest
@@ -110,16 +185,13 @@ socket_path() {
     return
   fi
   if [[ -n ${CORNICE_SHELL_SOCKET:-} ]]; then printf '%s\n' "$CORNICE_SHELL_SOCKET"; return; fi
-  # A TTY (where the emergency unlock is used from) has no XDG_RUNTIME_DIR, so
-  # fall back to the user's own runtime dir before /tmp.
-  local dir="${XDG_RUNTIME_DIR:-}"
-  if [[ -z $dir && -d /run/user/$(id -u) ]]; then dir="/run/user/$(id -u)"; fi
-  printf '%s/cornice-%s.sock\n' "${dir:-/tmp}" "${USER:-user}"
+  primary_socket_path
 }
 
 call_via_socket() {
-  local sock target method
-  sock=$(socket_path)
+  local sock target method scope=$1
+  shift
+  sock=$(socket_path "$scope") || return 4
   [[ -S $sock ]] || return 2
   command -v socat >/dev/null 2>&1 || return 2
   command -v jq >/dev/null 2>&1 || return 2
@@ -127,11 +199,9 @@ call_via_socket() {
   target=$1
   method=$2
   shift 2
-  # Missing --jq args: build the array from the remaining argv.
-  local args='[]'
-  if (($#)); then
-    args=$(printf '%s\n' "$@" | jq -Rs 'split("\n") | .[0:length-1]')
-  fi
+  # Keep each argv element intact, including empty or multiline arguments.
+  local args
+  args=$(jq -cn --args '$ARGS.positional' -- "$@")
   local request
   request=$(jq -cn --arg t "$target" --arg m "$method" --argjson a "$args" '{target:$t, method:$m, args:$a}')
 
@@ -146,13 +216,15 @@ call_via_socket() {
 }
 
 call() {
-  local status=0
-  call_via_socket "$@" || status=$?
+  local status=0 scope
+  scope=$(target_scope "$1") || return 2
+  if [[ $scope == desktop ]]; then validate_native_seat || return 2; fi
+  call_via_socket "$scope" "$@" || status=$?
   ((status == 0)) && return 0
-  ((status == 1)) && return 1
+  ((status == 1 || status == 4)) && return "$status"
 
-  if scoped_shell; then
-    echo "cornice: no responding shell for ${shell_desktop:-$CORNICE_SHELL_SOCKET}" >&2
+  if scoped_shell "$scope"; then
+    echo "cornice: no responding $scope shell at $(socket_path "$scope")" >&2
     return "$status"
   fi
   require_shell
@@ -334,7 +406,7 @@ case "$command" in
     ;;
 
   dnd)
-    (($# == 1)) && call notifications setDnd "$1" || call notifications toggleDnd
+    if (($# == 1)); then call notifications setDnd "$1"; else call notifications toggleDnd; fi
     ;;
 
   osd)
@@ -423,7 +495,7 @@ case "$command" in
 
   status)
     if shell_running; then
-      echo "running: $("$qs" ipc -p "$config_dir" call shell ping)"
+      echo "running: $(call shell ping)"
     else
       echo "not running (config: $config_dir)"
     fi
@@ -485,11 +557,25 @@ case "$command" in
     ;;
 
   path)
-    printf 'prefix:     %s\n' "$prefix"
-    printf 'config dir: %s\n' "$config_dir"
-    printf 'user config: %s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
-    printf 'socket:     %s\n' "$(socket_path)"
-    printf 'quickshell:  %s\n' "$("$qs" --version 2>/dev/null | head -1)"
+    if [[ ${1:-} == --json && $# == 1 ]]; then
+      # Read-only endpoint resolution for UI clients, including older Brokers.
+      # No shell health call or compositor input authorization is consumed.
+      target_scope shell >/dev/null || exit 2
+      local_socket=$(socket_path) || exit 2
+      primary_socket=$(primary_socket_path) || exit 2
+      jq -cn --arg prefix "$prefix" --arg config "$config_dir" \
+        --arg userConfig "${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json" \
+        --arg socket "$local_socket" --arg primarySocket "$primary_socket" \
+        '{prefix:$prefix,configDir:$config,userConfig:$userConfig,socket:$socket,primarySocket:$primarySocket}'
+    elif (($# == 0)); then
+      printf 'prefix:     %s\n' "$prefix"
+      printf 'config dir: %s\n' "$config_dir"
+      printf 'user config: %s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/cornice/config.json"
+      printf 'socket:     %s\n' "$(socket_path)"
+      printf 'quickshell:  %s\n' "$("$qs" --version 2>/dev/null | head -1)"
+    else
+      echo 'usage: cornice path [--json]' >&2; exit 2
+    fi
     ;;
 
   *)

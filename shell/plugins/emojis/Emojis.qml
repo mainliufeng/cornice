@@ -287,7 +287,7 @@ PanelFrame {
 
   function copy(entry) {
     if (!entry) return
-    Util.exec("wl-copy " + JSON.stringify(entry.c))
+    Util.execSession("wl-copy " + JSON.stringify(entry.c))
     copied = entry.c + "  " + entry.n
     close()
   }

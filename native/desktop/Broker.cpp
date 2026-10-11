@@ -293,6 +293,15 @@ void Broker::startShell(const QString &name) {
     auto environment = QProcessEnvironment::systemEnvironment();
     environment.remove("WAYLAND_SOCKET");
     environment.remove("DISPLAY");
+    // A shell is a desktop service, not the continuation of the shortcut that
+    // happened to start the Broker. Keep its desktop and session endpoints
+    // explicit and discard any inherited one-shot native input authorization.
+    for (const auto *key : {"HYPRLAND_ACTION_ID", "HYPRLAND_SEAT_NAME", "HYPRLAND_SEAT_ID", "HYPRLAND_SEAT_GENERATION", "HYPRLAND_SEAT_OUTPUT"})
+        environment.remove(key);
+    // An unset endpoint is discovered from the primary shell's instance
+    // descriptor. A guessed default would permanently mask a later custom one.
+    if (!environment.contains("CORNICE_PRIMARY_SHELL_SOCKET") && environment.contains("CORNICE_SHELL_SOCKET"))
+        environment.insert("CORNICE_PRIMARY_SHELL_SOCKET", environment.value("CORNICE_SHELL_SOCKET"));
     environment.insert("WAYLAND_DISPLAY", state(name)["display"].toString());
     environment.insert("CORNICE_DESKTOP_NAME", name);
     environment.insert("CORNICE_DESKTOP_OUTPUT", desktop.privateOutput);
@@ -1118,7 +1127,30 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         const auto address = params["address"].toString();
         if (!QRegularExpression("^0x[0-9a-fA-F]+$").match(address).hasMatch())
             fail("Invalid window address");
-        const auto reply = compositor("seat focus " + name + " address:" + address);
+        const auto current = state(name);
+        if (params.contains("expectedSeatId") &&
+            (params["expectedSeatId"] != current["seatId"] ||
+             params["expectedGeneration"] != current["generation"]))
+            fail("Desktop control changed; refresh before focusing");
+        if (params.contains("expectedWorkspace")) {
+            auto expected = params["expectedWorkspace"].toString();
+            auto actual = current["workspace"].toString();
+            if (expected.startsWith("name:")) expected.remove(0, 5);
+            if (actual.startsWith("name:")) actual.remove(0, 5);
+            if (expected != actual)
+                fail("Desktop workspace changed; refresh before focusing");
+        }
+        QString windowId;
+        for (const auto &value : json(compositor("seat windows " + name, true)).array()) {
+            const auto window = value.toObject();
+            if (window["address"].toString() == address) windowId = window["id"].toString();
+        }
+        if (windowId.isEmpty()) fail("Window is outside this desktop's current workspace");
+        atom(windowId);
+        // The compositor checks identity, generation and workspace membership in
+        // the same action. An obsolete panel cannot redirect another seat's focus.
+        const auto reply = compositor("seat act " + name + " " + current["seatId"].toString() + " " +
+                                      current["generation"].toString() + " focus " + windowId);
         if (reply != "ok")
             fail(QString::fromUtf8(reply));
         return state(name);
@@ -1374,6 +1406,16 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         environment.insert("WAYLAND_DISPLAY", actual["display"].toString());
         environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
         plan.applyEnvironment(environment);
+        // A launched application's Cornice commands keep their desktop scope.
+        // Never carry a short-lived physical shortcut's authorization into a
+        // terminal or another long-lived application process.
+        for (const auto *key : {"HYPRLAND_ACTION_ID", "HYPRLAND_SEAT_NAME", "HYPRLAND_SEAT_ID", "HYPRLAND_SEAT_GENERATION", "HYPRLAND_SEAT_OUTPUT"})
+            environment.remove(key);
+        if (desktop.primary) environment.remove("CORNICE_DESKTOP_NAME");
+        else environment.insert("CORNICE_DESKTOP_NAME", name);
+        environment.insert("CORNICE_DESKTOP_OUTPUT", actual["output"].toString());
+        if (!environment.contains("CORNICE_PRIMARY_SHELL_SOCKET") && environment.contains("CORNICE_SHELL_SOCKET"))
+            environment.insert("CORNICE_PRIMARY_SHELL_SOCKET", environment.value("CORNICE_SHELL_SOCKET"));
         const auto localBin = QDir::homePath() + "/.local/bin";
         environment.insert("PATH", localBin + ":" + environment.value("PATH"));
         process.setStandardOutputFile(m_directory + "/" + name + "-launch.log", QIODevice::Append);

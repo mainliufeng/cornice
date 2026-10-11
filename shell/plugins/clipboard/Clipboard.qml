@@ -77,14 +77,14 @@ PanelFrame {
     const command = entry.image
       ? "cliphist decode " + entry.id + " | wl-copy -t " + entry.mime
       : "cliphist decode " + entry.id + " | wl-copy"
-    Util.exec(command)
+    Util.execSession(command)
     status = "copied " + entry.id
     close()
   }
 
   function remove(entry) {
     if (!entry) return
-    Util.exec("cliphist decode " + entry.id + " | cliphist delete")
+    Util.execSession("cliphist decode " + entry.id + " | cliphist delete")
     status = "deleted " + entry.id
     lister.running = true
   }

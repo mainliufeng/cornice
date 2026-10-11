@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell.Hyprland
 import qs.Commons
 
 // Workspace pills.
@@ -20,20 +19,7 @@ Item {
   readonly property int minCount: Util.option(widgetConfig, "minCount", 10)
   readonly property bool showDot: Util.option(widgetConfig, "showDot", true)
 
-  readonly property var workspaces: Hyprland.workspaces ? Hyprland.workspaces.values : []
-  readonly property var focusedId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 1
-
-  readonly property var slots: {
-    const out = []
-    for (let id = 1; id <= 10; ++id) {
-      const scoped = DesktopSession.secondary
-      const name = String((DesktopSession.state.workspaceSlots || []).find(item => item.id === id)?.name || "").replace(/^name:/, "")
-      const current = (workspaces || []).find(ws => scoped ? ws.name === name : ws.id === id)
-      out.push({id: id, label: String(id), occupied: !!current && current.toplevels.values.length > 0,
-        active: scoped ? DesktopSession.viewedWorkspaceName === name : id === focusedId})
-    }
-    return out
-  }
+  readonly property var slots: DesktopSession.workspaceSlots(10)
 
   function controls() {
     const out = []

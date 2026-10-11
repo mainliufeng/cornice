@@ -156,7 +156,7 @@ PanelFrame {
           enabled: !root.connecting
           onClicked: {
             root.updateScanner(true)
-            Util.exec("nmcli device wifi rescan")
+            Util.execSession("nmcli device wifi rescan")
           }
         }
       }

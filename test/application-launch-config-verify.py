@@ -68,8 +68,9 @@ try:
     record('a configured executable alias supplies the managed CDP browser with custom profile and environment')
     assert 'disabled' in cli('launch','agent1','--',str(wrapper),'--remote-debugging-port=9222',succeeds=False)
     assert 'disabled' in cli('launch','agent1','--',str(wrapper),'--user-data-dir=/tmp/shared',succeeds=False)
-    invalid=copy.deepcopy(custom);invalid['desktopApplications']['rules']['terminal']['environment']['WAYLAND_DISPLAY']='wrong-desktop'
-    configure(invalid);assert 'identity' in cli('launch','agent1','--','kitty',succeeds=False)
+    for variable in ('WAYLAND_DISPLAY','CORNICE_DESKTOP_NAME','CORNICE_PRIMARY_SHELL_SOCKET','HYPRLAND_SEAT_GENERATION'):
+        invalid=copy.deepcopy(custom);invalid['desktopApplications']['rules']['terminal']['environment'][variable]='wrong-desktop'
+        configure(invalid);assert 'identity' in cli('launch','agent1','--','kitty',succeeds=False)
     invalid=copy.deepcopy(custom);invalid['desktopApplications']['rules']['terminal']['profile']='../shared'
     configure(invalid);assert 'directory name' in cli('launch','agent1','--','kitty',succeeds=False)
     invalid=copy.deepcopy(custom);invalid['desktopApplications']['rules']['terminal']['profilePaths']={'agent1':'relative/path'}

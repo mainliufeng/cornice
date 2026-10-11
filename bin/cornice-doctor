@@ -46,7 +46,9 @@ else
   bad "quickshell not found — sudo pacman -S quickshell (or set CORNICE_QS)"
 fi
 command -v jq >/dev/null 2>&1 && ok "jq:          $(jq --version)" \
-  || { command -v python3 >/dev/null 2>&1 && warn "no jq; using python3 to read manifests" || bad "need jq or python3 to read plugin manifests"; }
+  || bad "jq not found — install jq for IPC routing and configuration"
+command -v python3 >/dev/null 2>&1 && ok "python3:     primary session endpoint publication" \
+  || bad "python3 not found — install python for primary session endpoint publication"
 if command -v hyprctl >/dev/null 2>&1; then
   ok "hyprctl:     $(command -v hyprctl)"
 else

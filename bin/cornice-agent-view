@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# This helper addresses the session's observer, regardless of its caller's seat.
 unset CORNICE_SHELL_SOCKET CORNICE_DESKTOP_NAME CORNICE_DESKTOP_OUTPUT
+unset HYPRLAND_ACTION_ID HYPRLAND_SEAT_NAME HYPRLAND_SEAT_ID HYPRLAND_SEAT_GENERATION HYPRLAND_SEAT_OUTPUT
+if [[ -n ${CORNICE_PRIMARY_SHELL_SOCKET:-} ]]; then
+  export CORNICE_SHELL_SOCKET="$CORNICE_PRIMARY_SHELL_SOCKET"
+fi
 if [[ ${2:-} == --handoff ]]; then
   exec "${CORNICE_PATH:?}/bin/cornice" ipc desktop handoffStart "${1:-}" "${3:?Request ID required}"
 fi

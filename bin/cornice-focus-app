@@ -32,19 +32,51 @@ clients=$(hyprctl clients -j 2>/dev/null) || exit 0
 desktop_key=$(printf '%s' "$desktop" | sed 's/\.desktop$//' | tr '[:upper:]' '[:lower:]')
 name_key=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
 
-target=$(jq -r --arg pid "$pid" --arg desktop "$desktop_key" --arg name "$name_key" '
+# A native shortcut's explicit identity wins over inherited shell context.
+seat="${CORNICE_DESKTOP_NAME:-}"
+if [[ -n ${HYPRLAND_SEAT_ID:-} ]]; then
+  seat="${HYPRLAND_SEAT_NAME:?Native seat name required}"
+fi
+workspace_scope=""
+seat_id=""; generation=""
+bin_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+if [[ -n $seat && $seat != main ]]; then
+  [[ $seat =~ ^[a-zA-Z0-9_-]+$ ]] || exit 2
+  actual=$("$bin_dir/cornice-desktop" state "$seat")
+  jq -e '.available == true and (.controlMode == "human" or .controlMode == "agent")' <<<"$actual" >/dev/null || exit 1
+  if [[ -n ${HYPRLAND_SEAT_ID:-} ]]; then
+    jq -e --arg id "$HYPRLAND_SEAT_ID" --arg generation "${HYPRLAND_SEAT_GENERATION:-}" \
+      '.seatId == $id and (.generation | tostring) == $generation' <<<"$actual" >/dev/null || exit 1
+  fi
+  seat_id=$(jq -er '.seatId' <<<"$actual")
+  generation=$(jq -er '.generation | tostring' <<<"$actual")
+  workspace_scope=$(jq -er '.workspaceName // .workspace | sub("^name:"; "")' <<<"$actual")
+fi
+
+target=$(jq -c --arg pid "$pid" --arg desktop "$desktop_key" --arg name "$name_key" --arg workspace "$workspace_scope" '
   def down: (. // "") | ascii_downcase;
-  def matches:
-    ($pid != "" and ((.pid // -1) | tostring) == $pid)
-    or ($desktop != "" and (((.class // "") | down) == $desktop or ((.initialClass // "") | down) == $desktop))
-    or ($name != "" and (((.class // "") | down) == $name or ((.initialClass // "") | down) == $name));
-  [.[] | select(.mapped == true)] | map(select(matches)) | .[0]
-  | if . == null then "" else "\(.address) \(.workspace.name)" end
+  def in_workspace: $workspace == "" or ((.workspace.name // "") | sub("^name:"; "")) == $workspace;
+  def class_matches($key): $key != "" and (((.class // "") | down) == $key or ((.initialClass // "") | down) == $key);
+  [.[] | select(.mapped == true)] as $all
+  | [$all[] | select($pid != "" and ((.pid // -1) | tostring) == $pid)] as $sender
+  | [$all[] | select(in_workspace)] as $scoped
+  | (if ($sender | length) > 0 then $sender | map(select(in_workspace))
+     else [$scoped[] | select(class_matches($desktop))] end) as $preferred
+  | (if ($sender | length) > 0 or ($preferred | length) > 0 then $preferred
+     else [$scoped[] | select(class_matches($name))] end)
+  | .[0] // empty
 ' <<<"$clients")
 
 [[ -n $target ]] || exit 1
-address=${target%% *}
-workspace=${target##* }
+address=$(jq -er '.address' <<<"$target")
+workspace=$(jq -er '.workspace.name' <<<"$target")
+
+# Private Wayland displays do not scope hyprctl. Focus the exact desktop
+# identity used by the launcher and let the compositor reject obsolete state.
+if [[ -n $seat && $seat != main ]]; then
+  exec "$bin_dir/cornice-desktop" view-focus "$seat" "$address" \
+    --seat "$seat_id" "$generation" --workspace "$workspace_scope"
+fi
 
 # Switch to the window's workspace, then focus it. The two cursor/fullscreen
 # options are restored in the same batch so a notification click never warps the

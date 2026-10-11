@@ -2,9 +2,11 @@
 
 Cornice's Desktop Broker reads `desktopApplications` from the shipped
 `config/default.json`, merged with `${XDG_CONFIG_HOME:-~/.config}/cornice/config.json`.
-The same rules apply to nonterminal launches from the secondary launcher and to
-CLI/MCP application launches. Terminal-wrapped launcher commands retain the
-existing compositor dispatch path.
+All secondary Launcher paths, including terminal and command mode, pass through
+`DesktopSession.launchApplication()` and the Desktop Broker, as do CLI/MCP
+application launches. Rules match the executable in the outer argv: a rule for
+`kitty` applies to a terminal-wrapped command; rules do not inspect shell scripts
+or recursively rewrite executables inside them.
 The desktop's compositor identity and permission checks remain Broker responsibilities.
 Primary native launches outside the Broker do not use this policy.
 
@@ -90,9 +92,11 @@ pipe; raw `--remote-debugging*` flags and caller-supplied profile paths are reje
 Firefox has an ordinary process rule; it is not an implementation of the Chromium
 CDP driver.
 
-All rules reject environment overrides for `WAYLAND_DISPLAY`, `WAYLAND_SOCKET`,
-`DISPLAY`, and `HYPRLAND_INSTANCE_SIGNATURE`. These must always come from the
-explicit target desktop. The rules are trusted local product configuration;
+Rules cannot override Wayland/compositor identity, Cornice desktop/session
+endpoints, or native seat/action authorization variables. These always come
+from the explicit target desktop. Long-lived application and shell processes
+receive the desktop name but never inherit a one-shot native shortcut's
+seat generation or action authorization. The rules are trusted local product configuration;
 application launch is not an OS sandbox.
 
 ## Reload and errors

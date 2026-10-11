@@ -102,14 +102,10 @@ else
   bad "quickshell not found — sudo pacman -S quickshell (Arch extra)"
   missing=1
 fi
-if command -v jq >/dev/null 2>&1; then
-  ok "jq: $(jq --version)"
-elif command -v python3 >/dev/null 2>&1; then
-  warn "no jq; python3 will be used to read plugin manifests (slower)"
-else
-  bad "need jq or python3"
-  missing=1
-fi
+command -v jq >/dev/null 2>&1 && ok "jq: $(jq --version)" \
+  || { bad "jq not found — install jq for IPC routing and configuration"; missing=1; }
+command -v python3 >/dev/null 2>&1 && ok "python3: primary session endpoint publication" \
+  || { bad "python3 not found — install python for primary session endpoint publication"; missing=1; }
 command -v hyprctl >/dev/null 2>&1 && ok "hyprctl: $(command -v hyprctl)" \
   || { bad "hyprctl not found (cornice targets Hyprland)"; missing=1; }
 command -v flock >/dev/null 2>&1 && ok "flock: serialized window focus" \
