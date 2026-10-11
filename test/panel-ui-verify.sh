@@ -14,6 +14,36 @@ panel_pointer() {
   sleep 0.5
 }
 panel_state() { cornice ipc "${1}Panel" state; }
+# Config reload is asynchronous. A restored file is not proof that the live
+# idle service stopped using the temporary deadline/suspend policy.
+panel_wait_idle_restore() {
+  local backup="$1" label="$2" expected config_state idle_state lock_state initial_idle restored=false
+  expected=$(jq -c -s '((.[0].idle // {}) * (.[1].idle // {})) |
+    {lock,lockOnSleep,lockOnLockSignal,lockOnLidClose}' "$prefix/config/default.json" "$backup")
+  initial_idle=$(cornice ipc idle status 2>/dev/null || printf '{}')
+  for _ in $(seq 1 60); do
+    config_state=$(cornice ipc shell config 2>/dev/null || printf '{}')
+    idle_state=$(cornice ipc idle status 2>/dev/null || printf '{}')
+    lock_state=$(cornice ipc lock status 2>/dev/null || printf '{}')
+    if jq -e --argjson expected "$expected" '.idle |
+      {lock,lockOnSleep,lockOnLockSignal,lockOnLidClose} == $expected' <<<"$config_state" >/dev/null &&
+      jq -e --argjson expected "$expected" '
+        ({lock:.lockSeconds,lockOnSleep,lockOnLockSignal,lockOnLidClose} == $expected) and
+        (.warning == false) and (if $expected.lock == 0 then .monitorsEnabled.lock == false else true end)' <<<"$idle_state" >/dev/null &&
+      jq -e '.locked == false and .secure == false' <<<"$lock_state" >/dev/null; then
+      restored=true
+      break
+    fi
+    sleep .1
+  done
+  jq -n --argjson expected "$expected" --argjson initial "$initial_idle"     --argjson config "$config_state" --argjson idle "$idle_state" --argjson lock "$lock_state"     --argjson restored "$restored" '{restored:$restored,expectedIdle:$expected,
+      initialIdle:$initial,effectiveConfigIdle:$config.idle,effectiveIdle:$idle,lock:$lock}'     > "$runtime/idle-restore-$label.json"
+  if [[ $restored != true ]]; then
+    fail "$label config restore did not acknowledge the original live idle policy and unlock"
+    return 1
+  fi
+  pass "$label config restore acknowledges the original live idle policy before subsequent checks"
+}
 panel_action() {
   local name="$1" action="$2" state px py x y
   state=$(panel_state "$name")
@@ -153,7 +183,7 @@ done
 expect_eq "the idle lock owner acknowledges its emergency unlock" false "$(cornice ipc lock status | jq -r '.locked')"
 cp "$runtime/warning-config-before.json" "$XDG_CONFIG_HOME/cornice/config.json"
 cornice ipc shell reloadConfig >/dev/null
-sleep .5
+panel_wait_idle_restore "$runtime/warning-config-before.json" warning || exit 1
 kill "$hover_pointer_pid" 2>/dev/null
 wait "$hover_pointer_pid" 2>/dev/null || true
 hover_pointer_pid=""
@@ -161,6 +191,7 @@ exec {pointer_in}>&-
 exec {pointer_out}<&-
 cp "$runtime/panels-config-before.json" "$XDG_CONFIG_HOME/cornice/config.json"
 cornice reload >/dev/null
+panel_wait_idle_restore "$runtime/panels-config-before.json" panels || exit 1
 for _ in $(seq 1 30); do
   [[ $(cornice ipc weather status | jq -r '.locatedBy') == city ]] && break
   cornice ipc weather refresh >/dev/null

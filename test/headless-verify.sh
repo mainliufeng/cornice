@@ -930,6 +930,8 @@ else
 fi
 
 section "idle logind signals"
+expect_eq "configured sleep signal policy has actually been restored" false "$(cornice ipc idle status | jq -r '.lockOnSleep')"
+expect_eq "the idle fixture left the actual session unlocked" false "$(hyprctl -j seat lock-state | jq -r '.locked')"
 idle_state=$(cornice ipc idle status)
 expect_eq "the logind monitor is running" "true" "$(jq -r '.logindWatching' <<<"$idle_state")"
 # These are standard service signals on the private bus, not parser injection.
@@ -975,15 +977,25 @@ else
 fi
 
 section "launcher"
+expect_eq "the launcher input test starts with no secure lock" false "$(cornice ipc lock status | jq -r '.secure')"
+expect_eq "the native session is unlocked before launcher input" false "$(hyprctl -j seat lock-state | jq -r '.locked')"
 cornice ipc shell summon cn.launcher '{}' >/dev/null 2>&1
 sleep 0.3
 launcher_state=$(cornice ipc shell debug | jq -r '.openStates[] | select(startswith("cn.launcher=")) | split("=")[1]')
 expect_eq "launcher opens" "open" "$launcher_state"
 if command -v wtype >/dev/null 2>&1; then
-  sleep 1
+  for _ in $(seq 1 50); do
+    [[ $(cornice ipc launcher debug | jq -r '.focused') == true ]] && break
+    sleep .1
+  done
+  expect_eq "the actual launcher text field owns keyboard focus" true "$(cornice ipc launcher debug | jq -r '.focused')"
   wtype "kit" >/dev/null 2>&1
-  sleep 0.6
-  pass "typed into the launcher with wtype (results are filtered live)"
+  for _ in $(seq 1 50); do
+    [[ $(cornice ipc launcher debug | jq -r '.query') == kit ]] && break
+    sleep .1
+  done
+  cornice ipc launcher debug > "$runtime/final-launcher-input.json"
+  expect_eq "wtype text reaches the actual launcher query" kit "$(jq -r '.query' "$runtime/final-launcher-input.json")"
 else
   warn "wtype missing; launcher keyboard input not exercised"
 fi
@@ -996,6 +1008,9 @@ notify-send -a cornice-test "Render check" "popup visible in the screenshot" >/d
 cornice ipc osd show volume 0.62 "62%" >/dev/null 2>&1
 sleep 1.2
 
+cornice ipc lock status > "$runtime/final-render-lock-state.json"
+hyprctl -j seat lock-state > "$runtime/final-render-compositor-lock-state.json"
+expect_eq "the final panel render is not covered by a lock screen" false "$(jq -r '.locked' "$runtime/final-render-compositor-lock-state.json")"
 shot="$runtime/cornice.png"
 if ((ready)) && timeout 20 grim "$shot" 2>"$runtime/grim.log"; then
   if python3 - "$shot" <<'PY'
