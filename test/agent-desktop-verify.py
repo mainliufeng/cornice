@@ -1,8 +1,17 @@
 """Real isolated Hyprland integration; never operates on the live session."""
 from desktop_harness import *
 
+
+def seat_state(state):
+    # The observer has its own selected workspace and live frame counters.
+    # Every other desktop field describes the seat and must remain unchanged.
+    return {key: value for key, value in state.items() if key != "presentation"}
+
 try:
     broker = initialize()
+    # This fixture exercises three explicit secondary seats on the shared
+    # output, replacing the broker's ordinary initial empty desktop.
+    cli("remove", "desktop2")
     for index in range(3):
         cli("create", "agent" + str(index + 1), "--workspace", str(10 + index), "--output", "human")
         cli("resume", "agent" + str(index + 1))
@@ -88,7 +97,12 @@ try:
     # client must still receive frame/FIFO callbacks while an observer reads it.
     agent2_binding = bind("agent2")
     tool(agent2_binding, "workspace", {"workspace": "13"})
-    unseen = cli("state", "agent2")
+    # Window counters refresh asynchronously after a workspace switch. Establish
+    # the empty target workspace before comparing subsequent read-only frames.
+    def empty_agent2_workspace():
+        current = cli("state", "agent2")
+        return current if current["workspace"] == "13" and current["windowCount"] == 0 else None
+    unseen = wait(empty_agent2_workspace)
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(5); connection.connect(str(broker_socket()))
         animated = []
@@ -97,7 +111,10 @@ try:
             animated.append(pathlib.Path(observed["buffer"]).read_bytes())
             time.sleep(.08)
         assert len(set(animated)) >= 2, "Read-only unselected workspace froze its application frames"
-        assert cli("state", "agent2") == unseen and human_state() == baseline
+        unseen_after = cli("state", "agent2")
+        human_after = human_state()
+        assert unseen_after == unseen, {"before": unseen, "after": unseen_after}
+        assert human_after == baseline, {"before": baseline, "after": human_after}
     tool(agent2_binding, "workspace", {"workspace": "11"})
     record("browsing a workspace selected by no seat keeps real animated application frames advancing")
 
@@ -248,12 +265,20 @@ FloatingWindow {
     shell("desktop", "observe", "agent1")
     assert json.loads(shell("ipc", "desktopObserver", "status"))["open"], "Observe must be idempotent, not toggle/close"
     assert "different compositor instance" in cli("--instance", "nonexistent-instance", "observe", "agent1", succeeds=False)
-    observed_state = cli("state", "agent1")
+    observed_state = wait(lambda: (current if (current := cli("state", "agent1"))["presentation"].get("active")
+        and current["presentation"].get("following") and current["presentation"].get("workspace") == "10" else None))
     shell("ipc", "desktopObserver", "browse", "11")
     wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["presentation"].get("workspace") == "11")
-    assert cli("state", "agent1") == observed_state
+    browsed_state = wait(lambda: (current if (current := cli("state", "agent1"))["presentation"].get("active")
+        and current["presentation"].get("following") is False and current["presentation"].get("workspace") == "11" else None))
+    assert seat_state(browsed_state) == seat_state(observed_state), {key: {"before": observed_state.get(key), "after": browsed_state.get(key)}
+        for key in seat_state(observed_state).keys() | seat_state(browsed_state).keys() if observed_state.get(key) != browsed_state.get(key)}
+    assert human_state() == baseline
     shell("ipc", "desktopObserver", "follow")
     wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["presentation"].get("workspace") == "10")
+    following_state = wait(lambda: (current if (current := cli("state", "agent1"))["presentation"].get("active")
+        and current["presentation"].get("following") and current["presentation"].get("workspace") == "10" else None))
+    assert seat_state(following_state) == seat_state(observed_state)
     time.sleep(.5)
     paint_start = json.loads(shell("ipc", "desktopObserver", "status"))
     samples = []; stamps = []; begun = time.monotonic(); end = begun + 3
@@ -291,7 +316,10 @@ FloatingWindow {
         assert select.select([human_input.stdout], [], [], 5)[0] and human_input.stdout.readline().strip() == "done"
     assert json.loads(shell("ipc", "desktopObserver", "status"))["open"]
     assert (BASE / "agent1.txt").read_text() == text_before
-    assert cli("state", "agent1") == readonly_before
+    readonly_after = cli("state", "agent1")
+    assert seat_state(readonly_after) == seat_state(readonly_before)
+    assert readonly_after["presentation"]["active"] and readonly_after["presentation"]["following"]
+    assert readonly_after["presentation"]["workspace"] == "10" and not readonly_after["presentation"]["humanControl"]
     assert [c["address"] for c in ctl("clients", True)] == [c["address"] for c in clients_before]
     record("human click, text and Ctrl+W in the actual read-only observer do not reach shared applications")
     shell("lock")
@@ -321,17 +349,22 @@ FloatingWindow {
     shell("ipc", "shell", "summon", "cn.agent-desktop", "{}")
     wait(lambda: any(item["namespace"] == "cornice-panel" for item in ctl("layers", True)["human"]["levels"]["3"]))
     wait(lambda: all(d["paused"] == (d["name"] != "agent1") for d in json.loads(shell("ipc", "desktop", "status"))["desktops"]))
-    for desired in (True, False):
+    for desired in (False, True):
         control = next(row for row in json.loads(shell("ipc", "desktopPanel", "controls")) if row["name"] == "agent1")
+        assert control["key"] == "permission" and control["enabled"] and control["visible"], control
+        assert all(action["key"] in ("permission", "reset", "remove") for action in control["actions"]), control
         layers = ctl("layers", True)["human"]["levels"]["3"]
         layer = next(item for item in layers if item["namespace"] == "cornice-panel")
         for event in (f"motion {int(layer['x'] + control['x'] + control['width']/2)} {int(layer['y'] + control['y'] + control['height']/2)}", "button 272 1", "button 272 0"):
             human_input.stdin.write(event + "\n"); human_input.stdin.flush()
             assert select.select([human_input.stdout], [], [], 5)[0] and human_input.stdout.readline().strip() == "done"
-        wait(lambda: cli("state", "agent1")["paused"] == desired)
+        wait(lambda: cli("state", "agent1")["agentAllowed"] == desired)
         wait(lambda: not json.loads(shell("ipc", "desktop", "status"))["busy"] and
-                     next(d["paused"] for d in json.loads(shell("ipc", "desktop", "status"))["desktops"] if d["name"] == "agent1") == desired)
-    record("real human clicks on manager pause/resume buttons change compositor control state")
+                     next(d["agentAllowed"] for d in json.loads(shell("ipc", "desktop", "status"))["desktops"] if d["name"] == "agent1") == desired)
+        if not desired:
+            assert cli("state", "agent1")["paused"], "Revoking permission must stop desktop control"
+    cli("resume", "agent1")
+    record("real manager permission button revokes and restores authorization without a separate input toggle")
     subprocess.run(["grim", str(BASE / "manager.png")], env=ENV, check=True, timeout=5)
     shell("ipc", "shell", "hide", "cn.agent-desktop")
     human_input.stdin.write(f"motion {int(baseline['cursor']['x'])} {int(baseline['cursor']['y'])}\n"); human_input.stdin.flush()

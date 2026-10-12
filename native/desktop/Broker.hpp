@@ -134,6 +134,9 @@ class Broker : public QObject {
     QLocalSocket *m_humanOwner = nullptr;
     Binding m_humanBinding;
     QElapsedTimer m_humanHeartbeat;
+    bool m_restoreTaskOnRelease = false;
+    quint64 m_takeoverInputDecision = 0;
+    QJsonValue m_takeoverLockEpoch;
     QMap<QLocalSocket *, QString> m_buffers;
     QMap<QLocalSocket *, QString> m_presentations;
     QMap<QLocalSocket *, QJsonObject> m_presentationStates;

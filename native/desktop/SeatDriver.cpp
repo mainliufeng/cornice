@@ -28,10 +28,18 @@ SeatDriver::SeatDriver(const QString &display, const QString &name, const QStrin
         fail("Cannot connect to bound seat display");
     try {
         m_registry = wl_display_get_registry(m_display);
-        static const wl_registry_listener listener = {global, [](void *, wl_registry *, uint32_t) {}};
+        static const wl_registry_listener listener = {global, globalRemoved};
         wl_registry_add_listener(m_registry, &listener, this);
+        // Collect the initial registry before binding: an idle connection may
+        // receive a global and its removal in the same dispatch batch.
         sync();
+        const auto globals = m_globals;
+        for (auto it = globals.cbegin(); it != globals.cend(); ++it)
+            bindGlobal(this, m_registry, it.key(), it.value().interface.toUtf8().constData(), it.value().version);
         sync();
+        // This driver never retargets. Later globals belong to other desktops;
+        // binding their stale announcements could disconnect our input devices.
+        m_discovering = false;
         if (!m_seat || !m_output || !m_pointerManager || !m_keyboardManager)
             fail("Bound seat/output or virtual input protocol missing");
         m_pointer =
@@ -99,21 +107,56 @@ void SeatDriver::disconnect() {
     m_display = nullptr;
 }
 
-void SeatDriver::global(void *data, wl_registry *registry, uint32_t id, const char *interface, uint32_t version) {
+void SeatDriver::global(void *data, wl_registry *, uint32_t id, const char *interface, uint32_t version) {
+    auto *self = static_cast<SeatDriver *>(data);
+    if (self->m_discovering)
+        self->m_globals.insert(id, {QString::fromUtf8(interface), version});
+}
+
+void SeatDriver::globalRemoved(void *data, wl_registry *, uint32_t id) {
+    auto *self = static_cast<SeatDriver *>(data);
+    self->m_globals.remove(id);
+    if (auto *seat = self->m_seats.take(id)) {
+        if (seat == self->m_seat) {
+            self->m_seat = nullptr;
+            self->m_available = false;
+        }
+        wl_seat_release(seat);
+    }
+    if (auto *output = self->m_outputs.take(id)) {
+        if (output == self->m_output) {
+            self->m_output = nullptr;
+            self->m_available = false;
+        }
+        wl_output_release(output);
+    }
+    if (self->m_pointerManager && id == self->m_pointerManagerGlobal) {
+        self->m_available = false;
+        zwlr_virtual_pointer_manager_v1_destroy(self->m_pointerManager);
+        self->m_pointerManager = nullptr;
+    }
+    if (self->m_keyboardManager && id == self->m_keyboardManagerGlobal) {
+        self->m_available = false;
+        zwp_virtual_keyboard_manager_v1_destroy(self->m_keyboardManager);
+        self->m_keyboardManager = nullptr;
+    }
+}
+
+void SeatDriver::bindGlobal(void *data, wl_registry *registry, uint32_t id, const char *interface, uint32_t version) {
     auto *self = static_cast<SeatDriver *>(data);
     if (!strcmp(interface, "wl_seat") && version >= 5) {
         auto *seat = static_cast<wl_seat *>(wl_registry_bind(registry, id, &wl_seat_interface, 5));
-        self->m_seats.append(seat);
+        self->m_seats.insert(id, seat);
         static const wl_seat_listener listener = {[](void *, wl_seat *, uint32_t) {},
                                                   [](void *d, wl_seat *s, const char *n) {
                                                       auto *driver = static_cast<SeatDriver *>(d);
-                                                      if (driver->m_name == QString::fromUtf8(n))
+                                                      if (driver->m_globals.contains(driver->m_seats.key(s)) && driver->m_name == QString::fromUtf8(n))
                                                           driver->m_seat = s;
                                                   }};
         wl_seat_add_listener(seat, &listener, self);
     } else if (!strcmp(interface, "wl_output") && version >= 4) {
         auto *output = static_cast<wl_output *>(wl_registry_bind(registry, id, &wl_output_interface, 4));
-        self->m_outputs.append(output);
+        self->m_outputs.insert(id, output);
         static const wl_output_listener listener = {[](void *, wl_output *, int32_t, int32_t, int32_t, int32_t, int32_t,
                                                        const char *, const char *, int32_t) {},
                                                     [](void *, wl_output *, uint32_t, int32_t, int32_t, int32_t) {},
@@ -121,17 +164,20 @@ void SeatDriver::global(void *data, wl_registry *registry, uint32_t id, const ch
                                                     [](void *, wl_output *, int32_t) {},
                                                     [](void *d, wl_output *o, const char *n) {
                                                         auto *driver = static_cast<SeatDriver *>(d);
-                                                        if (driver->m_outputName == QString::fromUtf8(n))
+                                                        if (driver->m_globals.contains(driver->m_outputs.key(o)) && driver->m_outputName == QString::fromUtf8(n))
                                                             driver->m_output = o;
                                                     },
                                                     [](void *, wl_output *, const char *) {}};
         wl_output_add_listener(output, &listener, self);
-    } else if (!strcmp(interface, "zwlr_virtual_pointer_manager_v1") && version >= 2)
+    } else if (!strcmp(interface, "zwlr_virtual_pointer_manager_v1") && version >= 2 && !self->m_pointerManager) {
+        self->m_pointerManagerGlobal = id;
         self->m_pointerManager = static_cast<zwlr_virtual_pointer_manager_v1 *>(
             wl_registry_bind(registry, id, &zwlr_virtual_pointer_manager_v1_interface, 2));
-    else if (!strcmp(interface, "zwp_virtual_keyboard_manager_v1"))
+    } else if (!strcmp(interface, "zwp_virtual_keyboard_manager_v1") && version >= 1 && !self->m_keyboardManager) {
+        self->m_keyboardManagerGlobal = id;
         self->m_keyboardManager = static_cast<zwp_virtual_keyboard_manager_v1 *>(
             wl_registry_bind(registry, id, &zwp_virtual_keyboard_manager_v1_interface, 1));
+    }
 }
 
 void SeatDriver::sync() {
@@ -158,6 +204,8 @@ void SeatDriver::sync() {
         if (result > 0 && wl_display_dispatch(m_display) < 0)
             fail("Seat connection lost");
     }
+    if (!m_available)
+        fail("Bound seat/output or virtual input protocol removed");
 }
 
 void SeatDriver::setKeymap(const QByteArray &map) {
@@ -190,6 +238,7 @@ void SeatDriver::modifiers() { zwp_virtual_keyboard_v1_modifiers(m_keyboard, m_m
 void SeatDriver::release() {
     if (!m_keyboard || !m_pointer)
         return;
+    sync();
     for (const auto code : QSet<uint32_t>(m_keys))
         key(code, false);
     m_modifiers = 0;
@@ -246,6 +295,8 @@ void SeatDriver::type(const QString &text) {
 }
 
 void SeatDriver::input(const QJsonObject &params, int width, int height) {
+    // Drain removals before sending input to the fixed binding.
+    sync();
     const auto action = params["action"].toString();
     if (action == "move" || action == "click") {
         const auto x = params["x"].toDouble(-1), y = params["y"].toDouble(-1);

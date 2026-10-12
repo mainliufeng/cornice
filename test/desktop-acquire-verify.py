@@ -46,10 +46,15 @@ try:
  a=MCP('codex-like',True);b=MCP('pi-like')
  tools=a.request('tools/list',{})['tools'];assert len(tools)==28
  assert 'desktop_acquire' in {x['name'] for x in tools}
- assert 'desktop_acquire first' in str(a.call('desktop_state',success=False))
+ assert 'desktop_acquire' in str(a.call('desktop_state',success=False))
  assert 'disabled' in str(a.call('desktop_acquire',{'preferredDesktop':'main'},False))
  assert 'does not exist' in str(a.call('desktop_acquire',{'preferredDesktop':'missing'},False))
  record('plugin connection alone grants no desktop; primary remains disabled and missing explicit target fails')
+ # A resumed compositor seat without a task or explicit binding is still idle.
+ # No operator pause should be required before the first task can acquire it.
+ idle=cli('resume','desktop2')
+ assert not idle['paused'] and not idle['occupied'] and idle['activity']=='idle',idle
+ idle_generation=idle['generation']
  # Both requests are queued before receiving either answer: allocation is atomic.
  ia=a.send('tools/call',{'name':'desktop_acquire','arguments':{}})
  ib=b.send('tools/call',{'name':'desktop_acquire','arguments':{}})
@@ -57,17 +62,122 @@ try:
  assert not first.get('isError') and not second.get('isError'),(first,second)
  first=first['structuredContent'];second=second['structuredContent']
  assert first['name']=='desktop2' and not first['created']
+ assert first['generation']!=idle_generation,first
  assert second['name']!='desktop2' and second['created'] and not second['primary']
  assert first['pixelSize']==second['pixelSize']==[1280,800]
  assert first['harness']=='codex' and second['harness']=='pi'
  assert first['occupied'] and second['occupied'] and first['activity']==second['activity']=='running'
  assert next(d for d in cli('list')['desktops'] if d['name']==first['name'])['harness']=='codex'
  assert human_state()==baseline and cli('state','disabled')['paused']
+ # The disabled empty fixture has served its purpose; do not keep its native
+ # shell consuming the bounded task budget during concurrent browser checks.
+ cli('remove','disabled')
  assert not any(key in first for key in ('token','socket'))
- record('simultaneous independent harnesses atomically reuse an idle seat and create a fresh private desktop; GUI-app endpoint works without compositor environment')
+ record('simultaneous independent harnesses atomically acquire a resumed task-free seat without manual pause and create a fresh private desktop; GUI-app endpoint works without compositor environment')
+ # Pausing an active task revokes input, not its reservation. A new task
+ # targeting that desktop must neither resume it nor replace its binding.
+ cli('pause',first['name'])
+ interrupted=cli('state',first['name'])
+ assert interrupted['occupied'] and interrupted['paused'],interrupted
+ assert a.call('desktop_capture',{'desktop':first['desktop']},False)['isError']
+ assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
  third=a.details('desktop_acquire',{'preferredDesktop':'desktop2'})
  assert third['created'] and third['name'] not in (first['name'],second['name'])
- record('an occupied requested desktop creates a new desktop; two tasks in one MCP process retain distinct references')
+ retained=cli('state',first['name'])
+ assert retained['occupied'] and retained['paused'] and retained['generation']==interrupted['generation'],retained
+ assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
+ cli('resume',first['name'])
+ a.call('desktop_restore',{'desktop':first['desktop']})
+ assert a.details('desktop_state',{'desktop':first['desktop']})['name']==first['name']
+ record('a paused active task remains reserved; another task gets a distinct desktop and only explicit operator restoration renews the original task')
+ # Legacy explicit grants are ownership even before a harness heartbeat starts.
+ cli('create','explicit-binding','--virtual-output','1280x800')
+ cli('resume','explicit-binding');explicit=bind('explicit-binding')
+ original=cli('state','explicit-binding')
+ diverted=b.details('desktop_acquire',{'preferredDesktop':'explicit-binding'})
+ assert diverted['created'] and diverted['name']!='explicit-binding',diverted
+ unchanged=cli('state','explicit-binding')
+ assert not unchanged['paused'] and unchanged['generation']==original['generation'],unchanged
+ tool(explicit,'workspace',{'slot':2})
+ assert cli('state','explicit-binding')['workspace'].endswith('-ws-2')
+ b.call('desktop_finish',{'desktop':diverted['desktop'],'outcome':'completed','reason':'valid explicit binding preserved'})
+ cli('remove',diverted['name']);cli('remove','explicit-binding')
+ record('a valid explicit binding without a harness heartbeat still prevents acquisition; its original native workspace control remains valid')
+ # The permission switch is also explicit operator reauthorization of a
+ # retained reservation. It replaces input grants, never the task reference.
+ before=a.details('desktop_state',{'desktop':first['desktop']})
+ cli('allow-agent',first['name'],'off')
+ assert a.call('desktop_capture',{'desktop':first['desktop']},False)['isError']
+ assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
+ cli('allow-agent',first['name'],'on')
+ a.call('desktop_restore',{'desktop':first['desktop']})
+ authorized=a.details('desktop_state',{'desktop':first['desktop']})
+ assert authorized['occupied'] and not authorized['paused'] and authorized['generation']!=before['generation'],authorized
+ record('operator permission off/on restores the original live task with a fresh generation; revoked permission alone cannot be bypassed')
+ # Native human control shares the same reservation. Normal explicit release
+ # returns it to the task; unexpected viewer loss remains interrupted.
+ viewer=socket.socket(socket.AF_UNIX);viewer.settimeout(4);viewer.connect(str(broker_socket()))
+ rpc(viewer,'present',{'name':first['name']})
+ rpc(viewer,'takeover',{'name':first['name']})
+ taken=cli('state',first['name'])
+ assert taken['occupied'] and taken['controlMode']=='human',taken
+ try:
+  rpc(viewer,'release',{'name':second['name']})
+  raise AssertionError('foreign desktop release unexpectedly succeeded')
+ except AssertionError as error:
+  assert 'does not own human control' in str(error),error
+ assert cli('state',first['name'])['controlMode']=='human'
+ assert not b.details('desktop_state',{'desktop':second['desktop']})['paused']
+ assert a.call('desktop_capture',{'desktop':first['desktop']},False)['isError']
+ assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
+ # Permission changes must not steal live human control.
+ cli('allow-agent',first['name'],'off');cli('allow-agent',first['name'],'on')
+ assert cli('state',first['name'])['controlMode']=='human'
+ assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
+ rpc(viewer,'release',{'name':first['name']})
+ a.call('desktop_restore',{'desktop':first['desktop']})
+ released=a.details('desktop_state',{'desktop':first['desktop']})
+ assert released['occupied'] and not released['paused'] and released['generation']!=taken['generation'],released
+ rpc(viewer,'takeover',{'name':first['name']})
+ viewer.close()
+ wait(lambda:cli('state',first['name'])['paused'])
+ assert a.call('desktop_capture',{'desktop':first['desktop']},False)['isError']
+ assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
+ cli('allow-agent',first['name'],'off');cli('allow-agent',first['name'],'on')
+ a.call('desktop_restore',{'desktop':first['desktop']})
+ record('normal native takeover release restores only its live task; foreign desktop release is rejected, human control blocks reauthorization, and abnormal viewer loss stays paused until operator permission off/on')
+ # Manual control must not erase a separate pause that preceded takeover.
+ cli('pause',first['name'])
+ prior_pause=cli('state',first['name'])
+ viewer=socket.socket(socket.AF_UNIX);viewer.settimeout(4);viewer.connect(str(broker_socket()))
+ rpc(viewer,'present',{'name':first['name']});rpc(viewer,'takeover',{'name':first['name']})
+ rpc(viewer,'release',{'name':first['name']});viewer.close()
+ still_paused=cli('state',first['name'])
+ assert still_paused['occupied'] and still_paused['paused'] and still_paused['generation']!=prior_pause['generation'],still_paused
+ assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
+ cli('allow-agent',first['name'],'off');cli('allow-agent',first['name'],'on')
+ a.call('desktop_restore',{'desktop':first['desktop']})
+ record('normal takeover release preserves a task paused before takeover; only explicit operator permission off/on restores that separate interruption')
+ # Compositor revocation is authoritative even before Broker's watchdog has
+ # observed it. A queued normal release must not turn that into a new resume.
+ raced_releases=0
+ for _ in range(3):
+  viewer=socket.socket(socket.AF_UNIX);viewer.settimeout(4);viewer.connect(str(broker_socket()))
+  rpc(viewer,'present',{'name':first['name']});rpc(viewer,'takeover',{'name':first['name']})
+  taken=cli('state',first['name'])
+  ctl('seat control '+first['name']+' '+taken['seatId']+' '+taken['generation']+' pause',True)
+  try:
+   rpc(viewer,'release',{'name':first['name']});raced_releases+=1
+  except AssertionError as error:
+   # Watchdog may win the race and retire the human owner first.
+   assert 'does not own human control' in str(error),error
+  viewer.close()
+  assert cli('state',first['name'])['paused']
+  assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
+  cli('allow-agent',first['name'],'off');cli('allow-agent',first['name'],'on')
+  a.call('desktop_restore',{'desktop':first['desktop']})
+ assert raced_releases>0,'watchdog won every attempt; native-generation release boundary was not exercised'
+ record('native pause/revocation racing normal release never resumes the task; at least one release is checked before the watchdog retires takeover')
  for client,state,text in ((a,first,'甲桌面'),(b,second,'乙桌面'),(a,third,'丙桌面')):
   ref=state['desktop'];name=state['name'];path=BASE/(name+'.txt')
   client.call('desktop_launch',{'desktop':ref,'argv':['/usr/bin/python3',str(ROOT/'test/agent-desktop-client.py'),name+'-window',str(path)]})
@@ -78,6 +188,34 @@ try:
   client.call('desktop_input',{'desktop':ref,'frameId':frame['frameId'],'action':'text','text':text})
   wait(lambda:path.exists() and path.read_text()==text)
  assert human_state()==baseline
+ # Keep every original input connection idle while unrelated native globals
+ # are added and removed. Repeated Unicode input must survive each batch
+ # without replacing any task's focus, workspace or input generation.
+ task_clients=((a,first,'甲桌面'),(b,second,'乙桌面'),(a,third,'丙桌面'))
+ selection={state['name']:{key:cli('state',state['name'])[key] for key in ('workspace','generation','windowId')} for client,state,text in task_clients}
+ expected_text={state['name']:text for client,state,text in task_clients}
+ assert all(value['windowId'] for value in selection.values()),selection
+ for batch in range(3):
+  fixtures=['registry-fixture-'+str(batch)+'-'+str(index) for index in range(2)]
+  for name in fixtures:
+   cli('create',name,'--virtual-output','1280x800')
+   assert cli('windows',name)['windows']==[] and not cli('state',name)['occupied']
+  for name in fixtures:cli('remove',name)
+  for client,state,text in task_clients:
+   name=state['name'];ref=state['desktop'];before=cli('state',name)
+   assert {key:before[key] for key in selection[name]}==selection[name],(name,before,selection[name])
+   frame=client.details('desktop_capture',{'desktop':ref})
+   suffix='·动态'+str(batch+1)
+   client.call('desktop_input',{'desktop':ref,'frameId':frame['frameId'],'action':'text','text':suffix})
+   expected_text[name]+=suffix
+   wait(lambda name=name:(BASE/(name+'.txt')).read_text()==expected_text[name])
+   after=cli('state',name)
+   assert {key:after[key] for key in selection[name]}==selection[name],(name,after,selection[name])
+   if batch==2:
+    image=client.call('desktop_capture',{'desktop':ref})
+    (BASE/(name+'-native-after-churn.jpg')).write_bytes(base64.b64decode(next(item['data'] for item in image['content'] if item['type']=='image')))
+  assert human_state()==baseline
+ record('three batches of unrelated desktop creation/removal preserve all three original native input connections, Unicode text, focus, workspaces and generations')
  # Real native trees are exposed through the same MCP and retain task scope.
  def nodes(tree):
   yield tree
@@ -102,13 +240,33 @@ try:
  a.call('desktop_workspace',{'desktop':first['desktop'],'slot':1})
  assert human_state()==baseline
  record('real native AT-SPI tree, Unicode setText and click work through MCP; cross-task, mutated and workspace-stale references fail closed')
- assert 'desktop_acquire first' in str(a.call('desktop_capture',success=False))
- assert 'desktop_acquire first' in str(a.call('desktop_capture',{'desktop':second['desktop']},False))
+ assert 'desktop_acquire' in str(a.call('desktop_capture',success=False))
+ assert 'desktop_acquire' in str(a.call('desktop_capture',{'desktop':second['desktop']},False))
  record('real GTK Unicode input is isolated across all references, and missing or foreign references never fall back')
  # Independent browser clients even when sharing one Cornice MCP process.
+ def process_budget(label):
+  # /proc belongs to the test's private PID namespace, so this counts only
+  # the real fixture's tasks without inspecting the user's live session.
+  processes=threads=0;groups={};affinities=set()
+  for status in pathlib.Path('/proc').glob('[0-9]*/status'):
+   try:
+    value=status.read_text();count=re.search(r'^Threads:\s+(\d+)',value,re.M)
+    if count:
+     processes+=1;threads+=int(count.group(1))
+     name=re.search(r'^Name:\s+(.+)',value,re.M).group(1)
+     groups[name]=groups.get(name,0)+int(count.group(1))
+     affinity=re.search(r'^Cpus_allowed_list:\s+(.+)',value,re.M)
+     if affinity:affinities.add(affinity.group(1))
+   except (OSError,ValueError):pass
+  print('Fixture resources:',label,processes,'processes,',threads,'threads; affinity',sorted(affinities),'thread groups',groups,flush=True)
  url=lambda title:'data:text/html,'+quote('<title>'+title+'</title><label>Answer<input aria-label="Answer"></label>')
  for state,title in ((first,'Task A'),(third,'Task C')):
-  ref=state['desktop'];a.call('desktop_browser_connect',{'desktop':ref});a.call('browser_navigate',{'desktop':ref,'url':url(title)})
+  ref=state['desktop'];process_budget('before '+title+' browser')
+  try:a.call('desktop_browser_connect',{'desktop':ref})
+  except Exception:
+   process_budget('failed '+title+' browser');raise
+  process_budget('connected '+title+' browser')
+  a.call('browser_navigate',{'desktop':ref,'url':url(title)})
   tree=str(a.call('browser_snapshot',{'desktop':ref}));target=re.search(r'textbox "Answer" \[ref=([^\]]+)\]',tree).group(1)
   a.call('browser_type',{'desktop':ref,'target':target,'text':title+' 中文'})
  assert 'Task A 中文' in str(a.call('browser_snapshot',{'desktop':first['desktop']}))
@@ -168,10 +326,18 @@ try:
  wait(lambda:ctl('locked',True)['locked'])
  assert 'Unlock' in str(reclaimed.call('desktop_acquire',success=False))
  assert reclaimed.call('desktop_capture',{'desktop':fresh['desktop']},False)['isError']
- reclaimed.call('desktop_finish',{'desktop':fresh['desktop'],'outcome':'blocked','reason':'session locked'})
+ assert reclaimed.call('desktop_restore',{'desktop':fresh['desktop']},False)['isError']
+ assert 'Unlock' in cli('allow-agent',fresh['name'],'on',succeeds=False)
  locker.stdin.write('unlock\n');locker.stdin.flush();locker.wait(timeout=5)
- wait(lambda:not ctl('locked',True)['locked']);reclaimed.close()
- record('real session lock denies new acquisition and invalidates old control; cleanup neither unlocks nor resumes')
+ wait(lambda:not ctl('locked',True)['locked'])
+ assert cli('state',fresh['name'])['paused']
+ assert reclaimed.call('desktop_restore',{'desktop':fresh['desktop']},False)['isError']
+ cli('allow-agent',fresh['name'],'off');cli('allow-agent',fresh['name'],'on')
+ reclaimed.call('desktop_restore',{'desktop':fresh['desktop']})
+ assert not reclaimed.details('desktop_state',{'desktop':fresh['desktop']})['paused']
+ reclaimed.call('desktop_finish',{'desktop':fresh['desktop'],'outcome':'completed','reason':'operator explicitly restored after lock; no automatic unlock restoration'})
+ assert cli('state',fresh['name'])['paused'];reclaimed.close()
+ record('real session lock denies acquisition and self-restoration; unlock keeps the task paused until explicit permission off/on, and finish only pauses its own desktop')
  print('PASS automatic task-owned desktop integration',flush=True)
 finally:
  cleanup()

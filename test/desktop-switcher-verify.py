@@ -42,11 +42,10 @@ def control(name):
     icon = next(item for item in menus if item['name'] == 'group')
     send(f"motion {round(icon['x']+icon['width']/2)} {round(icon['y']+icon['height']/2)}")
     def ready():
-        row = next((item for item in json.loads(shell('ipc', 'desktopObserver', 'controls')) if item['name'] == ('control:' + name if name in ('run','takeover','permission','previews','preview-mode','manage') else 'view:' + name)), None)
+        rows = json.loads(shell('ipc', 'desktopObserver', 'controls'))
+        assert not any(item['name'] == 'control:run' for item in rows), rows
+        row = next((item for item in rows if item['name'] == ('control:' + name if name in ('takeover','permission','previews','preview-mode','manage') else 'view:' + name)), None)
         if not row or not row.get('enabled', True): return None
-        if name == 'run':
-            expected = '恢复 Agent 输入' if cli('state', status()['name'])['paused'] else '暂停 Agent 输入'
-            if row['label'] != expected: return None
         return row
     row = wait(ready)
     wait(lambda: any(item['namespace'] == 'cornice-desktop-menu' for item in ctl('layers',True)['human']['levels']['3']))
@@ -164,13 +163,23 @@ try:
     preview_stop=threading.Event()
     preview_errors=[]
     def heartbeat(connection,binding,controller):
+        data=b''
         while not preview_stop.wait(.5):
             try:
                 identity=str(time.monotonic_ns())
-                connection.sendall((json.dumps({'id':identity,'method':'desktop.state','params':{},'controller':controller,'token':binding['token']})+'\n').encode())
-                data=b''
-                while b'\n' not in data:data+=connection.recv(65536)
-                reply=json.loads(data.split(b'\n')[0]);assert reply['ok'],reply
+                connection.sendall((json.dumps({'id':identity,'method':'desktop.handoff','params':{'action':'status'},'controller':controller,'token':binding['taskToken']})+'\n').encode())
+                # A reservation carries unsolicited state notifications alongside
+                # RPC replies. Preserve partial/coalesced lines and match IDs.
+                while True:
+                    while b'\n' not in data:
+                        chunk=connection.recv(65536)
+                        assert chunk,'Preview task reservation closed'
+                        data+=chunk
+                    line,data=data.split(b'\n',1)
+                    reply=json.loads(line)
+                    if reply.get('id')!=identity:continue
+                    assert reply.get('ok'),reply
+                    break
             except Exception as error:
                 preview_errors.append(str(error));return
     preview_thread=threading.Thread(target=heartbeat,args=(preview_owner,lease,'preview-ui-codex'),daemon=True);preview_thread.start()
@@ -485,7 +494,8 @@ try:
     group=next(item for item in json.loads(shell('ipc','desktopObserver','controls')) if item['name']=='group')
     send(f"motion {round(group['x']+group['width']/2)} {round(group['y']+group['height']/2)}")
     heading=wait(lambda:next((row for row in json.loads(shell('ipc','desktopObserver','controls')) if row['name']=='control:current-heading' and row['target']=='agent1'),None))
-    assert heading['detail'].startswith(cli('state','agent1')['label']) and '只读观察' in heading['detail'],heading
+    assert heading['detail'].startswith(cli('state','agent1')['label']) and heading['detail'].endswith('只读跟随 Agent'),heading
+    assert view['presentation']['following'] is True,view
     assert all(row['target']=='agent1' for row in json.loads(shell('ipc','desktopObserver','controls')) if row.get('scope')=='desktop')
     subprocess.run(['grim','-o','human',str(BASE/'menu-scope-secondary.png')],env=ENV,check=True)
     send('motion 650 300');time.sleep(.5)
@@ -496,43 +506,80 @@ try:
     assert human_state()==human, (human_state(),human)
     # Capture the native scene currently presented to the viewer, including a
     # secondary desktop, rather than an unseen primary workspace.
+    screenshot_phases=[]
+    def assert_observed_phase(phase,save_seconds=None):
+        view=status()
+        proof={'phase':phase,'observer':view}
+        if save_seconds is not None:proof['saveSeconds']=save_seconds
+        screenshot_phases.append(proof)
+        (BASE/'native-screenshot-observer.json').write_text(json.dumps(screenshot_phases))
+        assert view['open'] and view['native'] and view['name']=='agent1' and view['readonly'],proof
+        assert view['presentation'].get('active') and view['presentation'].get('name')=='agent1',proof
+        assert view['presentation'].get('following') and view['presentation'].get('workspace')==cli('state','agent1')['workspace'],proof
+    assert_observed_phase('before-screen')
     presented=BASE/'native-presented-screen.png'
+    screen_capture_start=time.monotonic()
     assert shell('screenshot','screen',str(presented))=='requested'
     wait(lambda:presented.exists());wait(lambda:not screenshot_state()['active'])
+    assert_observed_phase('after-screen',time.monotonic()-screen_capture_start)
     assert displayed_clock(presented) > 0
     region=BASE/'native-presented-region.png'
+    region_capture_start=time.monotonic()
     assert shell('screenshot','region',str(region))=='requested'
     wait(lambda:screenshot_state()['selecting'])
     time.sleep(.2) # Commit the input region before virtual pointer events.
     send('motion 600 200');send('button 272 1');send('motion 800 400');send('button 272 0')
     wait(lambda:region.exists());wait(lambda:not screenshot_state()['active'])
+    assert_observed_phase('after-region',time.monotonic()-region_capture_start)
     assert shell('screenshot','region',str(BASE/'readonly-cancel.png'))=='requested'
-    wait(lambda:screenshot_state()['selecting']);time.sleep(.2);send('key 1 1');send('key 1 0')
+    wait(lambda:screenshot_state()['selecting']);time.sleep(.2)
+    assert_observed_phase('before-region-cancel')
+    send('key 1 1');send('key 1 0')
     wait(lambda:not screenshot_state()['active'])
     send(f"motion {human['cursor']['x']} {human['cursor']['y']}")
     assert human_state()==human and not (BASE/'agent1.txt').exists()
+    assert_observed_phase('after-region-cancel')
     screenshot_button()
     time.sleep(.2) # Wait for the exclusive layer keyboard-focus commit.
+    assert_observed_phase('before-bar-cancel')
     send('key 1 1');send('key 1 0');wait(lambda:not screenshot_state()['active'])
     send(f"motion {human['cursor']['x']} {human['cursor']['y']}")
     assert not (BASE/'agent1.txt').exists() and human_state()==human
+    assert_observed_phase('after-bar-cancel')
     record('screenshot bar button remains usable while viewing a secondary desktop read-only; cancellation never enters an application')
     record('Cornice screenshots capture the presented secondary desktop while read-only observation leaves applications and the primary seat untouched')
+    # The physical pixel benchmark must explicitly target the secondary scene,
+    # rather than inherit an unrelated screenshot interaction's view state.
+    shell('ipc','desktop','observe','agent1')
+    wait(lambda:status()['open'] and status()['name']=='agent1' and status()['readonly'] and status()['native']
+        and status()['presentation'].get('active') and status()['presentation'].get('following'))
+    assert cli('state','agent1')['window']=='agent1-window'
+    assert_observed_phase('before-performance')
     subprocess.run(['grim','-o','human',str(BASE/'native-readonly.png')],env=ENV,check=True)
     displayed_clock(BASE/'native-readonly.png')  # Warm the image decoder outside timing.
-    ages=[]
+    ages=[]; capture_phases=[]
     for _ in range(5):
         shot=BASE/'native-clock.ppm'
+        capture_started=time.monotonic()*1000
         subprocess.run(['grim','-t','ppm','-o','human',str(shot)],env=ENV,check=True)
-        captured=int(time.monotonic()*1000)&0xffffffff
-        ages.append((captured-displayed_clock(shot))&0xffffffff)
+        capture_finished=time.monotonic()*1000
+        paint_stamp=displayed_clock(shot)
+        decode_finished=time.monotonic()*1000
+        age=((int(capture_finished)&0xffffffff)-paint_stamp)&0xffffffff
+        ages.append(age)
+        capture_phases.append({'captureStartMs':capture_started,'captureFinishMs':capture_finished,
+            'decodeFinishMs':decode_finished,'paintStampMs':paint_stamp,'paintToCaptureMs':age,
+            'captureDurationMs':capture_finished-capture_started,'decodeDurationMs':decode_finished-capture_finished})
         time.sleep(.03)
     frame_age=max(ages)
-    assert frame_age<200,ages
+    (BASE/'native-capture-phases.json').write_text(json.dumps(capture_phases))
     before=status()['presentation']['frames'];started=time.monotonic();time.sleep(2);after=status()['presentation']['frames']
     fps=(after-before)/(time.monotonic()-started)
+    performance={'nativeSceneDrawsPerSecond':fps,'paintToCaptureMs':frame_age,'capturePhases':capture_phases}
+    (BASE/'native-performance.json').write_text(json.dumps(performance))
+    print('NATIVE PERFORMANCE',json.dumps(performance),flush=True)
+    assert frame_age<200,performance
     assert fps>=35,(before,after,fps)
-    (BASE/'native-performance.json').write_text(json.dumps({'nativeSceneDrawsPerSecond':fps,'paintToCaptureMs':frame_age}))
     assert not list((RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']).glob('frame-*'))
     send('type blocked')
     assert not (BASE/'agent1.txt').exists() and not (BASE/'human.txt').exists()

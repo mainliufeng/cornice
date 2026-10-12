@@ -629,6 +629,9 @@ void Broker::endTakeover(const QString &reason, bool requeueRequest) {
     const auto name = m_humanBinding.name;
     m_humanOwner = nullptr;
     m_humanBinding = {};
+    m_restoreTaskOnRelease = false;
+    m_takeoverInputDecision = 0;
+    m_takeoverLockEpoch = {};
     const auto requestId = m_humanRequestId;
     m_humanRequestId.clear();
     // Withdraw compositor control and pause input before exposing a new task
@@ -1025,7 +1028,11 @@ QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owne
         if (!desktop.agentAllowed || (m_humanOwner && m_humanBinding.name == name)) return false;
         for (const auto &lease : m_acquisitions) if (lease["name"].toString() == name) return false;
         const auto actual = state(name);
-        if (!actual["available"].toBool() || actual["humanLocked"].toBool() || !actual["paused"].toBool()) return false;
+        if (!actual["available"].toBool() || actual["humanLocked"].toBool()) return false;
+        // Compositor input state is not ownership. A task-free desktop may
+        // still be resumed; allocation renews its native control and binding.
+        // Reservations above and valid explicit bindings below remain owners,
+        // including while their input is paused or interrupted.
         for (const auto &binding : m_bindings)
             if (binding.name == name && ((binding.id == actual["seatId"].toString() && binding.generation == actual["generation"].toString()) ||
                 (!binding.controller.isEmpty() && binding.heartbeat.isValid() && binding.heartbeat.elapsed() <= 5000))) return false;
@@ -1720,17 +1727,47 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         return state(name);
     }
     auto &desktop = managed(name);
+    // Only explicit operator authorization/normal takeover release may renew
+    // an interrupted task. The task's restore RPC never resumes input itself.
+    const auto restoreReservedTask = [this, &name, &desktop, owner](bool authorizeRelease = false) {
+        if (!desktop.agentAllowed) return;
+        const bool humanControl = m_humanOwner && m_humanBinding.name == name;
+        if (humanControl && !authorizeRelease) return;
+        const auto actual = state(name);
+        if (actual["humanLocked"].toBool() || !actual["available"].toBool()) return;
+        const auto record = desktop.handoffs.isEmpty() ? QJsonObject{} : desktop.handoffs.last().toObject();
+        if (record["status"] == "requested" || record["status"] == "in_progress") return;
+        const auto now = QDateTime::currentMSecsSinceEpoch();
+        for (const auto &lease : m_acquisitions) {
+            if (lease["name"] != name || lease["seatId"] != desktop.id ||
+                now - lease["heartbeatAt"].toVariant().toLongLong() > 5000) continue;
+            // A resolved cooperation request still needs its task-owned resume.
+            if (record["controller"] == lease["controller"] && !record.isEmpty() &&
+                !record["restored"].toBool() && !record["resumeUnavailable"].toBool()) return;
+            if (humanControl) {
+                // Explicit reauthorization while taken over applies only after
+                // normal release; it never withdraws the person's live input.
+                m_restoreTaskOnRelease = true;
+                m_takeoverInputDecision = desktop.inputDecision;
+                m_takeoverLockEpoch = actual["lockEpoch"];
+            } else perform("resume", {{"name", name}}, nullptr, owner);
+            return;
+        }
+    };
     if (method == "allow-agent") {
         if (state(name)["humanLocked"].toBool()) fail("Unlock session before changing desktop permission");
         if (!params["allowed"].isBool()) fail("Boolean agent permission required");
         ++desktop.inputDecision;
         desktop.agentAllowed = params["allowed"].toBool();
         if (!desktop.agentAllowed) {
+            if (m_humanOwner && m_humanBinding.name == name) m_restoreTaskOnRelease = false;
             if (!(m_humanOwner && m_humanBinding.name == name)) pause(name);
             desktop.captureGrant.clear();
             revokeBindings(name);
         }
         save();
+        if (desktop.agentAllowed) restoreReservedTask(true);
+        publishTaskState(name);
         return state(name);
     }
     if (method == "detach") {
@@ -1887,12 +1924,24 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             fail("Another viewer owns human control");
         if (m_humanOwner == owner)
             return json(compositor("seat presentation " + m_presentations[owner], true)).object();
+        const auto previous = state(name);
+        bool interruptedTask = false;
+        if (desktop.agentAllowed && !previous["agentPaused"].toBool() && !previous["humanLocked"].toBool() && previous["available"].toBool())
+            for (const auto &lease : m_acquisitions)
+                if (lease["name"] == name && lease["seatId"] == desktop.id && lease["generation"] == previous["generation"] &&
+                    m_bindings.contains(lease["token"].toString()) &&
+                    QDateTime::currentMSecsSinceEpoch() - lease["heartbeatAt"].toVariant().toLongLong() <= 5000 &&
+                    lease["restoredDecision"].toVariant().toULongLong() == desktop.inputDecision && lease["restoredLockEpoch"] == previous["lockEpoch"])
+                    interruptedTask = true;
         pause(name);
         auto result = json(compositor("seat present-control " + m_presentations[owner] + " yes", true)).object();
         m_presentationStates[owner] = result;
         const auto actual = state(name);
         m_humanBinding = Binding{name, desktop.id, actual["generation"].toString(), {}, {}};
         m_humanOwner = owner;
+        m_restoreTaskOnRelease = interruptedTask;
+        m_takeoverInputDecision = desktop.inputDecision;
+        m_takeoverLockEpoch = actual["lockEpoch"];
         m_humanHeartbeat.start();
         if (!desktop.handoffs.isEmpty()) {
             const auto record = desktop.handoffs.last().toObject();
@@ -1904,9 +1953,16 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         return result;
     }
     if (method == "release") {
-        if (m_humanOwner != owner)
-            fail("This viewer does not own human control");
+        if (m_humanOwner != owner || m_humanBinding.name != name)
+            fail("This viewer does not own human control on this desktop");
+        const auto current = state(name);
+        const bool currentControl = m_humanHeartbeat.isValid() && m_humanHeartbeat.elapsed() <= 3000 &&
+            current["available"].toBool() && !current["humanLocked"].toBool() && !current["paused"].toBool() &&
+            current["controlMode"] == "human" && current["seatId"] == m_humanBinding.id && current["generation"] == m_humanBinding.generation;
+        const bool restoreTask = currentControl && m_humanRequestId.isEmpty() && m_restoreTaskOnRelease &&
+            m_takeoverInputDecision == desktop.inputDecision && m_takeoverLockEpoch == current["lockEpoch"];
         endTakeover("Human control ended");
+        if (restoreTask) restoreReservedTask();
         const auto view = json(compositor("seat presentation " + m_presentations[owner], true)).object();
         m_presentationStates[owner] = view;
         return view;

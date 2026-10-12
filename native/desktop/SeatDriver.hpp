@@ -1,7 +1,7 @@
 #pragma once
 #include <QByteArray>
 #include <QJsonObject>
-#include <QList>
+#include <QMap>
 #include <QSet>
 #include <QString>
 #include <memory>
@@ -24,6 +24,8 @@ class SeatDriver {
 
   private:
     static void global(void *, wl_registry *, uint32_t, const char *, uint32_t);
+    static void globalRemoved(void *, wl_registry *, uint32_t);
+    static void bindGlobal(void *, wl_registry *, uint32_t, const char *, uint32_t);
     void sync();
     void disconnect();
     void setKeymap(const QByteArray &);
@@ -34,8 +36,15 @@ class SeatDriver {
     wl_registry *m_registry = nullptr;
     wl_seat *m_seat = nullptr;
     wl_output *m_output = nullptr;
-    QList<wl_seat *> m_seats;
-    QList<wl_output *> m_outputs;
+    struct Global {
+        QString interface;
+        uint32_t version;
+    };
+    QMap<uint32_t, Global> m_globals;
+    QMap<uint32_t, wl_seat *> m_seats;
+    QMap<uint32_t, wl_output *> m_outputs;
+    uint32_t m_pointerManagerGlobal = 0, m_keyboardManagerGlobal = 0;
+    bool m_discovering = true, m_available = true;
     zwlr_virtual_pointer_manager_v1 *m_pointerManager = nullptr;
     zwp_virtual_keyboard_manager_v1 *m_keyboardManager = nullptr;
     zwlr_virtual_pointer_v1 *m_pointer = nullptr;
