@@ -1,36 +1,11 @@
 """Real automatic desktop allocation, shared MCP tasks and browser isolation."""
 from desktop_harness import *
+from mcp_client import MCP
+from native_viewer import NativeViewer
 from urllib.parse import quote
 import re
 ENV.pop("NO_AT_BRIDGE",None)
 
-class MCP:
- def __init__(self,label,without_session=False):
-  env=dict(ENV)
-  for key in ('CORNICE_AGENT_JOB','CORNICE_MCP_BINDING'):env.pop(key,None)
-  if without_session:env.pop('HYPRLAND_INSTANCE_SIGNATURE',None)
-  self.p=subprocess.Popen([str(PRODUCT/'bin/cornice-desktop-mcp')],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=open(BASE/(label+'.log'),'w'),text=True,start_new_session=True)
-  PROCESSES.append(self.p);self.number=0
-  self.request('initialize',{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':label,'version':'1'}})
-  self.p.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');self.p.stdin.flush()
- def send(self,method,params):
-  self.number+=1;self.p.stdin.write(json.dumps({'jsonrpc':'2.0','id':self.number,'method':method,'params':params})+'\n');self.p.stdin.flush();return self.number
- def receive(self,number):
-  while True:
-   assert select.select([self.p.stdout],[],[],35)[0],('MCP timeout',number)
-   line=self.p.stdout.readline();assert line,('MCP exited',self.p.poll())
-   value=json.loads(line)
-   if value.get('id')==number:
-    assert 'error' not in value,value
-    return value['result']
- def request(self,method,params):return self.receive(self.send(method,params))
- def call(self,name,params=None,success=True):
-  result=self.request('tools/call',{'name':name,'arguments':params or {}})
-  assert bool(result.get('isError'))!=success,(name,result)
-  return result
- def details(self,name,params=None):return self.call(name,params).get('structuredContent',{})
- def close(self):
-  if self.p.poll() is None:self.p.stdin.close();self.p.wait(timeout=8)
 
 try:
  broker=initialize()
@@ -116,13 +91,13 @@ try:
  record('operator permission off/on restores the original live task with a fresh generation; revoked permission alone cannot be bypassed')
  # Native human control shares the same reservation. Normal explicit release
  # returns it to the task; unexpected viewer loss remains interrupted.
- viewer=socket.socket(socket.AF_UNIX);viewer.settimeout(4);viewer.connect(str(broker_socket()))
- rpc(viewer,'present',{'name':first['name']})
- rpc(viewer,'takeover',{'name':first['name']})
+ viewer=NativeViewer(first["name"])
+ viewer.request('present',{'name':first['name']})
+ viewer.request('takeover',{'name':first['name']})
  taken=cli('state',first['name'])
  assert taken['occupied'] and taken['controlMode']=='human',taken
  try:
-  rpc(viewer,'release',{'name':second['name']})
+  viewer.request('release',{'name':second['name']})
   raise AssertionError('foreign desktop release unexpectedly succeeded')
  except AssertionError as error:
   assert 'does not own human control' in str(error),error
@@ -134,11 +109,11 @@ try:
  cli('allow-agent',first['name'],'off');cli('allow-agent',first['name'],'on')
  assert cli('state',first['name'])['controlMode']=='human'
  assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
- rpc(viewer,'release',{'name':first['name']})
+ viewer.request('release',{'name':first['name']})
  a.call('desktop_restore',{'desktop':first['desktop']})
  released=a.details('desktop_state',{'desktop':first['desktop']})
  assert released['occupied'] and not released['paused'] and released['generation']!=taken['generation'],released
- rpc(viewer,'takeover',{'name':first['name']})
+ viewer.request('takeover',{'name':first['name']})
  viewer.close()
  wait(lambda:cli('state',first['name'])['paused'])
  assert a.call('desktop_capture',{'desktop':first['desktop']},False)['isError']
@@ -149,9 +124,9 @@ try:
  # Manual control must not erase a separate pause that preceded takeover.
  cli('pause',first['name'])
  prior_pause=cli('state',first['name'])
- viewer=socket.socket(socket.AF_UNIX);viewer.settimeout(4);viewer.connect(str(broker_socket()))
- rpc(viewer,'present',{'name':first['name']});rpc(viewer,'takeover',{'name':first['name']})
- rpc(viewer,'release',{'name':first['name']});viewer.close()
+ viewer=NativeViewer(first["name"])
+ viewer.request('present',{'name':first['name']});viewer.request('takeover',{'name':first['name']})
+ viewer.request('release',{'name':first['name']});viewer.close()
  still_paused=cli('state',first['name'])
  assert still_paused['occupied'] and still_paused['paused'] and still_paused['generation']!=prior_pause['generation'],still_paused
  assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
@@ -162,12 +137,12 @@ try:
  # observed it. A queued normal release must not turn that into a new resume.
  raced_releases=0
  for _ in range(3):
-  viewer=socket.socket(socket.AF_UNIX);viewer.settimeout(4);viewer.connect(str(broker_socket()))
-  rpc(viewer,'present',{'name':first['name']});rpc(viewer,'takeover',{'name':first['name']})
+  viewer=NativeViewer(first["name"])
+  viewer.request('present',{'name':first['name']});viewer.request('takeover',{'name':first['name']})
   taken=cli('state',first['name'])
   ctl('seat control '+first['name']+' '+taken['seatId']+' '+taken['generation']+' pause',True)
   try:
-   rpc(viewer,'release',{'name':first['name']});raced_releases+=1
+   viewer.request('release',{'name':first['name']});raced_releases+=1
   except AssertionError as error:
    # Watchdog may win the race and retire the human owner first.
    assert 'does not own human control' in str(error),error

@@ -963,15 +963,30 @@ QJsonObject Broker::renewTaskBinding(QLocalSocket *owner) {
     auto &input=m_bindings[binding["token"].toString()];input.controller=lease["controller"].toString();input.harness=lease["harness"].toString();input.heartbeat.start();
     for(auto it=binding.begin();it!=binding.end();++it)lease[it.key()]=it.value();
     lease["restoredDecision"]=static_cast<qint64>(managed(name).inputDecision);
-    lease["restoredLockEpoch"]=state(name)["lockEpoch"];lease["heartbeatAt"]=QDateTime::currentMSecsSinceEpoch();return lease;
+    lease["heartbeatAt"]=QDateTime::currentMSecsSinceEpoch();return lease;
+}
+bool Broker::taskControlContinuous(const QJsonObject &lease, const QJsonObject &actual) const {
+    const auto name = lease["name"].toString();
+    const auto desktop = m_desktops.find(name);
+    const auto token = lease["token"].toString();
+    const auto binding = m_bindings.constFind(token);
+    const auto generation = lease["generation"].toString();
+    if (desktop == m_desktops.cend() || token.isEmpty() || binding == m_bindings.cend() || generation.isEmpty()) return false;
+    // The lock epoch covers global presentation/export changes. A daily lock
+    // can advance it without interrupting this seat's existing input grant.
+    // Only the still-live exact binding and input decision prove continuity;
+    // this check never resumes input or issues a replacement credential.
+    return binding->name == name && binding->id == desktop->second.id && binding->generation == generation &&
+        lease["seatId"].toString() == desktop->second.id && actual["seatId"].toString() == desktop->second.id &&
+        actual["generation"].toString() == generation && desktop->second.agentAllowed && actual["agentAllowed"].toBool() &&
+        actual["available"].toBool() && !actual["paused"].toBool() && !actual["agentPaused"].toBool() &&
+        lease["restoredDecision"].toVariant().toULongLong() == desktop->second.inputDecision;
 }
 QJsonObject Broker::task(const QJsonObject &request) {
     auto lease=taskLease(request);const auto name=lease.value()["name"].toString();const auto actual=state(name);
     const auto action=request["params"].toObject()["action"].toString();
     if(action=="restore") {
-        if(!m_bindings.contains(lease.value()["token"].toString()) || actual["agentPaused"].toBool() || !actual["available"].toBool() ||
-            !actual["agentAllowed"].toBool() || actual["generation"]!=lease.value()["generation"] || actual["seatId"]!=lease.value()["seatId"] ||
-            lease.value()["restoredDecision"].toVariant().toULongLong()!=managed(name).inputDecision || actual["lockEpoch"]!=lease.value()["restoredLockEpoch"])
+        if (!taskControlContinuous(lease.value(), actual))
             fail("Explicit operator restoration is required; no input was resumed");
         return {{"control",actual},{"binding",lease.value()},{"restored",true}};
     }
@@ -1071,7 +1086,6 @@ QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owne
         lease["taskToken"] = uuid() + uuid();
         lease["heartbeatAt"] = QDateTime::currentMSecsSinceEpoch();
         lease["restoredDecision"] = static_cast<qint64>(managed(name).inputDecision);
-        lease["restoredLockEpoch"] = state(name)["lockEpoch"];
         m_acquisitions[owner] = lease;
         return lease;
     } catch (...) {
@@ -1926,12 +1940,10 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             return json(compositor("seat presentation " + m_presentations[owner], true)).object();
         const auto previous = state(name);
         bool interruptedTask = false;
-        if (desktop.agentAllowed && !previous["agentPaused"].toBool() && !previous["humanLocked"].toBool() && previous["available"].toBool())
+        if (!previous["humanLocked"].toBool())
             for (const auto &lease : m_acquisitions)
-                if (lease["name"] == name && lease["seatId"] == desktop.id && lease["generation"] == previous["generation"] &&
-                    m_bindings.contains(lease["token"].toString()) &&
-                    QDateTime::currentMSecsSinceEpoch() - lease["heartbeatAt"].toVariant().toLongLong() <= 5000 &&
-                    lease["restoredDecision"].toVariant().toULongLong() == desktop.inputDecision && lease["restoredLockEpoch"] == previous["lockEpoch"])
+                if (lease["name"] == name && taskControlContinuous(lease, previous) &&
+                    QDateTime::currentMSecsSinceEpoch() - lease["heartbeatAt"].toVariant().toLongLong() <= 5000)
                     interruptedTask = true;
         pause(name);
         auto result = json(compositor("seat present-control " + m_presentations[owner] + " yes", true)).object();

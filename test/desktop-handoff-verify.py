@@ -1,34 +1,8 @@
 """Task-owned human cooperation with real MCP, native views and QML buttons."""
 from desktop_harness import *
+from mcp_client import MCP
 from cooperation_visual import visible_cooperation
 import hashlib
-class MCP:
- def __init__(self,label,without_session=False):
-  env=dict(ENV)
-  for key in ('CORNICE_AGENT_JOB','CORNICE_MCP_BINDING'):env.pop(key,None)
-  if without_session:env.pop('HYPRLAND_INSTANCE_SIGNATURE',None)
-  self.p=subprocess.Popen([str(PRODUCT/'bin/cornice-desktop-mcp')],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=open(BASE/(label+'.log'),'w'),text=True,start_new_session=True)
-  PROCESSES.append(self.p);self.number=0
-  self.request('initialize',{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':label,'version':'1'}})
-  self.p.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');self.p.stdin.flush()
- def send(self,method,params):
-  self.number+=1;self.p.stdin.write(json.dumps({'jsonrpc':'2.0','id':self.number,'method':method,'params':params})+'\n');self.p.stdin.flush();return self.number
- def receive(self,number):
-  while True:
-   assert select.select([self.p.stdout],[],[],35)[0],('MCP timeout',number)
-   line=self.p.stdout.readline();assert line,('MCP exited',self.p.poll())
-   value=json.loads(line)
-   if value.get('id')==number:
-    assert 'error' not in value,value
-    return value['result']
- def request(self,method,params):return self.receive(self.send(method,params))
- def call(self,name,params=None,success=True):
-  result=self.request('tools/call',{'name':name,'arguments':params or {}})
-  assert bool(result.get('isError'))!=success,(name,result)
-  return result
- def details(self,name,params=None):return self.call(name,params).get('structuredContent',{})
- def close(self):
-  if self.p.poll() is None:self.p.stdin.close();self.p.wait(timeout=8)
 
 def shell(*args,env=None):
     result=subprocess.run([str(PRODUCT/'bin/cornice'),*args],env=env or ENV,text=True,capture_output=True,timeout=10)

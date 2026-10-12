@@ -83,6 +83,7 @@ class Broker : public QObject {
     void retireBinding(const QString &token);
     QMap<QLocalSocket *, QJsonObject>::iterator taskLease(const QJsonObject &request);
     QJsonObject renewTaskBinding(QLocalSocket *owner);
+    bool taskControlContinuous(const QJsonObject &lease, const QJsonObject &actual) const;
     QJsonObject task(const QJsonObject &request);
     void waitTask(const QJsonObject &request, QLocalSocket *owner);
     void publishTaskState(const QString &name);

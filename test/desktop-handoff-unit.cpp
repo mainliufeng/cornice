@@ -3,6 +3,7 @@
 #include "Broker.hpp"
 #include "DesktopEndpoint.hpp"
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
@@ -80,7 +81,8 @@ class CompositorFixture {
         if (command.startsWith("seat configure ")) return object({{"configured", true}});
         if (command.startsWith("seat control ")) {
             const auto pieces = command.split(' '); auto &state = states[pieces.at(2)];
-            require(pieces.last() == "pause", "pure fixture must never submit input/resume");
+            if (pieces.last() == "resume-composed") return "test-only resume refused before Wayland construction";
+            require(pieces.last() == "pause", "pure fixture must never submit input");
             if (!state["paused"].toBool()) state["generation"] = QString::number(state["generation"].toString().toInt() + 1);
             state["paused"] = true;
             return object(state);
@@ -90,6 +92,8 @@ class CompositorFixture {
             if (takeover) states["desktop2"]["paused"] = false;
             return object({{"active", true}, {"name", "desktop2"}, {"humanControl", takeover}, {"workspace", states["desktop2"]["workspace"]}});
         }
+        if (command.startsWith("seat presentation "))
+            return object({{"active", true}, {"name", "desktop2"}, {"humanControl", false}});
         if (command.startsWith("seat create-private-output ") || command.startsWith("eval hl.monitor(")) return "ok";
         if (command.startsWith("seat create ")) {
             const auto pieces = command.split(' '); states[pieces.at(2)]["output"] = pieces.at(3); return "ok";
@@ -138,6 +142,14 @@ class CompositorFixture {
         stopping = true; thread.join();
         for (const auto fd : eventPeers) ::close(fd);
         ::close(control); ::close(events);
+    }
+    void setState(const QString &name, const QJsonObject &changes) {
+        std::lock_guard lock(mutex);
+        for (auto it = changes.begin(); it != changes.end(); ++it) states[name][it.key()] = it.value();
+    }
+    bool resumed() {
+        std::lock_guard lock(mutex);
+        return std::any_of(commands.cbegin(), commands.cend(), [](const QString &value) { return value.contains(" resume-composed"); });
     }
     void setWorkspace(const QString &name, const QString &workspace) { std::lock_guard lock(mutex); states[name]["workspace"] = workspace; }
     void setClients(const QJsonArray &value) { std::lock_guard lock(mutex); clients = value; }
@@ -264,6 +276,95 @@ class BrokerHandoffFixture {
         require(actual["paused"].toBool() && !actual["presentation"].toObject()["humanControl"].toBool(), "owner cleanup left native input active");
         require(events.size() == 3 && events.last().toObject()["status"] == "cancelled", "owner cleanup published intermediate requested state");
         std::puts("PASS task owner release cancels assistance without transient requeue and retires actual waiter");
+    }
+    void runningTask() {
+        auto &desktop = broker->m_desktops.at(target);
+        compositor->setState(target, {{"paused", false}, {"humanLockPolicy", "continue"}});
+        broker->m_acquisitions[harness->owner.get()] = {{"name", target}, {"seatId", desktop.id}, {"generation", "1"},
+            {"token", "input-secret"}, {"taskToken", "task-secret"}, {"controller", "unit-controller"}, {"harness", "unit"},
+            {"restoredDecision", static_cast<qint64>(desktop.inputDecision)}, {"restoredLockEpoch", "0"},
+            {"heartbeatAt", QDateTime::currentMSecsSinceEpoch()}};
+        broker->m_bindings["input-secret"] = Broker::Binding{target, desktop.id, "1", {}};
+        auto &binding = broker->m_bindings["input-secret"];
+        binding.controller = "unit-controller"; binding.harness = "unit"; binding.heartbeat.start();
+    }
+    void requireRestoreRejected() {
+        bool refused = false;
+        try { broker->task(request("restore")); }
+        catch (const std::exception &failure) { refused = QString::fromUtf8(failure.what()).contains("Explicit operator restoration"); }
+        require(refused && !compositor->resumed(), "interrupted or foreign task restored control");
+    }
+    void dailyLockContinuity() {
+        runningTask();
+        for (int epoch = 0; epoch <= 2; ++epoch) {
+            compositor->setState(target, {{"lockEpoch", QString::number(epoch)}, {"humanLocked", epoch == 1}, {"lockScope", "human"}});
+            const auto restored = broker->task(request("restore"));
+            require(restored["restored"].toBool() && restored["binding"].toObject()["token"] == "input-secret" &&
+                restored["binding"].toObject()["generation"] == "1", "daily lock changed or rejected the still-live task binding");
+        }
+        require(!compositor->resumed(), "daily-lock restoration granted new native input");
+        std::puts("PASS daily lock epoch 0/1/2 preserves restoration of the existing exact task grant without resume");
+    }
+    void dailyLockRelease() {
+        runningTask();
+        compositor->setState(target, {{"lockEpoch", "1"}, {"humanLocked", true}, {"lockScope", "human"}});
+        compositor->setState(target, {{"lockEpoch", "2"}, {"humanLocked", false}});
+        broker->m_presentations[human->owner.get()] = "fixture-presentation";
+        broker->perform("takeover", {{"name", target}}, nullptr, human->owner.get());
+        require(broker->m_restoreTaskOnRelease, "daily-lock epoch hid the task interrupted by normal takeover");
+        bool submitted = false;
+        try { broker->perform("release", {{"name", target}}, nullptr, human->owner.get()); }
+        catch (const std::exception &failure) { submitted = QString::fromUtf8(failure.what()).contains("test-only resume refused"); }
+        require(submitted && compositor->resumed() && !broker->m_humanOwner,
+            "normal release did not submit restoration of the task interrupted after daily unlock");
+        std::puts("PASS normal release after daily unlock submits resume; test transport deliberately refuses before Wayland/new-binding construction");
+    }
+    void continuityRejected(const QString &reason) {
+        runningTask();
+        auto &lease = broker->m_acquisitions[harness->owner.get()];
+        auto &binding = broker->m_bindings["input-secret"];
+        auto &desktop = broker->m_desktops.at(target);
+        if (reason == "full") compositor->setState(target, {{"humanLocked", true}, {"lockScope", "session"}, {"lockEpoch", "1"}, {"generation", "2"}, {"paused", true}});
+        else if (reason == "full-unlocked") compositor->setState(target, {{"humanLocked", false}, {"lockEpoch", "2"}, {"generation", "2"}, {"paused", true}});
+        else if (reason == "full-resumed") compositor->setState(target, {{"humanLocked", false}, {"lockEpoch", "2"}, {"generation", "2"}, {"paused", false}});
+        else if (reason == "pause") compositor->setState(target, {{"generation", "2"}, {"paused", true}});
+        else if (reason == "native-paused") compositor->setState(target, {{"paused", true}});
+        else if (reason == "unavailable") compositor->setState(target, {{"available", false}});
+        else if (reason == "permission") desktop.agentAllowed = false;
+        else if (reason == "decision") ++desktop.inputDecision;
+        else if (reason == "binding-name") binding.name = "main";
+        else if (reason == "binding-id") binding.id = "foreign-seat";
+        else if (reason == "binding-generation") binding.generation = "2";
+        else if (reason == "missing-binding") broker->m_bindings.remove("input-secret");
+        else if (reason == "lease-generation") lease["generation"] = "2";
+        else if (reason == "lease-seat") lease["seatId"] = "foreign-seat";
+        else if (reason == "viewer-loss" || reason == "human-control") {
+            broker->m_presentations[human->owner.get()] = "fixture-presentation";
+            broker->perform("takeover", {{"name", target}}, nullptr, human->owner.get());
+            if (reason == "viewer-loss") broker->endTakeover("Viewer disconnected");
+        } else throw std::runtime_error("unknown continuity fixture case");
+        if (reason == "lease-seat") {
+            bool refused = false;
+            try { broker->task(request("restore")); }
+            catch (const std::exception &failure) { refused = QString::fromUtf8(failure.what()).contains("Desktop lifecycle changed"); }
+            require(refused && !compositor->resumed(), "foreign lease seat restored control");
+        } else requireRestoreRejected();
+        std::printf("PASS task continuity rejects %s without a new input grant\n", qPrintable(reason));
+    }
+    void takeoverStillGuarded(const QString &reason) {
+        runningTask();
+        if (reason == "locked") compositor->setState(target, {{"humanLocked", true}, {"lockScope", "human"}, {"lockEpoch", "1"}});
+        else if (reason == "expired") broker->m_acquisitions[harness->owner.get()]["heartbeatAt"] = QDateTime::currentMSecsSinceEpoch() - 6000;
+        else if (reason != "during-lock") throw std::runtime_error("unknown takeover fixture case");
+        broker->m_presentations[human->owner.get()] = "fixture-presentation";
+        broker->perform("takeover", {{"name", target}}, nullptr, human->owner.get());
+        if (reason == "during-lock") {
+            require(broker->m_restoreTaskOnRelease, "running task was not remembered before takeover");
+            compositor->setState(target, {{"lockEpoch", "1"}});
+        } else require(!broker->m_restoreTaskOnRelease, "locked or expired task became eligible for automatic release restoration");
+        broker->perform("release", {{"name", target}}, nullptr, human->owner.get());
+        require(!compositor->resumed(), "lock or expired task bypassed the takeover release boundary");
+        std::printf("PASS takeover restoration retains %s boundary\n", qPrintable(reason));
     }
     void retained() {
         QJsonArray clients;
@@ -411,6 +512,12 @@ int main(int argc, char **argv) {
         run([](auto &fixture) { fixture.resolve("cancelled"); });
         run([](auto &fixture) { fixture.interrupted(); });
         run([](auto &fixture) { fixture.disconnected(); });
+        run([](auto &fixture) { fixture.dailyLockContinuity(); });
+        run([](auto &fixture) { fixture.dailyLockRelease(); });
+        for (const auto &reason : {"full", "full-unlocked", "full-resumed", "pause", "native-paused", "unavailable", "permission", "decision", "binding-name", "binding-id", "binding-generation", "missing-binding", "lease-generation", "lease-seat", "viewer-loss", "human-control"})
+            run([reason](auto &fixture) { fixture.continuityRejected(reason); });
+        for (const auto &reason : {"locked", "expired", "during-lock"})
+            run([reason](auto &fixture) { fixture.takeoverStillGuarded(reason); });
         run([](auto &fixture) { fixture.retained(); });
         run([](auto &fixture) { fixture.sharedWorkspace(); });
         run([](auto &fixture) { fixture.endpointGolden(); });
