@@ -42,14 +42,14 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSE
   protocols/hyprland-lock-scope-v1.xml protocols/ext-session-lock-v1.xml
   DESTINATION native/licenses)
 
-add_executable(cornice-human-lock ../lock/main.cpp hyprland-lock-scope-v1.c hyprland-lock-scope-v1.h ext-session-lock-v1.c ext-session-lock-v1.h)
+add_executable(cornice-human-lock ../lock/main.cpp HyprlandAdapter.cpp hyprland-lock-scope-v1.c hyprland-lock-scope-v1.h ext-session-lock-v1.c ext-session-lock-v1.h)
 target_include_directories(cornice-human-lock PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(cornice-human-lock PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Qml Qt6::Network PkgConfig::WAYLAND PkgConfig::XKB PkgConfig::PAM)
 qt_add_resources(cornice-human-lock lock_ui PREFIX /cornice/lock BASE ../lock FILES ../lock/HumanLock.qml)
 qt_add_resources(cornice-human-lock lock_content PREFIX /cornice/lock BASE ../../shell/Commons FILES ../../shell/Commons/LockContent.qml)
 install(TARGETS cornice-human-lock RUNTIME DESTINATION native/bin)
 
-add_executable(cornice-session-guard ../session/main.cpp hyprland-lock-scope-v1.c hyprland-lock-scope-v1.h)
+add_executable(cornice-session-guard ../session/main.cpp HyprlandAdapter.cpp hyprland-lock-scope-v1.c hyprland-lock-scope-v1.h)
 target_include_directories(cornice-session-guard PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(cornice-session-guard PRIVATE Qt6::Core Qt6::Network Qt6::DBus PkgConfig::WAYLAND)
 install(TARGETS cornice-session-guard RUNTIME DESTINATION native/bin)
@@ -72,3 +72,8 @@ list(REMOVE_ITEM HANDOFF_BROKER_SOURCES main.cpp)
 add_executable(cornice-handoff-unit EXCLUDE_FROM_ALL ../../test/desktop-handoff-unit.cpp ${HANDOFF_BROKER_SOURCES})
 target_include_directories(cornice-handoff-unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(cornice-handoff-unit PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::WebSockets Qt6::DBus PkgConfig::WAYLAND PkgConfig::XKB)
+
+# IPC discovery and explicit Wayland connection selection; never installed.
+add_executable(cornice-management-display-unit EXCLUDE_FROM_ALL ../../test/management-display-unit.cpp HyprlandAdapter.cpp)
+target_include_directories(cornice-management-display-unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(cornice-management-display-unit PRIVATE Qt6::Core Qt6::Network PkgConfig::WAYLAND)

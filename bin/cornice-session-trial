@@ -178,6 +178,11 @@ def prepare(args):
         configuration = configuration.replace(str(Path.home() / ".local/bin/cornice"), str(product / "bin/cornice"))
         configuration = configuration.replace('\\"$HOME/.local/bin/cornice\\"', '\\"' + str(product / "bin/cornice") + '\\"')
         configuration = configuration.replace("~/.config/hypr/scripts/cycle-focus-fullscreen.sh", str(product / "bin/cornice-cycle-focus"))
+        # Hyprland's standard orphan-lock recovery policy is opt-in. Enable it
+        # only in this candidate snapshot so a crashed locker can show its
+        # authentication UI again; restoring the lock never authenticates or unlocks.
+        configuration += "\n-- Candidate-only recovery of the session-lock authentication UI.\n"
+        configuration += "hl.config({misc={allow_session_lock_restore=true}})\n"
         atomic(release / "hyprland.lua", configuration)
         commands = read(args.autostart) if args.autostart else []
         if not isinstance(commands, list) or not all(isinstance(c, str) for c in commands):

@@ -2,6 +2,7 @@
 from desktop_harness import *
 from cdp_client import Cdp
 import urllib.request
+import re
 from PIL import Image
 
 
@@ -21,6 +22,70 @@ def provider_secure(process, event_name):
                 return True
         return False
     wait(acknowledged, 10)
+
+
+def secondary_process(args, event_name, log_name, env=None):
+    """Real secondary display and inherited FD must not select lock ownership."""
+    display = cli("state", "continuing")["display"]
+    assert display != ENV["WAYLAND_DISPLAY"], display
+    address = pathlib.Path(display)
+    if not address.is_absolute():
+        address = RT / address
+    assert address.is_relative_to(RT), address
+    with socket.socket(socket.AF_UNIX) as inherited:
+        inherited.connect(str(address))
+        child_env = (env or ENV) | {"WAYLAND_DISPLAY": display,
+                                   "WAYLAND_SOCKET": str(inherited.fileno()), "WAYLAND_DEBUG": "client"}
+        process = subprocess.Popen(args, env=child_env, pass_fds=(inherited.fileno(),),
+            stdin=subprocess.PIPE, stdout=open(BASE / event_name, "w"), stderr=open(BASE / log_name, "w"),
+            start_new_session=True, text=True)
+    PROCESSES.append(process)
+    return process
+
+
+def provider_output_coverage(process, event_name, log_name, scope):
+    """Require the provider's own surfaces; secure can initially mean failsafe."""
+    provider_secure(process, event_name)
+    monitors = {monitor["name"] for monitor in ctl("monitors", True)}
+    private = set(ctl("seat private-outputs", True))
+    test_outputs = {cli("state", name)["output"] for name in ("continuing", "continuing2", "pausing")}
+    assert len(test_outputs) == 3 and test_outputs <= private and private < monitors, (test_outputs, private, monitors)
+    expected = monitors if scope == "session" else monitors - private
+    state = ctl("seat lock-state", True)
+    assert state["secure"] and state["scope"] == scope, state
+    protected = state["protectedOutputs"]
+    assert {output["name"] for output in protected} == expected, (expected, protected)
+    assert len(protected) == len(expected) and all(output["covered"] for output in protected), protected
+    protocol = "ext_session_lock" if scope == "session" else "hyprland_lock_scope"
+
+    def presented():
+        assert process.poll() is None, (event_name, process.returncode)
+        trace = (BASE / log_name).read_text()
+        outputs = dict(re.findall(r'wl_output[#@](\d+)\.name\("([^"]+)"\)', trace))
+        surfaces = re.findall(protocol + r'_v1[#@]\d+\.get_lock_surface\(new id ' + protocol +
+                              r'_surface_v1[#@](\d+), wl_surface[#@](\d+), wl_output[#@](\d+)\)', trace)
+        names = [outputs.get(output) for surface, wl_surface, output in surfaces]
+        if set(outputs.values()) != monitors or set(names) != expected or len(names) != len(expected):
+            return False
+        if scope != "session":
+            excluded = re.findall(r'hyprland_lock_scope_v1[#@]\d+\.exclude_output\(wl_output[#@](\d+)\)', trace)
+            if {outputs.get(output) for output in excluded} != private:
+                return False
+        for surface, wl_surface, output in surfaces:
+            configured = set(re.findall(protocol + r'_surface_v1[#@]' + surface + r'\.configure\((\d+),', trace))
+            acknowledged = set(re.findall(protocol + r'_surface_v1[#@]' + surface + r'\.ack_configure\((\d+)\)', trace))
+            if not configured.intersection(acknowledged):
+                return False
+            # A configured surface without a rendered buffer leaves the
+            # compositor's black failsafe in place, which is not native lock UI.
+            if not re.search(r'wl_surface[#@]' + wl_surface + r'\.attach\(wl_buffer[#@]\d+,', trace):
+                return False
+            if not re.search(r'wl_surface[#@]' + wl_surface + r'\.commit\(\)', trace):
+                return False
+        return True
+
+    wait(presented, 10)
+    record(scope + " native provider enumerates all outputs and configures/acks/presents every protected output")
 
 
 def unlock_provider(process, event_name):
@@ -90,15 +155,16 @@ try:
     appearance = json.loads((PRODUCT / "themes/mono/theme.json").read_text())
     appearance = appearance["colors"] | appearance["metrics"] | {
         "backgroundSource": (PRODUCT / "wallpapers/default.png").as_uri(), "blur": 1, "language": "zh-CN"}
-    locker = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--appearance", json.dumps(appearance), "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"],
-        env=ENV | {"WAYLAND_DEBUG": "client"}, stdin=subprocess.PIPE, stdout=open(BASE / "lock-events", "w"), stderr=open(BASE / "lock.log", "w"), start_new_session=True, text=True)
-    PROCESSES.append(locker)
+    assert "management-display-v1" in ctl("seat capabilities", True)["features"]
+    locker = secondary_process([str(PRODUCT / "bin/cornice-human-lock"), "--appearance", json.dumps(appearance), "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"],
+        "lock-events", "lock.log")
     try:
         wait(lambda: ctl("seat lock-state", True)["secure"], 10)
     except RuntimeError:
         print("lock state", ctl("seat lock-state", True), "provider exit", locker.poll(), flush=True)
         subprocess.run(["grim", "-o", "human", str(BASE / "lock-timeout.png")], env=ENV, timeout=4)
         raise
+    provider_output_coverage(locker, "lock-events", "lock.log", "scoped")
     assert cli("state", "continuing")["available"] and not cli("state", "continuing")["paused"]
     assert cli("state", "pausing")["paused"]
     assert cdp.call("Runtime.evaluate", {"expression": "document.body.textContent='locked CDP'; document.body.textContent", "returnByValue": True}, session)["result"]["value"] == "locked CDP"
@@ -183,11 +249,11 @@ try:
     first = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--pam-service", "permit", "--pam-directory", str(pam)], env=ENV,
         stdin=subprocess.PIPE, stdout=open(BASE / "upgrade-human-events", "w"), stderr=open(BASE / "upgrade-human.log", "w"), start_new_session=True)
     PROCESSES.append(first); wait(lambda: ctl("seat lock-state", True)["secure"])
-    full = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--scope", "session", "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"], env=ENV,
-        stdin=subprocess.PIPE, stdout=open(BASE / "full-events", "w"), stderr=open(BASE / "full.log", "w"), start_new_session=True, text=True)
-    PROCESSES.append(full)
+    full = secondary_process([str(PRODUCT / "bin/cornice-human-lock"), "--scope", "session", "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"],
+        "full-events", "full.log")
     wait(lambda: ctl("seat lock-state", True)["scope"] == "session" and ctl("seat lock-state", True)["secure"])
     provider_secure(full, "full-events")
+    provider_output_coverage(full, "full-events", "full.log", "session")
     first.wait(timeout=5); assert first.returncode == 0
     assert all(cli("state", name)["paused"] for name in ("continuing", "continuing2", "pausing"))
     assert "revoked" in tool(binding, "capture", succeeds=False).lower()
@@ -210,6 +276,12 @@ try:
     assert all(cli("state", name)["paused"] for name in ("continuing", "continuing2", "pausing"))
     record("human-to-full upgrade is secure and revokes every seat; unlock never restores agents")
     # Failed PAM cannot unlock, and a provider crash retains protection.
+    # Exercise the upstream restore policy explicitly in this private instance;
+    # changing the production default would hide a real compositor boundary.
+    ok('eval hl.config({misc={allow_session_lock_restore=false}})')
+    cli("resume", "continuing")
+    orphan_binding = bind("continuing")
+    tool(orphan_binding, "focus", {"windowId": target})
     (pam / "deny").write_text("auth required pam_deny.so\naccount required pam_permit.so\n")
     deny = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--pam-service", "deny", "--pam-directory", str(pam)], env=ENV | {"WAYLAND_DEBUG": "client"},
         stdin=subprocess.PIPE, stdout=open(BASE / "deny-events", "w"), stderr=open(BASE / "deny.log", "w"), start_new_session=True)
@@ -220,13 +292,40 @@ try:
         assert select.select([human.stdout], [], [], 5)[0] and human.stdout.readline().strip() == "done"
     wait(lambda: 'authentication-failed' in (BASE / "deny-events").read_text())
     assert ctl("seat lock-state", True)["secure"]
+    orphan_frame = tool(orphan_binding, "capture")
+    agent_before_loss = (BASE / "continuing.txt").read_text()
+    human_before_loss = (BASE / "human.txt").read_text()
     os.kill(deny.pid, signal.SIGKILL); deny.wait()
     wait(lambda: ctl("seat lock-state", True)["phase"] == "orphaned")
+    orphaned = ctl("seat lock-state", True)
+    # secure describes compositor coverage, including a retained failsafe;
+    # orphan ownership and input revocation are the invariants after a crash.
+    assert orphaned["locked"] and orphaned["scope"] == "session" and orphaned["phase"] == "orphaned" and not orphaned["ownerConnected"], orphaned
+    assert cli("state", "continuing")["paused"]
+    tool(orphan_binding, "input", {"action": "text", "text": "ORPHANED", "frameId": orphan_frame["frameId"]}, succeeds=False)
+    human.stdin.write("type ORPHANED\n"); human.stdin.flush()
+    assert select.select([human.stdout], [], [], 5)[0] and human.stdout.readline().strip() == "done"
+    time.sleep(.1)
+    assert (BASE / "continuing.txt").read_text() == agent_before_loss
+    assert (BASE / "human.txt").read_text() == human_before_loss
+    refused = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--scope", "session", "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"], env=ENV | {"WAYLAND_DEBUG": "client"},
+        stdin=subprocess.PIPE, stdout=open(BASE / "restore-refused-events", "w"), stderr=open(BASE / "restore-refused.log", "w"), start_new_session=True, text=True)
+    PROCESSES.append(refused)
+    refused.wait(timeout=5)
+    assert refused.returncode == 0, refused.returncode
+    refused_events = [json.loads(line) for line in (BASE / "restore-refused-events").read_text().splitlines()]
+    assert any(event["event"] == "finished" for event in refused_events), refused_events
+    assert not any(event.get("secure") is True for event in refused_events), refused_events
+    orphaned = ctl("seat lock-state", True)
+    assert orphaned["locked"] and orphaned["scope"] == "session" and orphaned["phase"] == "orphaned" and not orphaned["ownerConnected"], orphaned
+    assert all(cli("state", name)["paused"] for name in ("continuing", "continuing2", "pausing"))
+    record("upstream restore disabled refuses a new native owner; orphaned full protection blocks primary and agent input")
+    ok('eval hl.config({misc={allow_session_lock_restore=true}})')
     recovery = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--scope", "session", "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"], env=ENV,
         stdin=subprocess.PIPE, stdout=open(BASE / "recovery-events", "w"), stderr=open(BASE / "recovery.log", "w"), start_new_session=True, text=True)
     PROCESSES.append(recovery); wait(lambda: ctl("seat lock-state", True)["secure"] and ctl("seat lock-state", True)["ownerConnected"])
     unlock_provider(recovery, "recovery-events")
-    record("real PAM failure keeps secure lock; killed lock owner remains locked; a new native owner recovers")
+    record("real PAM failure keeps secure lock; enabling upstream restore allows a new native owner to recover")
 
     # Use a private SYSTEM bus: fake logind performs no physical sleep, but the
     # helper passes real UNIX inhibitor FDs and checks the actual compositor.
@@ -239,9 +338,12 @@ try:
     def events(): return [json.loads(line) for line in (BASE / "logind-events").read_text().splitlines()]
     wait(lambda: any(e["event"] == "ready" for e in events()))
     def new_guard(name):
-        process = subprocess.Popen([str(PRODUCT / "bin/cornice-session-guard")], env=guard_env, stdin=subprocess.PIPE,
-            stdout=open(BASE / (name + "-events"), "w"), stderr=open(BASE / (name + ".log"), "w"), start_new_session=True, text=True)
-        PROCESSES.append(process); wait(lambda: 'inhibitor-ready' in (BASE / (name + "-events")).read_text()); return process
+        process = secondary_process([str(PRODUCT / "bin/cornice-session-guard")], name + "-events", name + ".log", guard_env)
+        wait(lambda: 'inhibitor-ready' in (BASE / (name + "-events")).read_text())
+        # The real guardian must bind the management-only protocol even when
+        # launched by a secondary app with its existing Wayland FD inherited.
+        wait(lambda: re.search(r'hyprland_lock_scope_manager_v1[#@]\d+\.get_guard\(new id hyprland_lock_guard_v1[#@]\d+\)', (BASE / (name + ".log")).read_text()))
+        return process
     guard = new_guard("guardian")
     cli("resume", "continuing")
     lost = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--pam-service", "permit", "--pam-directory", str(pam)], env=ENV,

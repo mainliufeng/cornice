@@ -1,3 +1,4 @@
+#include "../desktop/HyprlandAdapter.hpp"
 #include "hyprland-lock-scope-v1.h"
 #include <QCoreApplication>
 #include <QDBusConnection>
@@ -14,6 +15,7 @@
 #include <QTimer>
 #include <QVariantMap>
 #include <cstdio>
+#include <exception>
 #include <cstring>
 #include <unistd.h>
 #include <wayland-client.h>
@@ -31,7 +33,13 @@ public:
       wl_display_disconnect(display);
   }
   bool supervise() {
-    display = wl_display_connect(nullptr);
+    try {
+      display = HyprlandAdapter(qEnvironmentVariable("HYPRLAND_INSTANCE_SIGNATURE"))
+                    .connectManagementDisplay();
+    } catch (const std::exception &error) {
+      fprintf(stderr, "Session guard management connection failed: %s\n", error.what());
+      return false;
+    }
     if (!display)
       return false;
     auto *registry = wl_display_get_registry(display);

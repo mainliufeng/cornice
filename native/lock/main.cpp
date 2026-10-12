@@ -1,3 +1,4 @@
+#include "../desktop/HyprlandAdapter.hpp"
 #include "Background.hpp"
 #include "hyprland-lock-scope-v1.h"
 #include "ext-session-lock-v1.h"
@@ -23,6 +24,7 @@
 #include <QSocketNotifier>
 #include <QTimer>
 #include <cstdio>
+#include <exception>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -451,7 +453,13 @@ public:
     hyprland_lock_scope_surface_v1_add_listener(o->lockSurface, &listener, o);
   }
   bool start() {
-    display = wl_display_connect(nullptr);
+    try {
+      display = HyprlandAdapter(qEnvironmentVariable("HYPRLAND_INSTANCE_SIGNATURE"))
+                    .connectManagementDisplay();
+    } catch (const std::exception &error) {
+      fprintf(stderr, "Lock management connection failed: %s\n", error.what());
+      return false;
+    }
     if (!display)
       return false;
     auto registry = wl_display_get_registry(display);

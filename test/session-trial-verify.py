@@ -72,7 +72,7 @@ try:
         "dimAc": 0, "dimBattery": 0, "lockOnSleep": False, "lockOnLockSignal": False, "lockOnLidClose": False}}))
     configuration = BASE / "trial.lua"
     configuration.write_text('''hl.monitor({output="",mode="1280x800",position="auto",scale=1})
-hl.config({animations={enabled=false},xwayland={enabled=true},misc={disable_hyprland_logo=true,disable_splash_rendering=true,force_default_wallpaper=0}})
+hl.config({animations={enabled=false},xwayland={enabled=true},misc={disable_hyprland_logo=true,disable_splash_rendering=true,force_default_wallpaper=0,allow_session_lock_restore=false}})
 hl.on("hyprland.start", function() hl.exec_cmd("/usr/bin/hyprctl output create headless trial") end)
 hl.env("QT_IM_MODULE", "fcitx")
 hl.env("GTK_IM_MODULE", "fcitx")
@@ -110,6 +110,10 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     release = pathlib.Path(prepared["prepared"])
     assert not status()["armed"] and settings.read_bytes() == original_settings
     trial_configuration = (release / "hyprland.lua").read_text()
+    assert trial_configuration.endswith("hl.config({misc={allow_session_lock_restore=true}})\n")
+    assert "allow_session_lock_restore=false" in original_configuration
+    assert configuration.read_text() == original_configuration
+    record("prepare explicitly opts the candidate into standard orphan-lock UI restoration while preserving the original disabled policy")
     for message in ("mfact -0.025", "mfact +0.025", "addmaster", "removemaster", "splitratio -0.025", "splitratio +0.025", "mfact exact 0.55"):
         assert 'hl.dsp.layout(' + json.dumps(message) + ')' in trial_configuration, message
     for command in ("~/.config/hypr/scripts/layoutmsg-active.sh mfact -0.025; true", "~/.config/hypr/scripts/unrelated.sh mfact +0.025"):
@@ -168,6 +172,14 @@ hl.bind("SUPER + ALT + l", hl.dsp.exec_cmd("~/.config/hypr/scripts/unrelated.sh 
     assert not pathlib.Path(info['run'], 'launch-environment').exists()
     record("supervisor exports actual Lua application environment; only Cornice Qt selects native Wayland IME and the temporary export is removed")
     selected = TEST_ENV | {"HYPRLAND_INSTANCE_SIGNATURE": info["instance"], "WAYLAND_DISPLAY": info["display"]}
+    lock_restore_json = subprocess.check_output(
+        ["/usr/bin/hyprctl", "-j", "getoption", "misc:allow_session_lock_restore"], env=selected, text=True, timeout=5)
+    (BASE / "trial-session-lock-restore-option.json").write_text(lock_restore_json)
+    lock_restore_option = json.loads(lock_restore_json)
+    assert lock_restore_option["option"] == "misc:allow_session_lock_restore", lock_restore_option
+    assert lock_restore_option["bool"] is True, lock_restore_option
+    assert configuration.read_text() == original_configuration
+    record("the real candidate compositor enables standard session-lock restoration without changing the source configuration")
     cli_path = release / "cornice/bin/cornice"
     desktops = json.loads(subprocess.check_output([str(cli_path), "desktop", "list"],
         env=selected | {"CORNICE_PATH": str(release / "cornice")}, text=True))["desktops"]

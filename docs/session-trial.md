@@ -31,6 +31,18 @@ Chrome 在配置副本中使用 Wayland 原生缩放，移除额外的固定缩�
 Fcitx 配置也独立复制；旧 X11 配置的 `Sans 24` 在试运行副本中改为 `Sans 12`，
 配合 Wayland 的输出缩放。原始配置与其他自定义字号保留。
 
+Cornice 恢复崩溃后遗留的全会话锁时，遵循 Hyprland 标准策略
+`misc.allow_session_lock_restore`；Hyprland 默认值为 `false`，关闭时拒绝替换遗留锁的
+锁屏客户端。`prepare` 在候选快照的 `hyprland.lua` 末尾明确添加：
+
+```lua
+hl.config({misc={allow_session_lock_restore=true}})
+```
+
+这仅允许新的锁屏客户端重新展示认证界面，会话继续保持锁定；必须通过认证才能解锁，
+恢复不会认证用户或开放桌面。该配置只写入新候选快照，不修改原用户 Lua、dotfiles、
+稳定会话或已经封存的旧快照；旧候选要获得该策略需重新 `prepare`。
+
 需要试用时执行：
 
 ```sh

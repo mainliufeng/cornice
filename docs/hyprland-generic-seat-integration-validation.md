@@ -37,7 +37,33 @@ overlay 规则由实际客户端 PID 和 namespace 匹配，并受配置 lease �
 
 Cornice 日常锁选择允许继续集合，实体输入仍锁住；睡眠前升级到标准完整锁并等待 secure。完整 `ext-session-lock-v1` 优先，撤销全部控制/导出；unlock 不自动恢复旧授权。锁客户端或 guardian 死亡升级为孤立完整锁，Cornice 恢复认证界面，不能自动解锁或恢复后台输入。
 
-## 验证记录
+## 管理 Wayland 连接（2026-10-12）
+
+原生锁屏 provider 与 session guardian 共用 HyprlandAdapter 的管理连接入口。先检查
+`management-display-v1`，再调用 `seat management-display`，显式连接返回的 UNIX socket；
+不依赖启动进程的 `WAYLAND_DISPLAY` 或继承的 `WAYLAND_SOCKET`。管理连接可以枚举
+所有私有输出，输入仍来自原生主 seat。日常锁明确排除私有输出，全会话锁为所有输出
+创建标准锁 surface。普通应用继续使用原来的显示连接，没有扩大其输出可见范围。
+
+能力已经声明时，IPC、回复或管理 socket 出错直接失败，不能悄悄回退到缺少私有输出的
+普通连接。没有管理能力的合成器保留既有连接与标准锁路径；没有新增常驻服务或外部依赖。
+
+锁屏失联后的认证恢复遵循 Hyprland 标准 `misc.allow_session_lock_restore` 策略，
+不在锁客户端中隐式更改 compositor 配置。Cornice 的不可变候选会话明确开启该选项；
+普通安装的配置 snippet 给出相同声明。关闭时，恢复请求被拒绝且完整锁保持生效。
+
+针对性复现：构建 `cornice-management-display-unit` 并执行，然后用下方隔离入口运行
+`human-lock-verify.py`。真实回归从额外桌面启动 provider/guardian，同时继承该桌面的
+Wayland FD，逐输出验证 scope、surface、configure/ack、buffer 提交以及锁屏输入。
+本次全新构建与 CMake 安装通过；管理连接单测 26/26，真实锁屏
+回归 20 项、候选会话回归 38 项均通过。核对了实际中文认证 UI、
+全部输出覆盖、原生主键盘输入，以及锁恢复策略关闭/开启两种分支。隔离测试固定两颗
+CPU，继续保留 200% CPU 配额、3 GiB 内存与 512 个任务上限。睡眠检查通过私有 logind
+测试服务执行，未让真实机器睡眠。
+
+本次只修改特性分支，不替换运行中的会话；以下 2026-10-09 数据为历史验收记录。
+
+## 历史验证记录（2026-10-09）
 
 真实嵌套 Mutter/Hyprland、GTK/Chrome/Quickshell、Wayland 虚拟输入及原生锁客户端运行在隔离设备/PID/网络/HOME/DBus 的环境里；没有操作当前用户窗口。
 
