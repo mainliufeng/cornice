@@ -36,7 +36,7 @@ def geometry(prefix):
 
 
 def focus_cycles(seat=None):
-    for mode, code in ((0, 49), (1, 50), (2, 33)):
+    for mode, code in ((1, 50), (2, 33), (0, 49)):
         shortcut(49)  # Return to ordinary tiling before setting the next mode.
         wait(lambda: current(seat)['fullscreen'] == 0)
         shortcut(code)
@@ -44,8 +44,12 @@ def focus_cycles(seat=None):
         original = current(seat)['address']
         modes = {'seat': seat or 'human', 'mode': mode, 'next': [], 'prev': []}
         for direction, code in (('next', 36), ('prev', 37)):
+            # Exercise a cold fullscreen cache in both directions, rather than
+            # relying on an earlier tiled cycle to have saved window positions.
+            cache = RT / (f"hypr-cycle-group-{os.getuid()}" + (f"-{seat}" if seat else "") + ".json")
+            cache.unlink(missing_ok=True)
             visited = set()
-            for _ in range(3):
+            for _ in range(4):
                 before = current(seat)['address']
                 shortcut(code)
                 try:
@@ -57,11 +61,51 @@ def focus_cycles(seat=None):
                 assert all(item['fullscreen'] == 0 for item in ctl('clients', True) if item['workspace']['name'] == after['workspace']['name'] and item['address'] != after['address'])
                 if seat:
                     assert ctl('activewindow', True)['address'] == human['window']
-            assert len(visited) == 3 and current(seat)['address'] == original, modes
+            assert len(visited) == 4 and current(seat)['address'] == original, modes
         results.append(modes)
-        record(f"{seat or 'human'} physical Super+J/K production helper cycles all three windows next/prev and preserves mode {mode}")
+        record(f"{seat or 'human'} physical Super+J/K production helper cycles all four windows next/prev from a cold cache and preserves mode {mode}")
     shortcut(49)
     wait(lambda: current(seat)['fullscreen'] == 0)
+
+
+def replace_cycle_bindings(entries, receipt):
+    # Binding arguments are opaque Lua dispatcher handles. Compare flags and
+    # unaffected bindings, then use physical keys to prove which path executes.
+    def selected(bindings):
+        return [item for item in bindings if item['key'].lower() in ('j', 'k') and item['modmask'] == 64 and not item['submap']]
+
+    def unrelated(bindings):
+        return sorted((json.dumps(item, sort_keys=True) for item in bindings if item not in selected(bindings)))
+
+    before = ctl('binds', True)
+    old = selected(before)
+    assert len(old) == 2 and {item['key'].lower() for item in old} == {'j', 'k'}, old
+    assert all(item['dispatcher'] == 'HL.Dispatcher(exec_cmd)' for item in old), old
+    flags = sorted(json.dumps({key: value for key, value in item.items() if key != 'arg'}, sort_keys=True) for item in old)
+    lua_entries = '{' + ','.join('{key=' + json.dumps(entry['key']) + ',old=' + json.dumps(entry['old']) + ',new=' + json.dumps(entry['new']) + '}' for entry in entries) + '}'
+    for fail in (True, False):
+        code = 'local entries=' + lua_entries + '; local function apply(field) for _,entry in ipairs(entries) do hl.unbind(entry.key) end; for index,entry in ipairs(entries) do assert(hl.bind(entry.key,hl.dsp.exec_cmd(entry[field]),{})); '
+        if fail:
+            code += 'if field=="new" and index==1 then error("injected-bind-failure") end; '
+        code += 'end end; local success,reason=xpcall(function() apply("new") end,function(err) return tostring(err) end); if not success then apply("old") end; '
+        code += 'assert(success==' + ('false' if fail else 'true') + ',reason); '
+        if fail:
+            code += 'assert(string.find(reason,"injected-bind-failure",1,true)); '
+        ok('eval ' + code)
+        after = ctl('binds', True)
+        current_bindings = selected(after)
+        assert len(current_bindings) == 2, current_bindings
+        assert sorted(json.dumps({key: value for key, value in item.items() if key != 'arg'}, sort_keys=True) for item in current_bindings) == flags
+        assert unrelated(after) == unrelated(before)
+        origin = current()['address']
+        receipt.unlink(missing_ok=True)
+        shortcut(36)
+        wait(lambda: current()['address'] != origin)
+        shortcut(37)
+        wait(lambda: current()['address'] == origin)
+        assert receipt.read_text().splitlines() == ([('old' if fail else 'new') + ':next', ('old' if fail else 'new') + ':prev'])
+        record('Lua cycle binding ' + ('partial replacement failure restores both original helper paths' if fail else 'replacement invokes both new helper paths') + ' and preserves H/L, modified keys and resize submap')
+    results.append({'bindingReplacement': 'passed', 'failureRollback': 'passed', 'preservedOtherBindings': len(before) - 2})
 
 
 def widgets_settled(prefix):
@@ -100,9 +144,22 @@ try:
     ENV['PATH'] = str(FORK / 'build-agent-session/hyprctl') + os.pathsep + ENV['PATH']
     initialize()
     ok('eval hl.config({general={layout="master",gaps_in=0,gaps_out=0,border_size=0},master={mfact=0.5,orientation="left",special_scale_factor=1},misc={on_focus_under_fullscreen=2}})')
+    helper_receipt = BASE / 'cycle-helper-paths.txt'
+    helper_paths = {}
+    for label in ('old', 'new'):
+        helper = BASE / (label + '-cycle-focus')
+        helper.write_text('#!/usr/bin/env bash\nprintf ' + shlex.quote(label + ':%s\n') + ' "$1" >> ' + shlex.quote(str(helper_receipt)) + '\nexec ' + shlex.quote(str(PRODUCT / 'bin/cornice-cycle-focus')) + ' "$@"\n')
+        helper.chmod(0o755)
+        helper_paths[label] = helper
+    cycle_bindings = []
     for key, direction in (('j', 'next'), ('k', 'prev')):
-        command = shlex.join([str(PRODUCT / 'bin/cornice-cycle-focus'), direction])
-        ok('eval hl.bind("SUPER + ' + key + '",hl.dsp.exec_cmd(' + json.dumps(command) + '),{})')
+        entry = {'key': 'SUPER + ' + key, 'old': shlex.join([str(helper_paths['old']), direction]), 'new': shlex.join([str(helper_paths['new']), direction])}
+        cycle_bindings.append(entry)
+        ok('eval assert(hl.bind(' + json.dumps(entry['key']) + ',hl.dsp.exec_cmd(' + json.dumps(entry['old']) + '),{}))')
+        for modifier in ('SHIFT', 'CONTROL'):
+            command = shlex.join([str(helper_paths['old']), direction, 'all'])
+            ok('eval assert(hl.bind("SUPER + ' + modifier + ' + ' + key + '",hl.dsp.exec_cmd(' + json.dumps(command) + '),{}))')
+    ok('eval hl.define_submap("resize",function() assert(hl.bind("j",hl.dsp.layout("mfact -0.025"),{})); assert(hl.bind("k",hl.dsp.layout("mfact +0.025"),{})) end)')
     for key, mode in (('n', 0), ('m', 1), ('f', 2)):
         ok('eval hl.bind("SUPER + ' + key + '",hl.dsp.window.fullscreen_state({internal=' + str(mode) + ',client=' + str(mode) + ',action="set"}),{})')
     ok('eval hl.bind("SUPER + h",hl.dsp.layout("mfact -0.025"),{})')
@@ -115,10 +172,11 @@ try:
     keyboard = subprocess.Popen([str(BASE / 'input'), 'Hyprland', 'human'], env=ENV, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(BASE / 'input.log', 'w'), text=True, start_new_session=True)
     PROCESSES.append(keyboard)
     assert select.select([keyboard.stdout], [], [], 5)[0] and keyboard.stdout.readline().strip() == 'ready'
-    for name in ('human-window', 'human-second', 'human-third'):
+    for name in ('human-window', 'human-second', 'human-third', 'human-fourth'):
         start(['/usr/bin/python3', ROOT / 'test/agent-desktop-client.py', name, BASE / (name + '.txt')], name)
-    wait(lambda: len(ctl('clients', True)) == 3)
+    wait(lambda: len(ctl('clients', True)) == 4)
     click_entry('human-window')
+    replace_cycle_bindings(cycle_bindings, helper_receipt)
     legacy_geometry = geometry('human-')
     legacy_error = ctl('dispatch layoutmsg mfact +0.025')
     assert legacy_error != 'ok' and geometry('human-') == legacy_geometry, legacy_error
@@ -129,7 +187,7 @@ try:
     human = human_state()
     main_geometry = geometry('human-')
     cli('create', 'agent1', '--virtual-output', '1280x800'); cli('resume', 'agent1')
-    for name in ('agent-first', 'agent-second', 'agent-third'):
+    for name in ('agent-first', 'agent-second', 'agent-third', 'agent-fourth'):
         cli('launch', 'agent1', '--', '/usr/bin/python3', ROOT / 'test/agent-desktop-client.py', name, BASE / (name + '.txt'))
         wait(lambda: any(item['title'] == name for item in ctl('clients', True)))
     seat = cli('state', 'agent1')

@@ -14,6 +14,11 @@ if [[ -n ${HYPRLAND_SEAT_NAME:-} ]]; then
   [[ $HYPRLAND_SEAT_NAME =~ ^[a-zA-Z0-9_-]+$ ]] || exit 2
   cache_file="${XDG_RUNTIME_DIR:-/tmp}/hypr-cycle-group-${UID}-${HYPRLAND_SEAT_NAME}.json"
 fi
+# Keep snapshot, cache update, focus and fullscreen migration in one operation.
+# Lock a separate inode because cache snapshots are replaced atomically below.
+exec 9>"${cache_file}.lock"
+flock -x 9
+
 seat_dispatch() {
   if [[ -n ${HYPRLAND_ACTION_ID:-} ]]; then
     local result
@@ -62,10 +67,11 @@ if [[ "$mode" == "group" ]]; then
   else
     seat_dispatch 'hl.dsp.group.next()' || true
   fi
-  CACHE_FILE="$cache_file" python3 - <<'PY' || true
+  CACHE_FILE="$cache_file" FULLSCREEN="$is_fullscreen" python3 - <<'PY' || true
 import json
 import os
 import subprocess
+import tempfile
 
 cache_file = os.environ.get("CACHE_FILE")
 if not cache_file:
@@ -113,17 +119,44 @@ except Exception:
 
 group_last = {}
 pos_cache = {}
-if isinstance(cache, dict) and ("group_last" in cache or "pos" in cache):
+fullscreen_order = {}
+if isinstance(cache, dict) and ("group_last" in cache or "pos" in cache or "fullscreen_order" in cache):
     group_last = cache.get("group_last") or {}
     pos_cache = cache.get("pos") or {}
+    fullscreen_order = cache.get("fullscreen_order") or {}
 elif isinstance(cache, dict):
     group_last = cache
     pos_cache = {}
-cache = {"group_last": group_last, "pos": pos_cache}
+if os.environ.get("FULLSCREEN") != "1":
+    try:
+        ws = hyprctl_json("activeworkspace")
+        ws_name, ws_id = str(ws.get("name") or ""), str(ws.get("id") or "")
+        aw = active_client.get("workspace") or {}
+        aw_name, aw_id = str(aw.get("name") or ""), str(aw.get("id") or "")
+        if aw_name and (aw_name.startswith("special:") or aw_id.startswith("-")):
+            ws_name, ws_id = aw_name or ws_name, aw_id or ws_id
+        workspace_key = json.dumps([os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", ""), ws_id, ws_name])
+        if not isinstance(fullscreen_order, dict):
+            fullscreen_order = {}
+        fullscreen_order.pop(workspace_key, None)
+        for c in clients:
+            w = c.get("workspace") or {}
+            if c.get("address") and not c.get("pinned") and (str(w.get("name") or "") == ws_name or str(w.get("id") or "") == ws_id):
+                at = c.get("at") or [0, 0]
+                pos_cache[c["address"]] = [at[0], at[1]]
+    except Exception:
+        pass
+cache = {"group_last": group_last, "pos": pos_cache, "fullscreen_order": fullscreen_order}
 group_last[group_key] = active_addr
 try:
-    with open(cache_file, "w", encoding="utf-8") as f:
-        json.dump(cache, f)
+    descriptor, pending = tempfile.mkstemp(prefix=os.path.basename(cache_file) + ".", dir=os.path.dirname(cache_file) or ".")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
+            json.dump(cache, f)
+        os.replace(pending, cache_file)
+    finally:
+        if os.path.exists(pending):
+            os.unlink(pending)
 except Exception:
     pass
 PY
@@ -138,6 +171,7 @@ target="$(
 import json
 import os
 import subprocess
+import tempfile
 import sys
 
 direction = sys.argv[1] if len(sys.argv) > 1 else "next"
@@ -183,8 +217,6 @@ def is_pinned(client):
     return bool(client.get("pinned"))
 
 items = [c for c in clients if in_ws(c) and not is_pinned(c)]
-if len(items) < 2:
-    sys.exit(0)
 
 addr_to_client = {c.get("address"): c for c in items if c.get("address")}
 addr_set = set(addr_to_client)
@@ -194,9 +226,14 @@ if not addr_set:
 def focus_id(addr):
     c = addr_to_client.get(addr) or {}
     try:
-        return int(c.get("focusHistoryID") or -1)
+        return int(c.get("focusHistoryID", -1))
     except Exception:
         return -1
+
+def focus_rank(addr):
+    history = focus_id(addr)
+    # Hyprland reports the most recently focused window as zero.
+    return (history if history >= 0 else float("inf"), addr)
 
 cache = {}
 if cache_file:
@@ -208,9 +245,11 @@ if cache_file:
 
 group_last = {}
 pos_cache = {}
-if isinstance(cache, dict) and ("group_last" in cache or "pos" in cache):
+fullscreen_order = {}
+if isinstance(cache, dict) and ("group_last" in cache or "pos" in cache or "fullscreen_order" in cache):
     group_last = cache.get("group_last") or {}
     pos_cache = cache.get("pos") or {}
+    fullscreen_order = cache.get("fullscreen_order") or {}
 elif isinstance(cache, dict):
     group_last = cache
     pos_cache = {}
@@ -270,7 +309,7 @@ group_entries = []
 members_order_by_group = {}
 active_addr = active.get("address")
 if active_addr not in addr_set:
-    active_addr = max(addr_set, key=focus_id, default=None)
+    active_addr = min(addr_set, key=focus_rank, default=None)
 if not active_addr:
     sys.exit(0)
 active_group = addr_to_group.get(active_addr)
@@ -281,7 +320,7 @@ def pick_rep(members, group_key):
     cached = group_last.get(group_key)
     if cached in members:
         return cached
-    rep = max(members, key=focus_id)
+    rep = min(members, key=focus_rank)
     if focus_id(rep) >= 0:
         return rep
     return sorted(members)[0]
@@ -303,7 +342,45 @@ for group_id, members in groups.items():
 group_entries.sort(key=lambda item: (item[0][0], item[0][1], item[1]))
 group_ids = [gid for _, gid, _ in group_entries]
 rep_by_group = {gid: rep for _, gid, rep in group_entries}
-if len(group_ids) < 2:
+# Fullscreen migration changes live coordinates. Keep a window ring for this
+# workspace, even when the first shortcut runs without a tiled position cache.
+# Project it onto the current groups so closing, adding or regrouping windows
+# preserves surviving order and adds new members once.
+workspace_key = json.dumps([os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", ""), ws_id, ws_name])
+if not isinstance(fullscreen_order, dict):
+    fullscreen_order = {}
+if is_fullscreen:
+    saved_order = fullscreen_order.get(workspace_key)
+    ordered_addresses = []
+    if isinstance(saved_order, list):
+        ordered_addresses.extend(a for a in saved_order if a in addr_set and a not in ordered_addresses)
+    for gid in group_ids:
+        ordered_addresses.extend(a for a in members_order_by_group[gid] if a not in ordered_addresses)
+    group_ids = list(dict.fromkeys(addr_to_group[a] for a in ordered_addresses))
+    members_order_by_group = {gid: [a for a in ordered_addresses if addr_to_group[a] == gid] for gid in group_ids}
+    fullscreen_order[workspace_key] = [a for gid in group_ids for a in members_order_by_group[gid]]
+else:
+    fullscreen_order.pop(workspace_key, None)
+
+if cache_file:
+    try:
+        if not is_fullscreen:
+            for addr in addr_set:
+                x, y = pos(addr)
+                pos_cache[addr] = [x, y]
+        cache = {"group_last": group_last, "pos": pos_cache, "fullscreen_order": fullscreen_order}
+        descriptor, pending = tempfile.mkstemp(prefix=os.path.basename(cache_file) + ".", dir=os.path.dirname(cache_file) or ".")
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as f:
+                json.dump(cache, f)
+            os.replace(pending, cache_file)
+        finally:
+            if os.path.exists(pending):
+                os.unlink(pending)
+    except Exception:
+        pass
+
+if mode == "workspace" and len(group_ids) < 2:
     sys.exit(0)
 
 if not active_group:
@@ -330,18 +407,6 @@ else:
     else:
         idx = (group_ids.index(active_group) + 1) % len(group_ids)
     target = rep_by_group[group_ids[idx]]
-
-if cache_file:
-    try:
-        if not is_fullscreen:
-            for addr in addr_set:
-                x, y = pos(addr)
-                pos_cache[addr] = [x, y]
-        cache = {"group_last": group_last, "pos": pos_cache}
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(cache, f)
-    except Exception:
-        pass
 
 sys.stdout.write(target)
 PY
