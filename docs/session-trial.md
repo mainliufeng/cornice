@@ -17,11 +17,11 @@
 先构建特性组件，再用分支中的 CLI 创建不可变快照：
 
 ```sh
-make desktop-build
-./bin/cornice session-trial prepare \
-  --hyprland /home/liufeng/Code/source/Hyprland/build-agent-session/Hyprland \
-  --config /home/liufeng/dotfiles/linux/desktop/hyprland/agent-session/hyprland.lua \
-  --autostart /home/liufeng/dotfiles/linux/desktop/hyprland/agent-session/hyprland.autostart.json
+# 先按 docs/source-install.md 完成配套的用户目录源码安装。
+prefix="$HOME/.local"
+"$prefix/bin/cornice" session-trial prepare \
+  --hyprland "$prefix/bin/Hyprland" \
+  --config "$prefix/share/cornice/config/hyprland.lua"
 ```
 
 `prepare` 只创建状态目录中的版本快照、Cornice 配置副本与校验清单；不启用登录切换。

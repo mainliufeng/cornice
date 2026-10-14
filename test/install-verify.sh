@@ -8,7 +8,7 @@
 #
 #   ./test/install-verify.sh            # install.sh --copy into a temp prefix
 #   ./test/install-verify.sh --package  # also build the PKGBUILD and test that
-#   CORNICE_INSTALL_VERIFY_DESKTOP=1 ./test/install-verify.sh  # native desktop + MCP dependencies too
+# Both paths always include native desktop helpers, QML modules and locked MCP/browser dependencies.
 #
 # Exit code is the suite's, so it works as a release gate.
 set -uo pipefail
@@ -30,10 +30,10 @@ if ((with_package)) && ! command -v makepkg >/dev/null 2>&1; then
   exit 1
 fi
 install_args=(--copy)
-case "${CORNICE_INSTALL_VERIFY_DESKTOP:-0}" in
-  0) ;;
+case "${CORNICE_INSTALL_VERIFY_DESKTOP:-}" in
+  ""|0) ;; # complete desktop is now the default
   1) install_args+=(--desktop) ;;
-  *) echo "CORNICE_INSTALL_VERIFY_DESKTOP must be 0 or 1" >&2; exit 2 ;;
+  *) echo 'CORNICE_INSTALL_VERIFY_DESKTOP must be 0 or 1' >&2; exit 2 ;;
 esac
 revision=$(git -C "$prefix" rev-parse HEAD) || exit 1
 
@@ -46,6 +46,19 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+# Public lockfile cache only; no source-tree node_modules or build outputs.
+# Enables the same npm ci inside the network-isolated graphical gate.
+export npm_config_cache="$tmp/npm-cache"
+: > "$tmp/npm-user.conf"
+: > "$tmp/npm-global.conf"
+export NPM_CONFIG_USERCONFIG="$tmp/npm-user.conf" NPM_CONFIG_GLOBALCONFIG="$tmp/npm-global.conf"
+if [[ -n ${CORNICE_INSTALL_VERIFY_NPM_CACHE:-} ]]; then
+  [[ -d $CORNICE_INSTALL_VERIFY_NPM_CACHE/_cacache ]] || { echo 'public npm cache is missing _cacache' >&2; exit 2; }
+  mkdir -p "$npm_config_cache"
+  cp -a "$CORNICE_INSTALL_VERIFY_NPM_CACHE/_cacache" "$npm_config_cache/" || exit 1
+  export npm_config_offline=true
+fi
 
 failures=0
 
@@ -75,7 +88,7 @@ run_against() {
     failures=$((failures + 1))
     return 1
   fi
-  for dir in bin shell i18n themes wallpapers config docs plugins native/agent; do
+  for dir in bin shell i18n themes wallpapers config docs plugins; do
     if ! diff -qr "$tmp/source/$dir" "$root/$dir"; then
       echo "  FAIL: installed $dir differs from the committed source"
       failures=$((failures + 1))
@@ -89,6 +102,16 @@ run_against() {
       return 1
     fi
   done
+  for source in "$tmp/source/native/agent/"*; do
+    [[ -f $source ]] || continue
+    if ! cmp -- "$source" "$root/native/agent/$(basename "$source")"; then
+      echo "  FAIL: installed native/agent source differs from the committed source"
+      failures=$((failures + 1)); return 1
+    fi
+  done
+  if ! "$tmp/source/packaging/check-runtime.sh" "$root"; then
+    failures=$((failures + 1)); return 1
+  fi
   echo "  installed files match the committed source, including session metadata and shared UI"
   CORNICE_INSTALLED_PREFIX="$root" "$test_dir/headless-verify.sh"
   local status=$?
@@ -98,7 +121,8 @@ run_against() {
 
 echo "  tracked files: $(git -C "$prefix" ls-files | wc -l), exported: $(find "$tmp/source" -type f | wc -l)"
 echo "== 1/… install.sh ${install_args[*]} (from committed $revision)"
-"$tmp/source/install.sh" "${install_args[@]}" --prefix "$tmp/prefix" >"$tmp/install.log" 2>&1 \
+XDG_STATE_HOME="$tmp/state" CORNICE_INSTALL_BUILD_ROOT="$tmp/builds" npm_config_cache="$tmp/npm-cache" \
+  "$tmp/source/install.sh" "${install_args[@]}" --prefix "$tmp/prefix" >"$tmp/install.log" 2>&1 \
   || { echo "install.sh failed:"; tail -5 "$tmp/install.log"; exit 1; }
 # Every helper the repo ships must be installed and resolve: a stale install once
 # left a helper out, and the shell then failed to act on tray menu clicks.
@@ -114,16 +138,6 @@ else
   failures=$((failures + 1))
 fi
 
-if [[ ${CORNICE_INSTALL_VERIFY_DESKTOP:-0} == 1 ]]; then
-  for helper in cornice-desktop-runtime cornice-human-lock cornice-session-guard cornice-native-accessibility cornice-browser-runtime cornice-application-guard; do
-    [[ -x "$tmp/prefix/share/cornice/native/bin/$helper" ]] || { echo "  FAIL: native helper is missing: $helper"; exit 1; }
-  done
-  for module in Cornice/Platform Cornice/Desktop; do
-    [[ -f "$tmp/prefix/share/cornice/native/qml/$module/qmldir" ]] || { echo "  FAIL: QML module is missing: $module"; exit 1; }
-  done
-  (cd "$tmp/prefix/share/cornice/native/agent" && node --input-type=module -e 'await import("@modelcontextprotocol/sdk/server/mcp.js"); await import("@playwright/mcp");') || exit 1
-  echo "  all six real native helpers, both QML modules and installed MCP/browser dependencies are present"
-fi
 run_against "install.sh ${install_args[*]}" "$tmp/prefix/share/cornice"
 
 if ((with_package)); then
@@ -145,6 +159,12 @@ if ((with_package)); then
     echo "  package: $(basename "$package")"
     mkdir -p "$tmp/root"
     bsdtar -xf "$package" -C "$tmp/root" || exit 1
+    while IFS= read -r helper; do
+      [[ $(readlink "$tmp/root/usr/bin/$helper") == "/usr/share/cornice/bin/$helper" ]] || {
+        echo "  FAIL: package CLI link is missing or incorrect: $helper"
+        failures=$((failures + 1))
+      }
+    done < <(find "$tmp/source/bin" -maxdepth 1 -name 'cornice*' ! -name '*.sh' -printf '%f\n' | sort)
     run_against "$(basename "$package")" "$tmp/root/usr/share/cornice"
   fi
 fi

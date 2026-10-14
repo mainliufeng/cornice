@@ -893,7 +893,7 @@ def prepare(args):
         config_root = release / "config-home"
         config_root.mkdir()
         original = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
-        for child in original.iterdir():
+        for child in original.iterdir() if original.exists() else ():
             if child.name == "chrome-flags.conf" and child.is_file():
                 # Stable Xwayland's fixed 2x becomes another multiplier on native
                 # Wayland's 2x output. Change only the trial's configuration copy.

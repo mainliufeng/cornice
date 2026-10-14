@@ -46,7 +46,12 @@ if [[ -n ${CORNICE_TEST_RENDER_NODE:-} ]]; then
   render_args=(--dir /dev/dri --dev-bind "$CORNICE_TEST_RENDER_NODE" "$CORNICE_TEST_RENDER_NODE"
     --unsetenv LIBGL_ALWAYS_SOFTWARE --unsetenv GALLIUM_DRIVER)
 fi
-artifacts=$(mktemp -d /tmp/cornice-agent-test.XXXXXX)
+artifacts_root=${CORNICE_TEST_ARTIFACT_ROOT:-/tmp}
+if [[ -n ${CORNICE_TEST_ARTIFACT_ROOT:-} ]] && [[ $artifacts_root != /* || ! -d $artifacts_root || ! -O $artifacts_root ]]; then
+  echo 'CORNICE_TEST_ARTIFACT_ROOT must be an existing absolute directory owned by the test user' >&2
+  exit 2
+fi
+artifacts=$(mktemp -d "$artifacts_root/cornice-agent-test.XXXXXX")
 mkdir -m700 "$artifacts/home"
 if [[ $suite == native-accessibility-verify.py ]]; then
   c++ -std=c++20 -fPIC -pie "$prefix/test/native-accessibility-qt.cpp" $(pkg-config --cflags --libs Qt6Widgets) -o "$artifacts/native-accessibility-qt"

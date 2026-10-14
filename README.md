@@ -69,8 +69,10 @@ Native screenshots stay inside Cornice: `cornice screenshot` selects a region, a
 
 ## Install
 
+Multi-seat currently uses our Hyprland fork and this feature branch. Follow the [paired source installation](docs/source-install.md) for exact refs, dependencies, activation and rollback; an upstream merge or AUR package is not required. The default installer builds the complete native desktop and locked MCP/browser dependencies.
+
 ```bash
-git clone https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
+git clone --branch codex/agent-desktop-recovery https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
 cd ~/Code/self/cornice
 ./install.sh                 # symlinks the CLI into ~/.local/bin, checks deps
 ```

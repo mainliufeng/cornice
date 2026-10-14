@@ -51,8 +51,10 @@ waybar + mako + hypridle + hyprlock + polkit-gnome + 一个启动器 这一串�
 
 ## 安装
 
+多桌面当前使用我们的 Hyprland fork 和本特性分支。按[源码配套安装](docs/source-install.md)获取准确 ref、依赖、启用和回退步骤，不以上游合并或 AUR 包为前置；默认安装会构建完整 native 桌面及锁定 MCP/browser 依赖。
+
 ```bash
-git clone https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
+git clone --branch codex/agent-desktop-recovery https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
 cd ~/Code/self/cornice
 ./install.sh                 # 软链 CLI 到 ~/.local/bin，顺便体检依赖
 ```

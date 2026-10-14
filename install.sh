@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # install.sh — put cornice on this machine without sudo (by default).
 #
-#   ./install.sh                 symlink the CLI into ~/.local/bin, check deps
+#   ./install.sh                 build the complete desktop, symlink the CLI into ~/.local/bin
 #   ./install.sh --copy          copy instead of symlink (no dev-tree coupling)
-#   ./install.sh --desktop       also build/install optional desktop native components
+#   ./install.sh --no-desktop    build only the core QML module (desktop tooling disabled)
 #   ./install.sh --prefix /usr/local
 #   ./install.sh --takeover      also hand the session over (mako/hypridle/…)
 #   ./install.sh --service       install + enable the systemd user service
@@ -21,7 +21,7 @@ copy=0
 takeover=0
 service=0
 uninstall=0
-desktop=0
+desktop=1
 rollback=0
 # NB: a `for arg in "$@"` loop cannot consume its own arguments — `shift` inside
 # it has no effect, so --prefix would swallow nothing and its value would be
@@ -36,7 +36,8 @@ while (($#)); do
     --takeover) takeover=1 ;;
     --service) service=1 ;;
     --uninstall) uninstall=1 ;;
-    --desktop) desktop=1 ;;
+    --no-desktop) desktop=0 ;;
+    --desktop) desktop=1 ;; # retained for callers; complete desktop is the default
     --rollback) rollback=1 ;;
     -h | --help) sed -n '2,15p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "install.sh: unknown option '$arg'" >&2; exit 2 ;;
@@ -142,6 +143,18 @@ command -v fc-list >/dev/null 2>&1 && {
   if fc-list 2>/dev/null | grep -qi "nerd"; then ok "Nerd Font installed";
   else warn "no Nerd Font found — bar glyphs will look wrong (nerd-fonts-symbols)"; fi
 }
+for tool in cmake ninja; do
+  command -v "$tool" >/dev/null 2>&1 && ok "$tool: native module build" \
+    || { bad "$tool not found — required for source installation"; missing=1; }
+done
+if ((desktop)); then
+  command -v pkg-config >/dev/null 2>&1 && pkg-config --exists atspi-2 \
+    || { bad "at-spi2-core and pkgconf are required for native application trees"; missing=1; }
+  command -v node >/dev/null 2>&1 && ok "nodejs: MCP/browser runtime" \
+    || { bad "nodejs not found — required for desktop tools"; missing=1; }
+  command -v npm >/dev/null 2>&1 && ok "npm: locked MCP/browser dependencies" \
+    || { bad "npm not found — required for source installation"; missing=1; }
+fi
 if ((missing)); then
   echo
   echo "Install the missing packages and re-run. Nothing was changed."
@@ -151,21 +164,6 @@ fi
 # ---------------------------------------------------------------------------
 step "Installing"
 acquire_install_lock
-# The core shell module uses Qt already required by Quickshell. Packaged builds
-# ship it; source installs build it independently of optional desktop tooling.
-platform_prebuilt="$repo/native/qml/Cornice/Platform"
-if [[ ! -f $platform_prebuilt/libcornice_platform.so ]]; then
-  cmake -S "$repo/native/platform" -B "$repo/native/platform-build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-  cmake --build "$repo/native/platform-build" -j2
-fi
-if ((desktop)); then
-  command -v pkg-config >/dev/null 2>&1 && pkg-config --exists atspi-2 \
-    || { bad "at-spi2-core is required for native application trees"; exit 1; }
-  command -v npm >/dev/null 2>&1 || { bad "npm is required for desktop browser tools"; exit 1; }
-  npm ci --prefix "$repo/native/agent" --omit=dev --ignore-scripts --no-audit --no-fund
-  cmake -S "$repo/native/desktop" -B "$repo/native/build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-  cmake --build "$repo/native/build" -j2
-fi
 mkdir -p "$bindir"
 for name in "${retired_helpers[@]}"; do
   if [[ -e $bindir/$name || -L $bindir/$name ]]; then
@@ -182,6 +180,7 @@ service_activation_attempted=0
 service_enabled_before=""
 service_running_before=0
 staging=""
+build_work=""
 rollback_on_failure() {
   local result=$?
   trap - EXIT
@@ -212,6 +211,7 @@ rollback_on_failure() {
       python3 "$repo/bin/cornice-install-tree" rollback "$libdir" --if-activated "$staging" >&2 || warn "could not restore the previous installation; use install.sh --rollback"
     fi
   fi
+  [[ -z $build_work ]] || rm -rf -- "$build_work"
   exit "$result"
 }
 trap rollback_on_failure EXIT
@@ -228,15 +228,12 @@ if ((copy)); then
   for dir in bin shell i18n themes wallpapers config docs plugins; do
     [[ -d $repo/$dir ]] && cp -r "$repo/$dir" "$staging/"
   done
-  mkdir -p "$staging/native"
-  cp -r "$repo/native/agent" "$staging/native/"
-  if [[ -f $platform_prebuilt/libcornice_platform.so ]]; then
-    mkdir -p "$staging/native/qml/Cornice"
-    cp -r "$platform_prebuilt" "$staging/native/qml/Cornice/"
-  else
-    cmake --install "$repo/native/platform-build" --prefix "$staging"
-  fi
-  if ((desktop)); then cmake --install "$repo/native/build" --prefix "$staging"; fi
+  build_parent="${CORNICE_INSTALL_BUILD_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/cornice/build}"
+  mkdir -p "$build_parent"
+  build_work=$(mktemp -d "$build_parent/install.XXXXXX")
+  build_args=()
+  ((desktop)) || build_args+=(--no-desktop)
+  "$repo/packaging/build-runtime.sh" "$repo" "$build_work" "$staging" "${build_args[@]}"
   find "$staging" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
   chmod +x "$staging"/bin/* 2>/dev/null || true
   installation_pending=1
@@ -244,6 +241,21 @@ if ((copy)); then
   ok "installed the tree to $libdir"
   source_dir="$libdir/bin"
 else
+  build_parent="${CORNICE_INSTALL_BUILD_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/cornice/build}"
+  mkdir -p "$build_parent"
+  build_work=$(mktemp -d "$build_parent/install.XXXXXX")
+  build_args=()
+  ((desktop)) || build_args+=(--no-desktop)
+  # Build all outputs first. A developer symlink install publishes generated
+  # files in its source tree; --copy keeps its runtime in the atomic generation.
+  "$repo/packaging/build-runtime.sh" "$repo" "$build_work" "$build_work/runtime" "${build_args[@]}"
+  mkdir -p "$repo/native"
+  cp -r "$build_work/runtime/native/qml" "$repo/native/"
+  if ((desktop)); then
+    cp -r "$build_work/runtime/native/bin" "$repo/native/"
+    rm -rf -- "$repo/native/agent/node_modules"
+    cp -r "$build_work/runtime/native/agent/node_modules" "$repo/native/agent/"
+  fi
   source_dir="$repo/bin"
   ok "using the working tree at $repo"
 fi
