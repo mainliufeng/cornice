@@ -1,16 +1,16 @@
-# Agent 桌面：特性分支使用与测试
+# Agent 桌面：使用与测试
 
-修复分支：Cornice `codex/agent-desktop-recovery`，Hyprland `codex/cornice-agent-desktop`。
-当前实现只在特性分支。通过一次性登录试运行部署独立快照，不修改系统 Hyprland、
-用户的 Cornice 配置或服务；正在使用的会话不会热替换。原生展示验证见
-[2026-10-09 验证记录](agent-desktop-native-verification-20261009.md)。
+Cornice 独立桌面功能已在默认 `main` 分支，配合我们的 Hyprland fork 使用。
+固定源码、依赖、安装与恢复步骤见[源码配套安装](source-install.md)。
+通过一次性登录试运行部署独立快照，不替换系统 Hyprland；正在使用的会话不会热替换。
+早期原生展示的历史验证见[2026-10-09 验证记录](agent-desktop-native-verification-20261009.md)。
 
 需要注销后试用时，可先准备[一次性登录试运行与自动回退](session-trial.md)。它保留稳定登录入口，
 只在显式 arm 后接管下一次 SDDM Hyprland 登录；启动失败或持续健康检查失败会结束试运行；桌面就绪后没有确认倒计时。
 
 ## 不影响日常桌面的测试
 
-先构建特性版 Hyprland 与本工作树的 native 组件，再执行：
+先构建配套 Hyprland fork 与 Cornice native 组件，再执行：
 
 ```sh
 make desktop-build

@@ -2,16 +2,52 @@
 
 **English** · [中文](README.zh-CN.md)
 
-A general-purpose **Hyprland shell** built on [Quickshell](https://quickshell.org):
-one process that gives you the bar, panels, notifications, the launcher, the
-lock screen, idle handling and a polkit agent — instead of waybar + mako +
-hypridle + hyprlock + polkit-gnome + a launcher, each with its own config file.
+Cornice is a **Hyprland shell** built on [Quickshell](https://quickshell.org),
+with independent desktops for people and their AI agents. The daily shell brings
+the bar, panels, notifications, launcher, lock screen, idle handling and polkit
+authentication into one interface. An external harness such as Codex or Pi owns
+the task, model and conversation; Cornice supplies the assigned desktop and its
+observation and control tools.
 
-![the desktop](docs/screenshots/desktop.png)
+[![Human and Agent desktops using synthetic example data in a real isolated environment](docs/media/cornice-four-scenes.png)](docs/media/cornice-four-scenes.mp4)
+
+[Watch the four-chapter demonstration](docs/media/cornice-four-scenes.mp4): independent desktops, manual takeover, Agent-requested cooperation, and human-only lock with a prior `continue` policy.
+
+*70.532-second main film with 2 fps sampling. Real isolated environment, synthetic demo data, automated operation of real applications and Cornice controls. Cornice `6ca3a36` + Hyprland fork `b18a6b9`. Both input sides are driven by a test script; model decision-making is outside this recording's scope. The Agent column is blank when the desktop control is unavailable, sampling is busy, or capture is denied; previous screenshots are not reused. Lock authentication uses an isolated test PAM fixture. Full-session lock is a separate supplemental check, outside the main film.*
+
+## Your desktop, and the Agent's
+
+- **Work in parallel.** Tasks acquire a secondary desktop. Agent clicks and typing
+  use that desktop's input context while you keep working on yours.
+- **Look, then take over.** The native observer is read-only. Explicit takeover
+  routes human input to the target desktop and pauses the Agent's control.
+- **Help when asked.** The Agent can request cooperation with a title and concrete
+  instructions. You take over, complete the step and leave takeover; the task
+  explicitly resumes with fresh authorization before continuing.
+- **Choose what happens during a daily lock.** A previously authorized, running
+  task configured as `continue` can keep working while only the human desktop is
+  locked. Full-session lock revokes Agent control. These are distinct lock modes.
+
+The validated source pair is Cornice `6ca3a36` with our Hyprland fork `b18a6b9`:
+a clean default copy install and seven real isolated runtime suites (63 assertions)
+passed. This does not cover real SDDM logout/login, physical lid/sleep/wake,
+monitor hotplug or physical input devices. Desktops share the same Linux user,
+filesystem permissions and GPU/driver resources; they are not security containers.
+Agent input currently excludes Xwayland, and application single-instance and
+multi-seat support still have limits.
+
+See [desktop usage](docs/agent-desktop.md), [harness integration](docs/desktop-harness.md)
+and [the product boundary](docs/agent-desktop-product.md). The main film above shows
+real isolated operations with synthetic data; the images below show historical
+daily-shell features.
 
 ---
 
 ## Features
+
+![the daily shell](docs/screenshots/desktop.png)
+
+*Historical daily-shell screenshot.*
 
 | | |
 | --- | --- |
@@ -24,7 +60,7 @@ hypridle + hyprlock + polkit-gnome + a launcher, each with its own config file.
 | ![the OSD](docs/screenshots/osd.png) | ![the emoji picker](docs/screenshots/emoji.png) |
 | **OSD** — volume, microphone, brightness; follows hardware keys | **Emoji picker** — searchable, Enter copies |
 | ![the lock screen](docs/screenshots/lock.png) | |
-| **Lock screen** — PAM-backed, wallpaper background, no account name unless you want it | |
+| **Lock screen** — PAM-backed, wallpaper background, account name shown by default and configurable | |
 
 More, without screenshots:
 
@@ -36,8 +72,8 @@ More, without screenshots:
   (scan, pair, connect), power (battery, profiles, session actions).
 - **Clipboard** — cliphist-backed history: type to filter, Enter copies, images
   previewed.
-- **Lock screen** — PAM-backed session lock, releases itself on graceful
-  shutdown, refuses to lock when PAM is unusable, and documents the TTY recovery
+- **Lock screen** — PAM-backed session lock, refuses ordinary stop/restart while
+  locked, refuses to lock when PAM is unusable, and documents the TTY recovery
   path if a lock client ever dies.
 - **Idle** — dim, display-off and lock with separate AC/battery timeouts; locks
   on suspend, on `loginctl lock-session` and on lid close.
@@ -53,13 +89,13 @@ More, without screenshots:
 
 ## Requirements
 
-- Hyprland (Wayland session)
+- Our Cornice-enabled Hyprland fork for independent desktops; see [paired source installation](docs/source-install.md)
 - Quickshell — `sudo pacman -S quickshell` (Arch `extra`)
 - `jq` (or `python3`) to read plugin manifests, `glib2` (the logind monitor),
   `curl` (weather)
 - A Nerd Font for the bar glyphs (`ttf-nerd-fonts-symbols`)
 - `socat` for CLI → runtime plugin communication
-- Qt 6 base/declarative for native image persistence and clipboard publication; packaged installs install these dependencies automatically. Source builds also need CMake/Ninja.
+- Qt 6 base/declarative for native image persistence and clipboard publication; source builds also need CMake/Ninja. Prepare system dependencies before installation; the source installer checks them without running the system package manager.
 - Optional, one per feature: `grim`
   (screenshots in `cornice verify`), `wpctl`/WirePlumber (audio), `bluez`
   (bluetooth), `brightnessctl` (brightness OSD), `cliphist` (clipboard history),
@@ -69,13 +105,18 @@ Native screenshots stay inside Cornice: `cornice screenshot` selects a region, a
 
 ## Install
 
-Multi-seat currently uses our Hyprland fork and this feature branch. Follow the [paired source installation](docs/source-install.md) for exact refs, dependencies, activation and rollback; an upstream merge or AUR package is not required. The default installer builds the complete native desktop and locked MCP/browser dependencies.
+Multi-seat is available on the default `main` branch and uses our Hyprland fork. Follow the [paired source installation](docs/source-install.md) for exact refs, dependencies, activation and rollback; an upstream merge or AUR package is not required. The default installer builds the complete native desktop and locked MCP/browser dependencies.
 
 ```bash
-git clone --branch codex/agent-desktop-recovery https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
+git clone --branch main https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
 cd ~/Code/self/cornice
 ./install.sh                 # symlinks the CLI into ~/.local/bin, checks deps
 ```
+
+The snippet installs Cornice only; it does not build Hyprland or activate a new
+compositor. Follow the paired guide to build the fork and choose a future login.
+Save your work and log out/in yourself when ready. Preparing files is a separate
+step from switching the running session.
 
 `./install.sh` defaults to a user-local install and leaves compositor config alone:
 
@@ -87,11 +128,11 @@ cd ~/Code/self/cornice
 make install                     # same as ./install.sh
 ```
 
-Arch users can build a package: `make pkg` (`makepkg -si`, installs to
-`/usr/share/cornice` with the CLI in `/usr/bin`). [docs/aur.md](docs/aur.md) has
-the AUR-ready PKGBUILD and the upload procedure.
+Use the paired source guide for the validated installation. Arch package builds
+and AUR publication were not validated for this multi-desktop pair; historical
+packaging notes remain in [docs/aur.md](docs/aur.md).
 
-Then start it — as a systemd user service, so it comes back if it ever dies:
+To run the daily shell in a compatible Hyprland session, a systemd user service restarts it if it dies:
 
 ```bash
 ./install.sh --service       # installs + enables cornice.service (Restart=always)
@@ -116,6 +157,22 @@ Cornice leaves your compositor config, `~/.config/hypr/*` and system packages
 alone. Explicit `--service` installs the backed-up user unit described above;
 `cornice takeover --apply` changes the desktop startup config with backups and
 supports `cornice takeover --undo`.
+
+### Preserved single-desktop version
+
+The previous shell remains independently installable on
+[`legacy/single-desktop`](https://github.com/mainliufeng/cornice/tree/legacy/single-desktop):
+
+```bash
+git clone --branch legacy/single-desktop --single-branch https://github.com/mainliufeng/cornice.git "$HOME/Code/self/cornice-single-desktop"
+cd "$HOME/Code/self/cornice-single-desktop"
+./install.sh --copy --prefix "$HOME/.local/opt/cornice-single-desktop"
+"$HOME/.local/opt/cornice-single-desktop/bin/cornice" help
+```
+
+Use the full CLI path for that version. The separate prefix keeps installed files
+apart; user configuration, state and `cornice.service` can still be shared.
+Enabling `--service` selects the shared service and is a separate shell migration.
 
 ## Hand over from the old daemons
 

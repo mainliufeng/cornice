@@ -4,16 +4,16 @@
 
 ## 来源与版本
 
-- Cornice：`https://github.com/mainliufeng/cornice.git`，特性 ref `codex/agent-desktop-recovery`。
+- Cornice：`https://github.com/mainliufeng/cornice.git`，默认 ref `main`；本次已验收固定提交 `6ca3a3620fd6ae6d5ddb24daa1b691a64ac7881a`。
 - Hyprland：`https://github.com/mainliufeng/Hyprland.git`，精确提交 `b18a6b98136420efc3838bab6bd4a7f7de02fff7`，所在 ref `codex/cornice-agent-desktop`；tree `cf2b0f15c32f1d168563f7c611da36af625c9c1e`。
 
-Cornice ref 会继续前进。安装前记录解析出的完整提交；重现时 checkout 记录的 SHA，而不是重新解析分支。最终验收清单还会记录产物 SHA256、完整安装的 Cornice commit/tree 与编译选项；未有通过记录的组合不能写成已验证。
+Cornice ref 会继续前进。安装前记录解析出的完整提交；重现时 checkout 记录的 SHA，而不是重新解析分支。本次验收清单已记录产物 SHA256、完整安装的 Cornice commit/tree 与编译选项；未有通过记录的组合不能写成已验证。
 
 ```sh
 # 选择空的源码目录；已有 checkout 先检查分支和未提交修改，不覆盖它。
-git clone --branch codex/agent-desktop-recovery https://github.com/mainliufeng/cornice.git cornice
+git clone --branch main https://github.com/mainliufeng/cornice.git cornice
 cornice_src=$(realpath cornice)
-cornice_commit=$(git -C "$cornice_src" rev-parse HEAD)
+cornice_commit=6ca3a3620fd6ae6d5ddb24daa1b691a64ac7881a
 git -C "$cornice_src" checkout --detach "$cornice_commit"
 
 git clone --branch codex/cornice-agent-desktop https://github.com/mainliufeng/Hyprland.git Hyprland

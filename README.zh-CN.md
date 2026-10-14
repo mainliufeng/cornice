@@ -2,16 +2,45 @@
 
 [English](README.md) · **中文**
 
-基于 [Quickshell](https://quickshell.org) 的通用 **Hyprland shell**：一个进程提供
-状态栏、各种面板、通知、启动器、锁屏、idle 处理与 polkit 认证代理 —— 用来替掉
-waybar + mako + hypridle + hyprlock + polkit-gnome + 一个启动器 这一串各自带配置
-文件的组合。
+基于 [Quickshell](https://quickshell.org) 的 **Hyprland shell**，让人和 AI Agent
+各有自己的桌面。日常 Shell 把状态栏、面板、通知、启动器、锁屏、空闲管理与
+polkit 认证收进统一界面。任务、模型和对话由 Codex、Pi 等外部执行器管理；
+Cornice 提供分配给它的桌面及观察、控制工具。
 
-![桌面](docs/screenshots/desktop.png)
+[![真实隔离环境中的人侧和 Agent 桌面，使用合成示例数据](docs/media/cornice-four-scenes.png)](docs/media/cornice-four-scenes.mp4)
+
+[观看四章演示](docs/media/cornice-four-scenes.mp4)：独立桌面、人主动接管、Agent 请求协作，以及预先配置 `continue` 后只锁人侧。
+
+*主片 70.532 秒，按 2 帧/秒采样。真实隔离环境、合成演示数据、自动操作真实应用与 Cornice 控件。Cornice `6ca3a36` + Hyprland fork `b18a6b9`。人侧和 Agent 侧动作均由测试脚本触发，模型决策不在演示范围内。Agent 桌面控制不可用、采样忙或截图被拒绝时，Agent 栏留白，不沿用旧截图。锁屏认证使用隔离环境的测试 PAM 夹具。完整会话锁作为单独的真实补充检查，不在主视频中。*
+
+## 你的桌面，和 Agent 的桌面
+
+- **各自工作。** 任务获取副桌面，Agent 的点击和输入使用该桌面的控制上下文，
+  你可以继续在自己的桌面工作。
+- **先看，再接管。** 原生观察视图只读；明确接管后，人的输入进入目标桌面，
+  Agent 的控制暂停。
+- **需要时请人帮忙。** Agent 可以发出带标题和具体说明的协作请求。你接管、
+  完成操作并退出接管；任务明确恢复并获得新授权后继续工作。
+- **决定日常锁屏后的行为。** 提前授权、锁前正在运行且配置为 `continue` 的任务，
+  可以在仅锁人桌面的日常锁中继续。全会话锁会撤销 Agent 控制；两种锁模式有区别。
+
+已验收源码配对为 Cornice `6ca3a36` 与我们的 Hyprland fork `b18a6b9`：干净默认
+复制安装及七组真实隔离运行套件（63 项断言）通过。真实 SDDM 注销重登、物理合盖/
+睡眠/唤醒、显示器热插拔与物理输入设备仍未测。各桌面共用同一个 Linux 用户、
+文件权限及 GPU/驱动资源，不构成安全容器。Agent 暂不支持向 Xwayland 输入；
+应用单实例及多 seat 支持仍有兼容限制。
+
+详见[桌面使用](docs/agent-desktop.md)、[执行器对接](docs/desktop-harness.md)及
+[产品边界](docs/agent-desktop-product.md)。上方主片展示使用合成数据的真实隔离操作，
+下方保留日常 Shell 的历史图片。
 
 ---
 
 ## 功能
+
+![日常 Shell](docs/screenshots/desktop.png)
+
+*日常 Shell 历史截图。*
 
 | | |
 | --- | --- |
@@ -31,7 +60,7 @@ waybar + mako + hypridle + hyprlock + polkit-gnome + 一个启动器 这一串�
 - **菜单** — 栏上一个按钮，用鼠标打开所有东西：应用、剪贴板、表情、通知、栏布局编辑器、主题与壁纸、免打扰、锁屏、电源。它的存在就是为了让任何入口都不依赖记快捷键
 - **面板** — 时钟/日历、网络（WiFi 列表与连接）、蓝牙（扫描/配对/连接）、电源（电量、性能模式、会话操作）
 - **剪贴板** — 基于 cliphist 的历史：打字过滤、回车复制、图片预览
-- **锁屏** — 走 PAM 的 Wayland session lock；优雅退出时自动释放，PAM 不可用则拒绝锁屏，并文档化"锁客户端死掉"时的 TTY 应急路径
+- **锁屏** — 走 PAM 的 Wayland session lock；锁定时拒绝普通停止和重启，PAM 不可用则拒绝锁屏，并文档化"锁客户端死掉"时的 TTY 应急路径
 - **Idle** — dim / 灭屏 / 锁屏，AC 与电池分别配置；睡眠前、`loginctl lock-session`、**合盖**都会锁屏
 - **polkit 代理** — 认证对话框就在 shell 里
 - **壁纸** — 静态背景层，支持按工作区覆盖；检测到 mpvpaper/hyprpaper/swaybg/swww/wbg 时自动让位
@@ -40,8 +69,8 @@ waybar + mako + hypridle + hyprlock + polkit-gnome + 一个启动器 这一串�
 
 ## 依赖
 
-- Hyprland（Wayland 会话）
-- Qt 6 base/declarative（核心图片保存与剪贴板模块；系统包自动安装），源码构建还需 CMake/Ninja
+- 独立桌面使用支持 Cornice 的 Hyprland fork，详见[源码配套安装](docs/source-install.md)
+- Qt 6 base/declarative（核心图片保存与剪贴板模块），源码构建还需 CMake/Ninja；安装前自行准备系统依赖，源码安装脚本只检查，不调用系统包管理器
 - Quickshell —— `sudo pacman -S quickshell`（Arch `extra`）
 - `jq`（或 `python3`，用于读插件清单）、`glib2`（监听 logind）、`curl`（天气）、`socat`（CLI 与运行时插件通信）
 - 一款 Nerd Font 用于状态栏字形 —— `ttf-nerd-fonts-symbols`
@@ -51,13 +80,17 @@ waybar + mako + hypridle + hyprlock + polkit-gnome + 一个启动器 这一串�
 
 ## 安装
 
-多桌面当前使用我们的 Hyprland fork 和本特性分支。按[源码配套安装](docs/source-install.md)获取准确 ref、依赖、启用和回退步骤，不以上游合并或 AUR 包为前置；默认安装会构建完整 native 桌面及锁定 MCP/browser 依赖。
+多桌面现已在默认 `main` 分支，配合我们的 Hyprland fork 使用。按[源码配套安装](docs/source-install.md)获取准确 ref、依赖、启用和回退步骤，不以上游合并或 AUR 包为前置；默认安装会构建完整 native 桌面及锁定 MCP/browser 依赖。
 
 ```bash
-git clone --branch codex/agent-desktop-recovery https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
+git clone --branch main https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
 cd ~/Code/self/cornice
 ./install.sh                 # 软链 CLI 到 ~/.local/bin，顺便体检依赖
 ```
+
+上面的命令只安装 Cornice，不构建 Hyprland，也不会切换正在运行的合成器。
+按配套文档构建 fork 并选择未来登录版本；保存工作后，由你自行正常注销重登。
+准备安装文件与切换运行会话是不同步骤。
 
 `./install.sh` 默认安装到用户目录，不会改动合成器配置：
 
@@ -69,11 +102,10 @@ cd ~/Code/self/cornice
 make install                     # 等价于 ./install.sh
 ```
 
-Arch 用户可以直接打包：`make pkg`（`makepkg -si`，装到 `/usr/share/cornice`，
-CLI 软链到 `/usr/bin`）。要发 AUR 的话 [docs/aur.md](docs/aur.md) 里有 AUR 版
-PKGBUILD 与上传流程。
+已验证的安装入口是上面的配套源码文档。本次多桌面配对未验收 Arch 整包构建或
+AUR 发布；历史打包说明保留在 [docs/aur.md](docs/aur.md)。
 
-然后启动它 —— 推荐用 systemd 用户服务，挂掉了会自动拉回来：
+在兼容的 Hyprland 会话中运行日常 Shell 时，systemd 用户服务会在它退出后自动恢复：
 
 ```bash
 ./install.sh --service       # 安装并启用 cornice.service（Restart=always）
@@ -97,6 +129,21 @@ exec-once = cornice-launch
 显式使用 `--service` 时，会按上文安装并备份用户服务文件；
 `cornice takeover --apply` 会备份后修改桌面启动配置，并支持
 `cornice takeover --undo` 撤回。
+
+### 保留的单桌面旧版
+
+旧 Shell 保留在 [`legacy/single-desktop`](https://github.com/mainliufeng/cornice/tree/legacy/single-desktop)，
+可独立安装：
+
+```bash
+git clone --branch legacy/single-desktop --single-branch https://github.com/mainliufeng/cornice.git "$HOME/Code/self/cornice-single-desktop"
+cd "$HOME/Code/self/cornice-single-desktop"
+./install.sh --copy --prefix "$HOME/.local/opt/cornice-single-desktop"
+"$HOME/.local/opt/cornice-single-desktop/bin/cornice" help
+```
+
+使用该版本的完整 CLI 路径。独立 prefix 分开安装文件，用户配置、状态及
+`cornice.service` 仍可能共享。启用 `--service` 会选择共享服务，是另行安排的 Shell 迁移。
 
 ## 从旧组件接管
 
@@ -277,10 +324,11 @@ headless 套件还需要 `pipewire`、`wpctl` 和 `pw-metadata`。它会启动�
 [DESIGN.md](DESIGN.md) 记录了架构决策、与 omarchy/Caelestia 的对比，以及刻意
 不做的部分。
 
-本特性分支另有 [agent 桌面对接设计](docs/agent-desktop-design.md)：多 seat 管理、
-只读观察、控制权交接及本地 Hyprland fork 迁移。
-[已实现范围与 CLI 使用](docs/agent-desktop.md) 说明后台 seat 工具和只读观察；
-物理输入接管、具体执行器与正式会话迁移仍在后续阶段。
+[Agent 桌面对接设计](docs/agent-desktop-design.md) 记录多 seat 管理、只读观察、
+控制权交接与配套 Hyprland fork 的设计；[桌面使用](docs/agent-desktop.md)及
+[执行器对接](docs/desktop-harness.md)说明已实现的桌面与协作工具。
+真实登录切换及回退步骤见[源码配套安装](docs/source-install.md)与
+[会话选择和恢复](docs/session-trial.md)，真实重登与物理设备的未测边界见上文。
 
 ## 许可
 
