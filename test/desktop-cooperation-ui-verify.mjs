@@ -103,3 +103,13 @@ console.log('PASS title/instructions preserve literal markup characters in notic
 assert.match(overlay,/noticeScope:!!service && !DesktopSession\.agentShell/);
 assert.match(control,/service\.cooperationMenuEntries/);
 console.log('PASS session-owned notice has no private-shell duplicate while each desktop retains cooperation menu actions');
+
+const active=source.match(/readonly property bool cooperationTakeoverActive: ([\s\S]*?)\n  readonly property var cooperationNotices/)[1];
+const manual=vm.runInContext('(function(){return '+active+'})',c);
+c.observer=null;c.desktops=[request('pending'),{name:'main',primary:true,controlMode:'human'}];
+assert.equal(manual(),false,'ordinary primary input is not takeover');
+c.desktops.push({name:'desktop3',primary:false,controlMode:'human'});assert.equal(manual(),true);
+c.desktops=c.desktops.slice(0,2);c.desktops[1].handoff={status:'in_progress'};assert.equal(manual(),true);
+c.desktops[1].handoff=null;c.observer={humanControl:true};assert.equal(manual(),true);
+assert.match(overlay,/noticeScope:.*!service\.cooperationTakeoverActive/);
+console.log('PASS manual and request takeover suppress unrelated requests and errors without hiding ordinary primary notices');

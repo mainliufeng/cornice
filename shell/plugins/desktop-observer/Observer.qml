@@ -40,7 +40,10 @@ Item {
   }
   function takeControl(enabled, requestId) {
     clearTakeoverIntent()
-    if (enabled) {requestedTakeover=true;requestedRequestId=requestId || "";requestedDesktop=desktopName}
+    if (enabled) {
+      if (service) service.dismissCooperationNotice()
+      requestedTakeover=true;requestedRequestId=requestId || "";requestedDesktop=desktopName
+    }
     if (presentation.item) {if(enabled && requestId) presentation.item.takeHandoff(requestId);else presentation.item.takeControl(enabled)}
   }
   function confirmTakeover() {

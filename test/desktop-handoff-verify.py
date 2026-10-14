@@ -42,7 +42,14 @@ try:
         for mode,ext in (('client-header','h'),('private-code','c')):
             subprocess.run(['wayland-scanner',mode,str(FORK/'protocols'/(source+'.xml')),str(BASE/(name+'.'+ext))],check=True)
     flags=subprocess.check_output(['pkg-config','--cflags','--libs','wayland-client','xkbcommon'],text=True).split()
-    subprocess.run(['cc','-I'+str(BASE),str(FORK/'hyprtester/multiseat/input.c'),str(BASE/'virtual-keyboard.c'),str(BASE/'virtual-pointer.c'),'-o',str(BASE/'human-input'),*flags],check=True)
+    input_source=(FORK/'hyprtester/multiseat/input.c').read_text()
+    input_source=input_source.replace('        } else if (sscanf(line, "relative', '        } else if (sscanf(line, "scroll %d", &dy) == 1) {\n'
+        '            zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_WHEEL);\n'
+        '            zwlr_virtual_pointer_v1_axis_discrete(pointer, now(), WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(dy), dy / 10);\n'
+        '            zwlr_virtual_pointer_v1_frame(pointer);\n'
+        '        } else if (sscanf(line, "relative')
+    (BASE/'input.c').write_text(input_source)
+    subprocess.run(['cc','-I'+str(BASE),str(BASE/'input.c'),str(BASE/'virtual-keyboard.c'),str(BASE/'virtual-pointer.c'),'-o',str(BASE/'human-input'),*flags],check=True)
     keyboard=subprocess.Popen([str(BASE/'human-input'),'Hyprland','human'],env=ENV,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=open(BASE/'keyboard.log','w'),text=True,start_new_session=True);PROCESSES.append(keyboard)
     assert select.select([keyboard.stdout],[],[],5)[0] and keyboard.stdout.readline().strip()=='ready'
     a=MCP('codex');b=MCP('pi')
@@ -59,11 +66,42 @@ try:
     assert a.call('desktop_handoff',target|{'action':'resume','requestId':rid},False)['isError']
     wait(lambda:banner()['visible'])
     visible_cooperation(banner,name,'cooperation-request',lambda row:row['status']=='requested')
-    click_banner(name)
+    # A long card must always retain a reachable close button. Native scrolling
+    # must not move it with the instructions or resolve any underlying task.
+    other_target={'desktop':other['desktop']}
+    other_request=b.details('desktop_handoff',other_target|{'action':'request','title':'长说明测试','instructions':('请检查测试内容。\n'*80)})['request']
+    row,layer=visible_cooperation(banner,other['name'],'cooperation-long-instructions')
+    before_dismiss=banner()['dismiss'];v=banner()['viewport']
+    send(f"motion {round(layer['x']+v['x']+v['width']/2)} {round(layer['y']+v['y']+v['height']/2)}")
+    for _ in range(5):send('scroll 100')
+    wait(lambda:banner()['viewport']['contentY']>0)
+    after_dismiss=banner()['dismiss']
+    assert before_dismiss==after_dismiss,(before_dismiss,after_dismiss)
+    click_banner(other['name'],dismiss=True)
+    wait(lambda:not banner()['visible'])
+    assert a.details('desktop_handoff',target|{'action':'status'})['request']['status']=='requested'
+    assert b.details('desktop_handoff',other_target|{'action':'status'})['request']['status']=='requested'
+    row,_,_=cooperation_menu(name,'接管并处理');click_menu(row)
     wait(lambda:observer()['humanControl'])
     wait(lambda:a.details('desktop_handoff',target|{'action':'status'})['request']['status']=='in_progress')
     agent_env=secondary_env(name)
     wait(lambda:not banner()['visible'] and not banner(agent_env)['visible'])
+    b.call('desktop_handoff',other_target|{'action':'resolve','requestId':other_request['id'],'outcome':'cancelled','note':'replace synthetic request'})
+    b.call('desktop_handoff',other_target|{'action':'resume','requestId':other_request['id']})
+    new_request=b.details('desktop_handoff',other_target|{'action':'request','title':'接管时的新请求','instructions':'留在菜单，不要遮挡正在接管的桌面。'})['request']
+    operation={'operation':'测试诊断','desktop':name,'detail':'synthetic takeover diagnostic','at':int(time.time()*1000)}
+    shell('ipc','desktopObserver','actionResult',json.dumps(operation))
+    for _ in range(10):
+        assert not banner()['visible'] and not banner(agent_env)['visible']
+        time.sleep(.1)
+    row,heading,_=cooperation_menu(other['name'],'接管并处理')
+    assert new_request['instructions'] in heading['detail']
+    b.call('desktop_handoff',other_target|{'action':'resolve','requestId':new_request['id'],'outcome':'cancelled','note':'synthetic request verified'})
+    b.call('desktop_handoff',other_target|{'action':'resume','requestId':new_request['id']})
+    shell('ipc','desktopObserver','actionResult',json.dumps(operation|{'clear':True,'at':int(time.time()*1000)}))
+    assert not any(layer['namespace']=='cornice-desktop-cooperation' and layer['alpha']>0 for levels in ctl('layers',True)['human']['levels'].values() for layer in levels)
+    subprocess.run(['grim','-o','human',str(BASE/'takeover-unobstructed.png')],env=ENV,check=True,timeout=4)
+    record('native scrolling keeps Close fixed; dismissal preserves requests; new requests and diagnostic errors stay out of every desktop during takeover and remain available in the bar menu')
     # Real keyboard input reaches the target desktop while Agent input is revoked.
     client=next(w for w in ctl('clients',True) if w['title']==name+'-window')
     st=cli('state',name);g=json.loads((BASE/(name+'.geometry')).read_text())['entry']

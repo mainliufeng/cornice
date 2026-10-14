@@ -9,7 +9,7 @@ Item {
   readonly property var requests:service ? service.cooperationNotices : []
   // Human reminders belong to the session, not each private desktop shell.
   // Every shell retains its task record and menu actions through the service.
-  readonly property bool noticeScope:!!service && !DesktopSession.agentShell
+  readonly property bool noticeScope:!!service && !DesktopSession.agentShell && !service.cooperationTakeoverActive
   PanelWindow {
     id:window
     screen:{
@@ -20,23 +20,25 @@ Item {
     anchors {top:true}
     margins.top:Style.barHeight+Style.space(1)
     implicitWidth:Math.min(460,(screen ? screen.width : 1280)-Style.space(4))
-    implicitHeight:Math.min(body.implicitHeight+Style.space(3),(screen ? screen.height : 800)-Style.barHeight-Style.space(4))
+    implicitHeight:Math.min(body.implicitHeight+header.implicitHeight+Style.space(4.5),(screen ? screen.height : 800)-Style.barHeight-Style.space(4))
     color:"transparent";exclusionMode:ExclusionMode.Ignore;focusable:false
     WlrLayershell.layer:WlrLayer.Overlay
     WlrLayershell.namespace:"cornice-desktop-cooperation"
     WlrLayershell.keyboardFocus:WlrKeyboardFocus.None
     Rectangle {
       anchors.fill:parent;radius:Style.radius;color:Color.panel;border.color:Color.surfaceBorder
+      Row {
+        id:header
+        anchors {top:parent.top;left:parent.left;right:parent.right;margins:Style.space(1.5)}
+        Text {width:parent.width-dismissButton.width;text:"桌面协作";color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.fontSize;font.bold:true;anchors.verticalCenter:parent.verticalCenter}
+        PanelButton {id:dismissButton;label:"收起";onClicked:root.service.dismissCooperationNotice()}
+      }
       Flickable {
-        anchors.fill:parent;anchors.margins:Style.space(1.5);clip:true
-        contentHeight:body.implicitHeight;boundsBehavior:Flickable.StopAtBounds
+        id:viewport
+        anchors {top:header.bottom;bottom:parent.bottom;left:parent.left;right:parent.right;margins:Style.space(1.5)}
+        clip:true;contentHeight:body.implicitHeight;boundsBehavior:Flickable.StopAtBounds
         Column {
           id:body;width:parent.width;spacing:Style.space(1.5)
-          Row {
-            width:body.width
-            Text {width:parent.width-dismissButton.width;text:"桌面协作";color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.fontSize;font.bold:true;anchors.verticalCenter:parent.verticalCenter}
-            PanelButton {id:dismissButton;label:"收起";onClicked:root.service.dismissCooperationNotice()}
-          }
           Column {
             visible:!!root.service && root.service.cooperationNoticeError !== ""
             width:body.width;spacing:Style.space(.8)
@@ -83,7 +85,8 @@ Item {
         for(let i=0;i<rows.count;++i) controls.push(rows.itemAt(i).geometry())
         const p=dismissButton.mapToItem(window.contentItem,0,0)
         return JSON.stringify({visible:window.visible,error:root.service ? root.service.cooperationNoticeError : "",output:window.screen ? window.screen.name : "",controls:controls,
-          dismiss:{x:p.x,y:p.y,width:dismissButton.width,height:dismissButton.height}})
+          dismiss:{x:p.x,y:p.y,width:dismissButton.width,height:dismissButton.height},
+          viewport:{x:viewport.x,y:viewport.y,width:viewport.width,height:viewport.height,contentY:viewport.contentY}})
       }
     }
   }

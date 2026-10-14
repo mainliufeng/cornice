@@ -59,6 +59,10 @@ Item {
   // changes the Broker's input permissions; its record stays in the bar menu.
   property var dismissedCooperationRequests: ({})
   property string dismissedCooperationError: ""
+  // Keep the native desktop unobstructed throughout manual control, including
+  // unrelated pending requests and service errors. Records remain in the menu.
+  readonly property bool cooperationTakeoverActive: !!observer && observer.humanControl || desktops.some(item =>
+    item.controlMode === "human" && (!item.primary || !!item.handoff && item.handoff.status === "in_progress"))
   readonly property var cooperationNotices: humanRequests.filter(item => !dismissedCooperationRequests[item.handoff.id])
   readonly property string cooperationErrorKey: error ? JSON.stringify({error:error,action:actionResult}) : ""
   readonly property string cooperationNoticeError: cooperationErrorKey !== dismissedCooperationError ? error : ""
@@ -136,7 +140,7 @@ Item {
     const state = desktops.find(item => item.name === name)
     if (!state || !state.handoff || state.handoff.status !== "requested" || (requestId && requestId !== state.handoff.id)) return
     requestId=state.handoff.id
-    dismissCooperationRequest(name,requestId)
+    dismissCooperationNotice()
     if (state.primary) {operate(["handoff-start",name,requestId]);return}
     if (DesktopSession.agentShell) {
       runHelper([prefix + "/bin/cornice-agent-view", name, "--handoff", requestId], "接管并处理", name);return
