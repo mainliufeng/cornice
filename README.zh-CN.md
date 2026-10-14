@@ -2,6 +2,10 @@
 
 [English](README.md) · **中文**
 
+这里是保留旧版代码的 `legacy/single-desktop` 分支，基线为原 main 提交
+`d7d3f1071bafab1afb9a57062b9d8c0cb5db3858`，提供原有单桌面 shell。
+当前开发主线位于 [`main`](https://github.com/mainliufeng/cornice/tree/main)。
+
 基于 [Quickshell](https://quickshell.org) 的通用 **Hyprland shell**：一个进程提供
 状态栏、各种面板、通知、启动器、锁屏、idle 处理与 polkit 认证代理 —— 用来替掉
 waybar + mako + hypridle + hyprlock + polkit-gnome + 一个启动器 这一串各自带配置
@@ -49,10 +53,14 @@ waybar + mako + hypridle + hyprlock + polkit-gnome + 一个启动器 这一串�
 ## 安装
 
 ```bash
-git clone https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
-cd ~/Code/self/cornice
-./install.sh                 # 软链 CLI 到 ~/.local/bin，顺便体检依赖
+git clone --branch legacy/single-desktop --single-branch https://github.com/mainliufeng/cornice.git "$HOME/Code/self/cornice-single-desktop"
+cd "$HOME/Code/self/cornice-single-desktop"
+./install.sh --copy --prefix "$HOME/.local/opt/cornice-single-desktop"
+"$HOME/.local/opt/cornice-single-desktop/bin/cornice" help
 ```
+
+以上命令把此版本复制到独立前缀。使用该前缀下的完整 CLI 路径，
+或在准备运行旧版的终端里选择该前缀的 `bin` 目录。
 
 `./install.sh` 默认安装到用户目录，不会改动合成器配置：
 
@@ -68,10 +76,10 @@ Arch 用户可以直接打包：`make pkg`（`makepkg -si`，装到 `/usr/share/
 CLI 软链到 `/usr/bin`）。要发 AUR 的话 [docs/aur.md](docs/aur.md) 里有 AUR 版
 PKGBUILD 与上传流程。
 
-然后启动它 —— 推荐用 systemd 用户服务，挂掉了会自动拉回来：
+决定把运行中的 shell 切换到旧版时，先保存工作并安排切换。下面是单独的迁移步骤，会使用并替换同名 `cornice.service` 用户服务：
 
 ```bash
-./install.sh --service       # 安装并启用 cornice.service（Restart=always）
+./install.sh --copy --prefix "$HOME/.local/opt/cornice-single-desktop" --service       # 安装并启用 cornice.service（Restart=always）
 systemctl --user status cornice
 ```
 

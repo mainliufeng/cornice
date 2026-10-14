@@ -22,7 +22,7 @@ everything must be fetched from a URL and nothing may be copied from
 
 | Package | Source | When |
 | --- | --- | --- |
-| `cornice-git` | `git+https://github.com/mainliufeng/cornice.git` | now: tracks `main`, no releases needed |
+| `cornice-git` | `git+https://github.com/mainliufeng/cornice.git#branch=legacy/single-desktop` | preserved single-desktop branch, no releases needed |
 | `cornice` | a tagged tarball + `sha256sums` | later, once you tag releases — this is the one AUR users prefer |
 
 Check the names are free before starting:
@@ -33,6 +33,9 @@ curl -s "https://aur.archlinux.org/rpc/v5/info?arg[]=cornice&arg[]=cornice-git" 
 ```
 
 ## AUR-ready PKGBUILD (`cornice-git`)
+
+These historical packaging examples are pinned to the preserved
+`legacy/single-desktop` branch. A new package build has not been validated.
 
 ```bash
 pkgname=cornice-git
@@ -56,7 +59,7 @@ optdepends=(
 )
 provides=('cornice')
 conflicts=('cornice')
-source=('cornice::git+https://github.com/mainliufeng/cornice.git')
+source=('cornice::git+https://github.com/mainliufeng/cornice.git#branch=legacy/single-desktop')
 sha256sums=('SKIP')
 options=('!strip')
 
@@ -97,8 +100,8 @@ The `pkgver` here is a placeholder: `pkgver()` overwrites it on the first build.
 git clone ssh://aur@aur.archlinux.org/cornice-git.git
 cd cornice-git
 
-# 2. drop in the PKGBUILD from above (or copy this repo's and edit source/pkgver)
-cp ~/Code/self/cornice/PKGBUILD .
+# 2. save the pinned PKGBUILD example above into this directory.
+# The repository's working-tree recipe is a different local-only recipe.
 $EDITOR PKGBUILD
 
 # 3. check it builds and is compliant

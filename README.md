@@ -2,6 +2,10 @@
 
 **English** · [中文](README.zh-CN.md)
 
+This is the preserved `legacy/single-desktop` branch, based on the previous main
+commit `d7d3f1071bafab1afb9a57062b9d8c0cb5db3858`. It contains the original
+single-desktop shell. The current development line is [`main`](https://github.com/mainliufeng/cornice/tree/main).
+
 A general-purpose **Hyprland shell** built on [Quickshell](https://quickshell.org):
 one process that gives you the bar, panels, notifications, the launcher, the
 lock screen, idle handling and a polkit agent — instead of waybar + mako +
@@ -66,10 +70,14 @@ More, without screenshots:
 ## Install
 
 ```bash
-git clone https://github.com/mainliufeng/cornice.git ~/Code/self/cornice
-cd ~/Code/self/cornice
-./install.sh                 # symlinks the CLI into ~/.local/bin, checks deps
+git clone --branch legacy/single-desktop --single-branch https://github.com/mainliufeng/cornice.git "$HOME/Code/self/cornice-single-desktop"
+cd "$HOME/Code/self/cornice-single-desktop"
+./install.sh --copy --prefix "$HOME/.local/opt/cornice-single-desktop"
+"$HOME/.local/opt/cornice-single-desktop/bin/cornice" help
 ```
+
+The quickstart keeps this version in a separate prefix. Use its full CLI path,
+or select its `bin` directory in the terminal where you intend to run it.
 
 `./install.sh` defaults to a user-local install and leaves compositor config alone:
 
@@ -85,10 +93,10 @@ Arch users can build a package: `make pkg` (`makepkg -si`, installs to
 `/usr/share/cornice` with the CLI in `/usr/bin`). [docs/aur.md](docs/aur.md) has
 the AUR-ready PKGBUILD and the upload procedure.
 
-Then start it — as a systemd user service, so it comes back if it ever dies:
+To select this legacy shell as the running service, save your work and arrange the shell switch first. This separate migration step uses and replaces the shared `cornice.service` user unit:
 
 ```bash
-./install.sh --service       # installs + enables cornice.service (Restart=always)
+./install.sh --copy --prefix "$HOME/.local/opt/cornice-single-desktop" --service       # installs + enables cornice.service (Restart=always)
 systemctl --user status cornice
 ```
 
