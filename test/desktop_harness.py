@@ -23,6 +23,10 @@ PROCESSES = []
 ENV = os.environ.copy()
 for key in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_SOCKET", "DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "CORNICE_LAUNCH_LOCKED"):
     ENV.pop(key, None)
+if os.getenv("CORNICE_TEST_PRODUCT") and not (PRODUCT / "native/qml/Cornice/Platform/qmldir").is_file():
+    raise RuntimeError("The fixed installed product has no Platform QML module; source fallback is forbidden")
+if os.getenv("CORNICE_TEST_PRODUCT") and not (PRODUCT / "native/qml/Cornice/Desktop/qmldir").is_file():
+    raise RuntimeError("The fixed installed product has no Desktop QML module; source fallback is forbidden")
 ENV.update(XDG_RUNTIME_DIR=str(RT), XDG_CONFIG_HOME=str(BASE / "config"), XDG_CACHE_HOME=str(BASE / "cache"),
            XDG_STATE_HOME=str(BASE / "state"), GDK_BACKEND="wayland", GTK_IM_MODULE="wayland",
            NO_AT_BRIDGE="1", GCOV_PREFIX=str(BASE / "coverage"), CORNICE_PATH=str(PRODUCT), CORNICE_ISOLATED_TEST="1", QML_IMPORT_PATH=str(PRODUCT / "native/qml" if (PRODUCT / "native/qml").exists() else ROOT / "native/build/qml"))
@@ -173,7 +177,13 @@ def broker_socket():
     identity = hashlib.sha256(ENV["HYPRLAND_INSTANCE_SIGNATURE"].encode("utf-8")).hexdigest()[:32]
     return RT / "cornice" / ("ipc-" + identity) / "desktop.sock"
 
-def initialize(xwayland=False):
+def startup_ready(process, probe, label):
+    code = process.poll()
+    if code is not None:
+        raise RuntimeError(f"Private {label} exited before readiness (exit {code}); see {BASE / (label + '.log')}")
+    return probe()
+
+def initialize(xwayland=False, broker_launcher=None):
     global BUS_PID
     assert os.getenv("CORNICE_TEST_SANDBOX") == "1", "Use isolated-desktop-test.sh; never discover the host compositor"
     config = BASE / "hyprland.lua"
@@ -184,11 +194,11 @@ hl.window_rule({name="human-test",match={title="^human-window$"},workspace="1"})
     bus = subprocess.check_output(["dbus-daemon", "--session", "--fork", "--print-address=1", "--print-pid=1"], env=ENV, text=True).splitlines()
     ENV["DBUS_SESSION_BUS_ADDRESS"] = bus[0]
     BUS_PID = int(bus[1])
-    start(["mutter", "--headless", "--wayland", "--no-x11", "--wayland-display=parent", "--virtual-monitor", "1280x800"], "mutter")
-    wait(lambda: (RT / "parent").is_socket())
+    parent = start(["mutter", "--headless", "--wayland", "--no-x11", "--wayland-display=parent", "--virtual-monitor", "1280x800"], "mutter")
+    wait(lambda: startup_ready(parent, lambda: (RT / "parent").is_socket(), "mutter"))
     ENV.update(WAYLAND_DISPLAY="parent", AQ_DRM_DEVICES="/dev/null", LIBSEAT_BACKEND="noop")
     compositor = start([os.environ["CORNICE_TEST_HYPRLAND"], "-c", str(config)], "Hyprland")
-    ENV["HYPRLAND_INSTANCE_SIGNATURE"] = wait(lambda: next((p.name for p in (RT / "hypr").glob("*") if (p / ".socket.sock").is_socket()), None))
+    ENV["HYPRLAND_INSTANCE_SIGNATURE"] = wait(lambda: startup_ready(compositor, lambda: next((p.name for p in (RT / "hypr").glob("*") if (p / ".socket.sock").is_socket()), None), "Hyprland"))
     wait(lambda: ctl("monitors", True) is not None)
     log = (BASE / "Hyprland.log").read_text(errors="replace")
     assert "drm: Starting backend" not in log and "drm: Registered gpu" not in log
@@ -201,7 +211,7 @@ hl.window_rule({name="human-test",match={title="^human-window$"},workspace="1"})
     ENV["WAYLAND_DISPLAY"] = wait(lambda: next((p.name for p in RT.glob("wayland-*") if p.is_socket()), None))
     ok('dispatch hl.dsp.focus({monitor="human"})')
     ok('dispatch hl.dsp.focus({workspace="1"})')
-    broker = start([str(PRODUCT / "bin/cornice-desktopd")], "desktopd")
+    broker = broker_launcher() if broker_launcher else start([str(PRODUCT / "bin/cornice-desktopd")], "desktopd")
     wait(lambda: broker_socket().is_socket())
     assert cli("doctor")["capabilities"]["protocol"] == 1
     return broker

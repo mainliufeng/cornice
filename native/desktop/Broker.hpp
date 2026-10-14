@@ -74,6 +74,7 @@ class Broker : public QObject {
     void save();
     QJsonObject resourceLimits() const;
     void updateClipboard();
+    void refreshClipboardPolicy();
     QJsonObject clipboardStatus() const;
     void checkResources(const QString &geometry, const QString &replacing = {});
     QJsonObject definition(const QString &name);

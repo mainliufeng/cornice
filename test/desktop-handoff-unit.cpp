@@ -1,12 +1,14 @@
 // Test-only compositor transport and task sockets. Exercise the real Broker
 // without a Wayland connection, GUI, GPU, user manager or current session.
 #include "Broker.hpp"
+#include "ClipboardBridge.hpp"
 #include "DesktopEndpoint.hpp"
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QPointer>
 #include <QTemporaryDir>
 #include <QThread>
 #include <algorithm>
@@ -491,6 +493,56 @@ class BrokerHandoffFixture {
         require(refused && !compositor->saw("seat control ") && !compositor->saw("seat create "), "broken legacy definition was treated as fresh or changed input");
         std::puts("PASS malformed persistent and non-object legacy definitions fail before input changes without fresh seeding");
     }
+    void clipboardPolicyFailClosed(const QString &fault) {
+        require(broker->m_clipboard && broker->m_clipboardError.isEmpty(), "fixture did not create its actual isolated clipboard bridge");
+        require(broker->clipboardStatus()["mode"] == "isolated" && !broker->clipboardStatus()["connected"].toBool(),
+                "clipboard failure fixture must not connect to Wayland");
+        // Observe destruction, not a raw address: an allocator could reuse that
+        // address during recovery without proving the old QObject was retired.
+        QPointer<ClipboardBridge> oldBridge(broker->m_clipboard.get());
+        const auto policyPath = temporary.filePath("config/cornice/config.json");
+        QString expectedError;
+        if (fault == "malformed-policy") {
+            QFile policy(policyPath);
+            require(policy.open(QIODevice::WriteOnly | QIODevice::Truncate), "malformed clipboard policy fixture failed");
+            require(policy.write("{malformed-clipboard-policy") == 27, "malformed clipboard policy write failed");
+            policy.close();
+            expectedError = "malformed-clipboard-policy";
+        } else if (fault == "invalid-policy") {
+            document(policyPath, {{"agentDesktop", QJsonObject{{"clipboard", QJsonObject{{"mode", "invalid-unit-mode"}}}}}});
+            expectedError = "Invalid clipboard policy";
+        } else if (fault == "flag-string" || fault == "flag-number" || fault == "flag-null") {
+            const QJsonValue invalid = fault == "flag-string" ? QJsonValue("false") :
+                fault == "flag-number" ? QJsonValue(0) : QJsonValue(QJsonValue::Null);
+            compositor->setState("main", {{"humanLocked", invalid}});
+            expectedError = "Invalid clipboard session lock flag";
+        } else if (fault == "unknown-scope") {
+            compositor->setState("main", {{"humanLocked", true}, {"lockScope", "unknown-unit-scope"}});
+            expectedError = "Invalid clipboard session lock scope";
+        } else throw std::runtime_error("unknown clipboard policy fixture case");
+        // Exercise the production retry entry point against actual file reads
+        // and this fixture's private compositor IPC; no copied parser or bridge.
+        broker->refreshClipboardPolicy();
+        require(!broker->m_clipboard && oldBridge.isNull(), "invalid clipboard policy/state retained the old bridge QObject");
+        const auto failed = broker->clipboardStatus();
+        require(!broker->m_clipboardError.isEmpty() && broker->m_clipboardError.contains(expectedError) &&
+                failed["error"] == broker->m_clipboardError && !failed["connected"].toBool(),
+                "clipboard refresh failure did not report its policy/state error");
+        broker->refreshClipboardPolicy();
+        require(!broker->m_clipboard && oldBridge.isNull() && broker->clipboardStatus()["error"] == broker->m_clipboardError &&
+                broker->m_clipboardError.contains(expectedError), "invalid clipboard retry resurrected a bridge or lost the error");
+        document(policyPath, {{"agentDesktop", QJsonObject{{"clipboard", QJsonObject{{"mode", "isolated"}}}}}});
+        compositor->setState("main", {{"humanLocked", fault == "unknown-scope"},
+                                      {"lockScope", fault == "unknown-scope" ? "full" : "none"}});
+        broker->refreshClipboardPolicy();
+        require(broker->m_clipboard && oldBridge.isNull() && broker->m_clipboardError.isEmpty(),
+                "correct clipboard policy/state did not rebuild after a failed refresh");
+        const auto recovered = broker->clipboardStatus();
+        require(recovered["mode"] == "isolated" && !recovered["connected"].toBool() && recovered["error"].toString().isEmpty(),
+                "clipboard recovery retained an error or attempted a Wayland connection");
+        require(!compositor->resumed(), "clipboard policy recovery changed input control");
+        std::printf("PASS actual Broker refresh retires the bridge on %s, preserves its error, and rebuilds after policy/state repair\n", qPrintable(fault));
+    }
     void sharedWorkspace() {
         broker->m_desktops.at(target).privateOutput = "test-private-output";
         compositor->setClients(QJsonArray{QJsonObject{{"mapped", true}, {"workspace", QJsonObject{{"name", "cornice-agent-desktop2-ws-1"}}}, {"address", "0x1234"}}});
@@ -519,6 +571,8 @@ int main(int argc, char **argv) {
         for (const auto &reason : {"locked", "expired", "during-lock"})
             run([reason](auto &fixture) { fixture.takeoverStillGuarded(reason); });
         run([](auto &fixture) { fixture.retained(); });
+        for (const auto &fault : {"malformed-policy", "invalid-policy", "flag-string", "flag-number", "flag-null", "unknown-scope"})
+            run([fault](auto &fixture) { fixture.clipboardPolicyFailClosed(fault); });
         run([](auto &fixture) { fixture.sharedWorkspace(); });
         run([](auto &fixture) { fixture.endpointGolden(); });
         run([](auto &fixture) { fixture.earlyConnection(); });

@@ -191,7 +191,7 @@ Broker::Broker(QString instance)
     connect(&m_watchdog, &QTimer::timeout, this, [this] {
         if (m_configurationHeartbeat.elapsed() >= 1000) {
             m_configurationHeartbeat.restart();
-            try { updateClipboard(); } catch (const std::exception &error) { m_clipboardError = QString::fromUtf8(error.what()); }
+            refreshClipboardPolicy();
             for (auto &[name, desktop] : m_desktops) {
                 try { configureDesktop(name); desktop.configurationError.clear(); }
                 catch (const std::exception &error) { desktop.configurationError = QString::fromUtf8(error.what()); }
@@ -275,6 +275,9 @@ Broker::Broker(QString instance)
             m_eventInput.remove(0, line.size() + 1);
             if (line != "sessionlock>>locked")
                 continue;
+            // Read the actual scope: daily locks may leave other seats running.
+            // Revoke transfers before presentation teardown can issue more IPC.
+            refreshClipboardPolicy();
             endTakeover("Session locked");
             for (auto it = m_buffers.begin(); it != m_buffers.end(); ++it) {
                 QFile file(it.value());
@@ -470,6 +473,16 @@ QJsonObject Broker::clipboardStatus() const {
     if (!m_clipboardError.isEmpty()) result["error"] = m_clipboardError;
     return result;
 }
+void Broker::refreshClipboardPolicy() {
+    try {
+        updateClipboard();
+    } catch (const std::exception &error) {
+        // An unreadable policy or lock state must not keep the old bridge and
+        // its in-flight transfers alive. The periodic check retries safely.
+        m_clipboard.reset();
+        m_clipboardError = QString::fromUtf8(error.what());
+    }
+}
 void Broker::updateClipboard() {
     QString mode="shared"; qint64 maxBytes=16777216;
     const QStringList paths{qEnvironmentVariable("CORNICE_PATH") + "/config/default.json",
@@ -482,10 +495,15 @@ void Broker::updateClipboard() {
         if(config.contains("maxBytes"))maxBytes=config["maxBytes"].toVariant().toLongLong();
     }
     if((mode!="shared" && mode!="isolated") || maxBytes<1 || maxBytes>64*1024*1024)fail("Invalid clipboard policy");
-    const auto primary=json(compositor("seat state main",true)).object();
+    const auto reply=json(compositor("seat state main",true));
+    if (!reply.isObject()) fail("Invalid clipboard session lock state");
+    const auto primary=reply.object();
+    if (!primary["humanLocked"].isBool()) fail("Invalid clipboard session lock flag");
+    const auto scope=primary["humanLocked"].toBool()?primary["lockScope"].toString():QString{};
+    if (primary["humanLocked"].toBool() && scope != "human" && scope != "full")
+        fail("Invalid clipboard session lock scope");
     if(!m_clipboard)m_clipboard=std::make_unique<ClipboardBridge>(primary["display"].toString(),this);
     QStringList names{"Hyprland"};for(const auto &[name,desktop]:m_desktops)if(!desktop.primary)names.append(name);
-    const auto scope=primary["humanLocked"].toBool()?primary["lockScope"].toString("full"):QString{};
     m_clipboard->configure(names,"Hyprland",mode,maxBytes,scope);m_clipboardError.clear();
 }
 
