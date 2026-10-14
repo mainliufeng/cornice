@@ -38,6 +38,7 @@ QByteArray HyprlandAdapter::command(const QString &command, bool asJson) const {
         if (value.contains("locked")) value["humanLocked"] = value.take("locked");
         if (value.contains("scopePolicy")) value["humanLockPolicy"] = value.take("scopePolicy").toString() == "allow" ? "continue" : "pause";
         if (value["lockScope"].toString() == "scoped") value["lockScope"] = "human";
+        else if (value["lockScope"].toString() == "session") value["lockScope"] = "full";
         return value;
     };
     if (parsed.isObject() && (wireCommand.startsWith("seat state ") || wireCommand.startsWith("seat lock-policy ") || wireCommand.startsWith("seat control ")))

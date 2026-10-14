@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QVector>
@@ -195,6 +196,35 @@ int main(int argc, char **argv) {
         try { test(); ++passed; std::printf("PASS %s\n", name.toUtf8().constData()); }
         catch (const std::exception &error) { ++failed; std::fprintf(stderr, "FAIL %s: %s\n", name.toUtf8().constData(), error.what()); }
     };
+
+    for (const auto &command : {QString("seat state main"), QString("seat lock-policy desktop2 continue"), QString("seat control desktop2 pause")}) {
+        run("session lock is canonical across seat state/control/policy: " + command, [command] {
+            Fixture fixture;
+            const QByteArray reply = R"({"locked":true,"scopePolicy":"block","lockScope":"session"})";
+            const auto wire = command.endsWith(" continue") ? QString("seat lock-policy desktop2 allow") : command;
+            CompositorIpc ipc(fixture.directory.path(), {{"j/" + wire.toUtf8(), reply}});
+            const auto state = QJsonDocument::fromJson(HyprlandAdapter("unit").command(command, true)).object();
+            require(state["humanLocked"].toBool(), "session lock was lost in the adapter");
+            require(state["lockScope"].toString() == "full", "session lock did not reach the full-lock clipboard gate");
+            require(state["humanLockPolicy"].toString() == "pause", "block policy was not normalized");
+            require(!state.contains("locked") && !state.contains("scopePolicy"), "wire aliases escaped the adapter");
+            ipc.verify();
+        });
+    }
+    for (const auto &command : {QString("seat list"), QString("seat")}) {
+        run("seat lists normalize session/scoped locks and preserve canonical states: " + command, [command] {
+            Fixture fixture;
+            const QByteArray reply = R"([{"locked":true,"scopePolicy":"block","lockScope":"session"},{"locked":true,"scopePolicy":"allow","lockScope":"scoped"},{"humanLocked":true,"humanLockPolicy":"pause","lockScope":"full"},{"locked":false,"lockScope":"none"}])";
+            CompositorIpc ipc(fixture.directory.path(), {{"j/" + command.toUtf8(), reply}});
+            const auto states = QJsonDocument::fromJson(HyprlandAdapter("unit").command(command, true)).array();
+            require(states.size() == 4, "seat list changed size");
+            require(states[0].toObject()["lockScope"].toString() == "full", "list session lock was not normalized");
+            require(states[1].toObject()["lockScope"].toString() == "human" && states[1].toObject()["humanLockPolicy"].toString() == "continue", "scoped continuation policy changed");
+            require(states[2].toObject()["lockScope"].toString() == "full", "canonical full lock changed");
+            require(!states[3].toObject()["humanLocked"].toBool() && states[3].toObject()["lockScope"].toString() == "none", "unlocked state changed");
+            ipc.verify();
+        });
+    }
 
     run("no instance keeps the ordinary Wayland display", [] {
         Fixture fixture;
