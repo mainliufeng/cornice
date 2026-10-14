@@ -1,6 +1,6 @@
 """Exercise desktop lifecycle notices and controls on real isolated QML surfaces."""
 from desktop_harness import *
-from cooperation_visual import visible_cooperation
+from cooperation_visual import visible_cooperation, visible_cooperation_menu, assert_painted_cooperation_tail, require_cooperation_ocr
 import hashlib
 import threading
 import shutil
@@ -87,14 +87,24 @@ def menu(name=None):
         return rows if any(item['name']=='control:current-heading' for item in rows) else None
     return wait(open_controls)
 
-def card_click(name):
+def card_click(name, dismiss=False):
     row,layer=visible_cooperation(cooperation,name,'product-card-before-click-'+str(time.monotonic_ns()))
+    if dismiss:row=cooperation()['dismiss']
     click(layer['x']+row['x']+row['width']/2,layer['y']+row['y']+row['height']/2)
+def cooperation_menu(name, expected_label):
+    # The primary shell's Overlay bar stays on the physical output in both
+    # read-only and takeover views; its service follows the selected desktop.
+    # The secondary shell has a separate native bar on its private output.
+    def geometry():return json.loads(shell('ipc','bar','geometry'))
+    return visible_cooperation_menu(geometry,lambda x,y:send(f'motion {round(x)} {round(y)}'),name,
+                                    'product-cooperation-menu-'+str(time.monotonic_ns()),expected_label,scroll=lambda delta:send(f'scroll {delta}'))
+def menu_click(row):click(row['x']+row['width']/2,row['y']+row['height']/2)
 
 
 task=None
 broker=None
 try:
+    require_cooperation_ocr()
     ENV['XDG_DATA_HOME']=str(BASE/'data')
     applications=BASE/'data/applications';applications.mkdir(parents=True)
     app_argv=['/usr/bin/python3',str(ROOT/'test/agent-desktop-client.py'),'ui-target-window',str(BASE/'ui-target.txt')]
@@ -123,7 +133,15 @@ try:
     for source,name in (('virtual-keyboard-unstable-v1','virtual-keyboard'),('wlr-virtual-pointer-unstable-v1','virtual-pointer')):
         for mode,extension in (('client-header','h'),('private-code','c')):subprocess.run(['wayland-scanner',mode,str(FORK/'protocols'/(source+'.xml')),str(BASE/(name+'.'+extension))],check=True)
     flags=subprocess.check_output(['pkg-config','--cflags','--libs','wayland-client','xkbcommon'],text=True).split()
-    subprocess.run(['cc','-I'+str(BASE),str(FORK/'hyprtester/multiseat/input.c'),str(BASE/'virtual-keyboard.c'),str(BASE/'virtual-pointer.c'),'-o',str(BASE/'human-input'),*flags],check=True)
+    input_source=(FORK/'hyprtester/multiseat/input.c').read_text()
+    assert '        } else if (sscanf(line, "relative' in input_source
+    input_source=input_source.replace('        } else if (sscanf(line, "relative', '        } else if (sscanf(line, "scroll %d", &dy) == 1) {\n'
+        '            zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_WHEEL);\n'
+        '            zwlr_virtual_pointer_v1_axis_discrete(pointer, now(), WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(dy), dy / 10);\n'
+        '            zwlr_virtual_pointer_v1_frame(pointer);\n'
+        '        } else if (sscanf(line, "relative')
+    (BASE/'human-input.c').write_text(input_source)
+    subprocess.run(['cc','-I'+str(BASE),str(BASE/'human-input.c'),str(BASE/'virtual-keyboard.c'),str(BASE/'virtual-pointer.c'),'-o',str(BASE/'human-input'),*flags],check=True)
     keyboard=subprocess.Popen([str(BASE/'human-input'),'Hyprland','human'],env=ENV,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=open(BASE/'keyboard.log','w'),text=True,start_new_session=True);PROCESSES.append(keyboard)
     assert select.select([keyboard.stdout],[],[],5)[0] and keyboard.stdout.readline().strip()=='ready'
     settings['agentDesktop']['resources']['maxDesktops']=3;configure();shell('ipc','shell','reloadConfig')
@@ -158,7 +176,8 @@ try:
     settings['desktopApplications']={'rules':{'ui-probe':{'executables':['python3'],'scope':'secondary','profile':'../invalid'}}}
     configure();shell('ipc','shell','reloadConfig')
     shell('ipc','desktopObserver','takeover','true');wait(lambda:observer()['humanControl'])
-    # In takeover, the secondary shell owns its native bar and current workspace.
+    # The secondary shell owns the native bar on its private output; the
+    # primary shell keeps the complete physical bar while showing that desktop.
     wait(lambda:next(item for item in next(widget['controls'] for widget in json.loads(local('bootstrap-ui','ipc','bar','geometry')) if widget['id']=='cn.workspaces') if item['active'])['name']=='1')
     local('bootstrap-ui','launcher');wait(lambda:json.loads(local('bootstrap-ui','ipc','launcher','debug'))['focused'])
     local('bootstrap-ui','ipc','launcher','setQuery','Cornice UI Launch Target')
@@ -193,22 +212,47 @@ try:
     shell('ipc','shell','hide','cn.agent-desktop')
     record('actual reset confirmation supports cancellation and preserves the running app by default')
     task=Task('bootstrap-ui')
-    request=task.handoff(action='request',title='请完成人工步骤',instructions='在输入框键入 human，然后点击已完成，退出接管。')['handoff']
+    tail_marker='<b>COOPERATION TAIL MARKER</b>'
+    instructions='在输入框键入 human，然后点击已完成，退出接管。\n'+'\n'.join(f'详细步骤 {index:02d}：请保留当前页面并按顺序完成。' for index in range(1,36))+'\n'+tail_marker
+    request=task.handoff(action='request',title='<b>请完成人工步骤</b>',instructions=instructions)['handoff']
     wait(lambda:cooperation()['visible'])
     widget=next(item for item in json.loads(shell('ipc','bar','geometry')) if item['id']=='cn.agent-desktop')
     icon=next(item for item in widget['controls'] if item['name']=='group')
     assert icon['alert'] and icon['badge']==1,icon
-    card_click('bootstrap-ui');wait(lambda:observer()['humanControl'])
+    card_click('bootstrap-ui',dismiss=True)
+    wait(lambda:not cooperation()['visible'])
+    for _ in range(3):
+        time.sleep(.4);assert not cooperation()['visible']
+        state=task.handoff(action='status');assert state['paused'] and state['handoff']['status']=='requested' and state['handoff']['id']==request['id']
+    # Dismissing the session notice must also survive viewing its private
+    # desktop: a second shell must not reintroduce a copy of that reminder.
+    shell('ipc','desktop','observe','bootstrap-ui')
+    wait(lambda:observer()['presentation'].get('active') and not observer()['humanControl'])
+    send('motion 1000 700');time.sleep(.6)
+    subprocess.run(['grim','-o','human',str(BASE/'product-dismissed-readonly.png')],env=ENV,check=True)
+    assert not cooperation()['visible'] and not cooperation('bootstrap-ui')['visible']
+    row,heading,layer=cooperation_menu('bootstrap-ui','接管并处理')
+    assert request['title'] in heading['detail'] and request['instructions'] in heading['detail']
+    assert_painted_cooperation_tail(layer,heading,'product-request-instruction-tail',tail_marker)
+    menu_click(row);wait(lambda:observer()['humanControl'])
+    wait(lambda:not cooperation()['visible'] and not cooperation('bootstrap-ui')['visible'])
     current=cli('state','bootstrap-ui');client=next(item for item in ctl('clients',True) if item['title']=='ui-target-window')
     entry=json.loads((BASE/'ui-target.geometry').read_text())['entry']
     click(client['at'][0]-current['position'][0]+entry[0]+30,client['at'][1]-current['position'][1]+entry[1]+entry[3]/2)
     for letter in 'human':send('type '+letter);time.sleep(.04)
     wait(lambda:(BASE/'ui-target.txt').read_text()=='human')
-    card_click('bootstrap-ui')
-    wait(lambda:not observer()['humanControl'] and cooperation()['controls'][0]['continuation'])
+    row,heading,layer=cooperation_menu('bootstrap-ui','已完成，退出接管')
+    assert '处理中' in heading['label']
+    assert_painted_cooperation_tail(layer,heading,'product-in-progress-instruction-tail',tail_marker)
+    menu_click(row)
+    wait(lambda:not observer()['humanControl'] and task.handoff(action='status')['handoff']['status']=='completed')
+    assert not cooperation()['visible'] and not cooperation('bootstrap-ui')['visible']
     support=cli('state','bootstrap-ui')['continuation']
     assert support['eventWait'] and support['notifications'] and support['wakeHarness'] is False,support
-    visible_cooperation(cooperation,'bootstrap-ui','product-waiting-continuation',lambda row:row['continuation'])
+    _,heading,layer=cooperation_menu('bootstrap-ui','查看桌面')
+    assert_painted_cooperation_tail(layer,heading,'product-continuation-instruction-tail',tail_marker)
+    assert '等待 Agent 继续' in heading['label'] and '不会启动新的 Agent 任务' in heading['detail']
+    send('motion 1000 700')
     task.handoff(action='resume',requestId=request['id']);task.text('-agent')
     wait(lambda:(BASE/'ui-target.txt').read_text()=='human-agent')
     wait(lambda:not cooperation('bootstrap-ui')['visible'])
@@ -216,7 +260,7 @@ try:
     shell('ipc','desktop','observe','main');wait(lambda:not observer()['open'])
     assert not (BASE/'human.txt').exists()
     assert {k:v for k,v in before.items() if k!='cursor'}=={k:v for k,v in human_state().items() if k!='cursor'}
-    record('global request badge and real handoff buttons preserve input: human typing, honest waiting state, and resumed Agent typing reach the same app while primary focus/workspace remain unchanged')
+    record('long cooperation instructions scroll to a pixel-verified tail in requested, in-progress and waiting states; request notice dismisses without changing task or permissions, real bar menu starts and completes handoff, no in-progress or continuation overlay blocks human typing, and resumed Agent typing reaches the same app without moving primary focus/workspace')
 except Exception:
     # This PID belongs to the private test child. Never discover a host Broker.
     if broker and broker.poll() is None:

@@ -29,7 +29,10 @@ Item {
       out.push({name: item.modelData.key, x: popup.margins.left + column.x, y: popup.margins.top + root.bridgeHeight + Style.space(1) + item.y - menuScroll.contentY,
         width: item.width, height: item.height, enabled: item.enabled, label: item.modelData.label, detail:item.modelData.detail || "",
         kind:item.modelData.kind || "action", scope:item.modelData.scope || "", target:item.modelData.target || "", checked:item.modelData.checked,
-        detailHeight:item.detailHeight, alert:item.modelData.alert === true})
+        detailHeight:item.detailHeight, detailLineCount:item.detailLineCount, detailTruncated:item.detailTruncated,
+        detailX:popup.margins.left + column.x + item.detailX,
+        detailTop:popup.margins.top + root.bridgeHeight + Style.space(1) + item.y - menuScroll.contentY + item.detailTop,
+        detailWidth:item.detailWidth, fullDetail:item.modelData.fullDetail === true, alert:item.modelData.alert === true})
     }
     return out
   }
@@ -85,6 +88,11 @@ Item {
           required property int index
           readonly property bool section: modelData.kind === "section"
           property real detailHeight: detailText.visible ? detailText.implicitHeight : 0
+          readonly property int detailLineCount: detailText.lineCount
+          readonly property bool detailTruncated: detailText.truncated
+          readonly property real detailX: detailText.x
+          readonly property real detailTop: detailText.y
+          readonly property real detailWidth: detailText.width
           width: column.width; height: section ? (modelData.detail ? labelText.implicitHeight + detailHeight + Style.space(3) : Style.space(4.5)) : modelData.detail ? labelText.implicitHeight + detailHeight + Style.space(2) : Style.space(5)
           enabled: !section && modelData.enabled !== false
           radius:Style.radius
@@ -120,7 +128,11 @@ Item {
             id:detailText;visible:!!modelData.detail
             anchors {left:labelText.left;right:labelText.right}
             y:labelText.y + labelText.implicitHeight
-            text:modelData.detail || "";wrapMode:Text.Wrap;maximumLineCount:8;elide:Text.ElideRight
+            text:modelData.detail || "";textFormat:Text.PlainText;wrapMode:Text.Wrap
+            // Long actionable instructions opt into full text inside the existing
+            // scroll viewport. Ordinary menu descriptions remain compact.
+            maximumLineCount:modelData.fullDetail === true ? 2147483647 : 8
+            elide:modelData.fullDetail === true ? Text.ElideNone : Text.ElideRight
             color:modelData.alert ? Color.urgent : section ? Color.foreground : Color.muted
             font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize
           }

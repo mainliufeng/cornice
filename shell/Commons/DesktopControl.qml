@@ -13,7 +13,7 @@ DesktopMenu {
   readonly property bool browsing: !primary && !human && presentation.active === true && presentation.following === false
   icon: human ? "󰥷" : "󰒃"
   description: service ? service.stateLabel(state) : "桌面"
-  entries: (name ? [
+  entries: (service ? service.cooperationMenuEntries : []).concat(name ? [
     {key:"current-heading",kind:"section",label:"当前桌面操作",detail:service ? service.desktopLabel(name) + " · " + (primary ? description : service.viewDescription(state)) : name,enabled:false,target:name},
     {key:"permission",icon:"󰒃",scope:"desktop",target:name,label:"允许 Agent 控制",checked:state.agentAllowed === true,detail:primary ? "仅授权 Cornice 桌面工具；所有桌面仍共享系统用户和文件权限。" : "授权此桌面的 Cornice 输入与浏览器控制。",enabled:service && !service.busy && !state.humanLocked},
     {key:"takeover",icon:"󰥷",scope:"desktop",target:name,label:primary && human ? "人工控制" : human ? "结束接管" : "接管" + (service ? " · " + service.desktopLabel(name) : ""),enabled:!!state.available && service && service.available && (primary ? !human : DesktopSession.agentShell || !!observer)},
@@ -26,7 +26,8 @@ DesktopMenu {
   ])
   onChosen: key => {
     if (!service) return
-    if (key === "permission") service.operate(["allow-agent", name, state.agentAllowed === true ? "off" : "on"])
+    if (key.startsWith("handoff:")) service.activateCooperation(key.slice(8))
+    else if (key === "permission") service.operate(["allow-agent", name, state.agentAllowed === true ? "off" : "on"])
     else if (key === "takeover" && primary) service.operate(["pause", name])
     else if (key === "takeover") service.toggleTakeover(name,!human)
     else if (key === "follow") service.follow()

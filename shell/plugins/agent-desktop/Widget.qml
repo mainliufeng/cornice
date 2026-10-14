@@ -26,13 +26,14 @@ Row {
     description:"桌面"
     badge:root.service ? root.service.humanRequests.length || root.service.activeDesktops.length : 0
     alert:!!root.service && (root.service.humanRequests.length > 0 || root.service.error !== "")
-    entries: root.service ? root.service.humanRequests.map(desktop => ({key:"request:" + desktop.name,scope:"cooperation",target:desktop.name,icon:"󰥷",label:root.service.desktopLabel(desktop.name) + " · 需要你处理",detail:desktop.handoff.title,alert:true})).concat([{key:"view-heading",kind:"section",label:"切换桌面",enabled:false}].concat(root.service.desktops.map(desktop => ({
-      key:"view:" + desktop.name,scope:"navigation",target:desktop.name,icon:"󰍹",label:root.service.desktopLabel(desktop.name),detail:root.service.stateLabel(desktop),
-      selected:desktop.name === root.service.selectedDesktop,enabled:desktop.primary === true || (!!desktop.available && !desktop.error)
-    })))).concat(control.entries.map(item => Object.assign({},item,{key:"control:"+item.key}))) : []
+    entries: root.service ? control.entries.filter(item => item.scope === "cooperation").map(item => Object.assign({},item,{key:"control:"+item.key}))
+      .concat([{key:"view-heading",kind:"section",label:"切换桌面",enabled:false}].concat(root.service.desktops.map(desktop => ({
+        key:"view:" + desktop.name,scope:"navigation",target:desktop.name,icon:"󰍹",label:root.service.desktopLabel(desktop.name),detail:root.service.stateLabel(desktop),
+        selected:desktop.name === root.service.selectedDesktop,enabled:desktop.primary === true || (!!desktop.available && !desktop.error)
+      }))))
+      .concat(control.entries.filter(item => item.scope !== "cooperation").map(item => Object.assign({},item,{key:"control:"+item.key}))) : []
     onChosen:key => {
-      if (key.startsWith("request:")) root.service.show(key.slice(8))
-      else if (key.startsWith("view:")) root.service.show(key.slice(5))
+      if (key.startsWith("view:")) root.service.show(key.slice(5))
       else control.chosen(key.slice(8))
     }
   }

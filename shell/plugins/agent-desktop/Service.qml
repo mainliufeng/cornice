@@ -55,6 +55,41 @@ Item {
   }
   readonly property var humanRequests: desktops.filter(item => item.handoff && item.handoff.status === "requested")
   readonly property var cooperationDesktops: desktops.filter(item => item.handoff && (["requested", "in_progress"].includes(item.handoff.status) || awaitingContinuation(item)))
+  // Notice visibility is local UI state. Hiding a request never resolves it or
+  // changes the Broker's input permissions; its record stays in the bar menu.
+  property var dismissedCooperationRequests: ({})
+  property string dismissedCooperationError: ""
+  readonly property var cooperationNotices: humanRequests.filter(item => !dismissedCooperationRequests[item.handoff.id])
+  readonly property string cooperationErrorKey: error ? JSON.stringify({error:error,action:actionResult}) : ""
+  readonly property string cooperationNoticeError: cooperationErrorKey !== dismissedCooperationError ? error : ""
+  readonly property var cooperationMenuEntries: cooperationDesktops.reduce((items, desktop) => items.concat(handoffMenuEntries(desktop)), [])
+  function dismissCooperationRequest(name, requestId) {
+    const desktop=desktops.find(item => item.name === name)
+    if (!desktop || !desktop.handoff || desktop.handoff.id !== requestId) return
+    dismissedCooperationRequests=Object.assign({},dismissedCooperationRequests,{[requestId]:true})
+  }
+  function dismissCooperationNotice() {
+    const hidden=Object.assign({},dismissedCooperationRequests)
+    for (const desktop of cooperationNotices) hidden[desktop.handoff.id]=true
+    dismissedCooperationRequests=hidden;dismissedCooperationError=cooperationErrorKey
+  }
+  function handoffMenuEntries(desktop) {
+    const request=desktop.handoff, continuation=awaitingContinuation(desktop)
+    const status=continuation ? "等待 Agent 继续" : handoffLabel(request.status)
+    return [
+      {key:"handoff-heading:"+request.id,kind:"section",scope:"cooperation",target:desktop.name,label:desktopLabel(desktop.name)+" · "+status,
+        detail:request.title+"\n"+request.instructions+(continuation ? "\n"+continuationMessage(desktop) : ""),fullDetail:true,enabled:false},
+      {key:"handoff:"+request.id,scope:"cooperation",target:desktop.name,icon:"󰥷",label:continuation ? "查看桌面" : request.status === "in_progress" ? "已完成，退出接管" : "接管并处理",
+        enabled:!busy && !desktop.humanLocked,alert:request.status === "requested"}
+    ]
+  }
+  function activateCooperation(requestId) {
+    const desktop=cooperationDesktops.find(item => item.handoff.id === requestId)
+    if (!desktop) return
+    if (awaitingContinuation(desktop)) show(desktop.name)
+    else if (desktop.handoff.status === "in_progress") completeHandoff(desktop.name,requestId)
+    else if (desktop.handoff.status === "requested") startHandoff(desktop.name,requestId)
+  }
   function continuationMessage(desktop) {
     const support = desktop.continuation || ({})
     if (support.message) return support.message
@@ -101,6 +136,7 @@ Item {
     const state = desktops.find(item => item.name === name)
     if (!state || !state.handoff || state.handoff.status !== "requested" || (requestId && requestId !== state.handoff.id)) return
     requestId=state.handoff.id
+    dismissCooperationRequest(name,requestId)
     if (state.primary) {operate(["handoff-start",name,requestId]);return}
     if (DesktopSession.agentShell) {
       runHelper([prefix + "/bin/cornice-agent-view", name, "--handoff", requestId], "接管并处理", name);return

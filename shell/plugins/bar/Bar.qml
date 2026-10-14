@@ -31,7 +31,10 @@ Item {
       else if (entry && entry.id) out.push(entry)
     }
     if (section === "left" && DesktopSession.agentShell && !configured("cn.workspaces")) out.unshift({id:"cn.workspaces"})
-    if (section === "left" && DesktopSession.agentShell && !configured("cn.agent-desktop")) out.push({id:"cn.agent-desktop"})
+    // A pending human step must keep an accessible completion entry after its
+    // notice is hidden, including configurations that only enable desktops.
+    const desktopsEnabled=DesktopSession.agentShell || (DesktopSession.service && DesktopSession.service.enabled)
+    if (section === "left" && desktopsEnabled && !configured("cn.agent-desktop")) out.push({id:"cn.agent-desktop"})
     return out
   }
 
