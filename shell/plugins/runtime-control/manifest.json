@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.runtime-control",
+  "name": "Runtime control",
+  "version": "0.1.0",
+  "author": "cornice",
+  "description": "Internal soft reload controller for the current shell",
+  "kinds": ["panel"],
+  "entryPoints": {"panel": "Controller.qml"}
+}

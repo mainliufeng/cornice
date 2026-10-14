@@ -1,0 +1,50 @@
+// Execute the actual controller methods; doubles are confined to this test.
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+const source=readFileSync(new URL('../shell/plugins/runtime-control/Controller.qml',import.meta.url),'utf8');
+const manifest=JSON.parse(readFileSync(new URL('../shell/plugins/runtime-control/manifest.json',import.meta.url),'utf8'));
+assert.equal(manifest.id,'cn.runtime-control');
+assert.deepEqual(manifest.kinds,['panel']);
+assert.equal(manifest.keepLoaded,undefined);
+assert.equal(manifest.entryPoints.panel,'Controller.qml');
+assert.doesNotMatch(source,/\b(?:ShellIpc|PanelWindow|FloatingWindow|PopupWindow|Window)\s*\{/);
+const names=['open','close','status','reload'];
+const methods=names.map(name=>{
+  const match=source.match(new RegExp('^  function '+name+'\\(([^)]*)\\) \\{([\\s\\S]*?)^  \\}', 'm'));
+  assert.ok(match,'missing actual controller method '+name);
+  return 'function '+name+'('+match[1]+') {'+match[2]+'}';
+}).join('\n');
+const deferred=[],reloads=[];
+const c={prepared:false,reloadQueued:false,requestSerial:0,host:null,Qt:{callLater:fn=>deferred.push(fn)},Quickshell:{reload:hard=>reloads.push(hard)}};
+c.root=c;vm.createContext(c);vm.runInContext(methods,c);
+assert.equal(c.reload('{}'),'unprepared');
+assert.equal(c.open('{}'),'unsupported');
+assert.equal(c.open('{broken'),'invalid-payload');
+assert.deepEqual(reloads,[]);assert.deepEqual(deferred,[]);
+assert.equal(c.open('{"action":"prepare"}'),'ready');
+assert.equal(c.status('{}'),'ready');assert.deepEqual(deferred,[]);
+c.close();assert.equal(c.status('{}'),'unprepared');assert.deepEqual(deferred,[]);
+console.log('PASS discovery, preparation and close have no visible surface or reload side effect');
+c.open('{"action":"prepare"}');
+assert.equal(c.reload('{}'),'requested');assert.deepEqual(reloads,[],'reload must be deferred until after the IPC method returns');
+assert.equal(c.reload('{}'),'requested');assert.equal(deferred.length,1,'pending requests must not enqueue duplicate reloads');
+deferred.shift()();assert.deepEqual(reloads,[false],'use the public soft reload API');
+console.log('PASS explicit reload replies before one public Quickshell.reload(false) call');
+assert.equal(c.reloadQueued,false,'the pending queue clears even when a failed QML generation retains this controller');
+assert.equal(c.reload('{}'),'requested');deferred.shift()();assert.deepEqual(reloads,[false,false]);
+console.log('PASS a retained controller can execute a later explicit retry after QML reload failure');
+c.close();c.open('{"action":"prepare"}');c.reload('{}');c.close();
+deferred.shift()();assert.deepEqual(reloads,[false,false],'closing the controller cancels a pending request');
+console.log('PASS closing a prepared or queued controller never triggers a reload');
+
+c.open('{"action":"prepare"}');c.reload('{}');c.close();c.open('{"action":"prepare"}');c.reload('{}');
+deferred.shift()();assert.deepEqual(reloads,[false,false],'a cancelled old callback cannot execute the replacement request');
+deferred.shift()();assert.deepEqual(reloads,[false,false,false]);
+console.log('PASS cancellation generations prevent a stale callback from executing a later prepared request');
+
+const lifecycle=[];c.host={prepareUiReload:()=>lifecycle.push('prepare')};
+c.Quickshell.reload=hard=>lifecycle.push('reload:'+hard);
+c.reload('{}');assert.deepEqual(lifecycle,[]);deferred.shift()();
+assert.deepEqual(lifecycle,['prepare','reload:false']);
+console.log('PASS the public host lifecycle stops IPC acceptance after the reply, before replacing the QML generation');

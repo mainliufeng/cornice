@@ -15,6 +15,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -125,6 +126,705 @@ def native_screenshot_bindings(configuration, product):
             return match[0]
         return "hl.dsp.exec_cmd(" + json.dumps(shlex.join(command + [pipelines[previous]])) + ")" if previous in pipelines else match[0]
     return re.sub(r'\bhl\.dsp\.exec_cmd\(\s*("(?:[^"\\]|\\.)*")\s*\)', replace, configuration)
+
+
+UI_PLATFORM = "cornice/native/qml/Cornice/Platform/"
+
+
+def ui_platform_id(product):
+    module = Path(product) / "native/qml/Cornice/Platform"
+    hashes = {str(path.relative_to(module)): digest(path) for path in module.rglob("*") if path.is_file()}
+    if not hashes:
+        return "absent"
+    return hashlib.sha256(json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def ui_build(shell, identifier):
+    """Stamp copied QML before hashing, without editing the source tree."""
+    atomic(Path(shell) / "Commons/UiBuild.qml", "pragma Singleton\nimport QtQml\n\n"
+           "// Immutable UI generation created by session-trial prepare.\n"
+           "QtObject { readonly property string id: " + json.dumps(identifier) +
+           "; readonly property string platformId: " + json.dumps(ui_platform_id(Path(shell).parent)) + " }\n")
+
+
+def ui_identity(path):
+    value = Path(path).lstat()
+    return [value.st_dev, value.st_ino]
+
+
+def ui_exchange(left, right):
+    rename = getattr(ctypes.CDLL(None, use_errno=True), "renameat2", None)
+    if rename is None:
+        raise RuntimeError("UI update requires Linux renameat2; current UI unchanged")
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    if rename(-100, os.fsencode(left), -100, os.fsencode(right), 2):
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    for parent in {Path(left).parent, Path(right).parent}:
+        descriptor = os.open(parent, os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+def ui_release(value):
+    path = Path(value).resolve()
+    if path.parent != (STATE / "releases").resolve():
+        raise RuntimeError("UI update accepts only prepared releases in this state directory")
+    return path
+
+
+def ui_hashes(release, manifest, prefix):
+    hashes = {key: value for key, value in manifest["hashes"].items() if key.startswith(prefix)}
+    actual = {str(path.relative_to(release)): digest(path)
+              for path in (release / prefix.rstrip("/")).rglob("*") if path.is_file()}
+    # A Platform overlay is a symlink under native/qml. pathlib's recursive
+    # glob does not descend directory symlinks; enumerate this approved root
+    # directly so future upgrades verify every currently active module file.
+    if prefix == "cornice/native/" and (release / UI_PLATFORM.rstrip("/")).is_symlink():
+        actual.update(ui_hashes(release, manifest, UI_PLATFORM))
+    if not hashes or hashes != actual:
+        raise RuntimeError("UI update payload differs from the manifest: " + prefix)
+    return hashes
+
+
+def ui_compatible(current, current_manifest, candidate, candidate_manifest):
+    # The UI consists of shell QML and its Cornice.Platform module. All other
+    # native code and helpers belong to the running session and stay unchanged.
+    for relative in ("Hyprland", "cornice/bin/cornice-desktopd", "cornice/bin/cornice-desktop",
+                     "cornice/config/session-services.json"):
+        if (relative not in current_manifest["hashes"] or relative not in candidate_manifest["hashes"] or
+                current_manifest["hashes"][relative] != candidate_manifest["hashes"][relative]):
+            raise RuntimeError("UI-only update is incompatible: " + relative)
+    for prefix in ("cornice/native/", "cornice/bin/"):
+        old = ui_hashes(current, current_manifest, prefix)
+        new = ui_hashes(candidate, candidate_manifest, prefix)
+        if prefix == "cornice/native/":
+            old = {key: value for key, value in old.items() if not key.startswith(UI_PLATFORM)}
+            new = {key: value for key, value in new.items() if not key.startswith(UI_PLATFORM)}
+        if prefix == "cornice/bin/":
+            for helper in ("cornice", "cornice-session-trial"):
+                old.pop(prefix + helper, None)
+                new.pop(prefix + helper, None)
+        if old != new:
+            raise RuntimeError("UI-only update is incompatible: " + prefix)
+    return ui_hashes(candidate, candidate_manifest, "cornice/shell/")
+
+
+def ui_environment(pid, keys):
+    values = {}
+    for entry in (Path("/proc") / str(pid) / "environ").read_bytes().split(b"\0"):
+        if b"=" not in entry:
+            continue
+        key, value = entry.split(b"=", 1)
+        key = key.decode()
+        if key in keys:
+            values[key] = value.decode()
+    return values
+
+
+def ui_peer_matches(pid, name, context):
+    keys = {"CORNICE_PATH", "HYPRLAND_INSTANCE_SIGNATURE", "CORNICE_DESKTOP_NAME"}
+    values = ui_environment(pid, keys)
+    return (Path(values.get("CORNICE_PATH", "")).resolve() == context["release"] / "cornice" and
+            values.get("HYPRLAND_INSTANCE_SIGNATURE") == context["environment"]["HYPRLAND_INSTANCE_SIGNATURE"] and
+            values.get("CORNICE_DESKTOP_NAME", "") == name)
+
+
+def ui_context(info, allow_dead_shell=False):
+    if not is_running(info) or info.get("status") not in ("ready", "confirmed"):
+        raise RuntimeError("UI update requires a running healthy trial")
+    release = ui_release(info["release"])
+    environment = os.environ.copy()
+    for key in list(environment):
+        if key.startswith(("CORNICE_", "HYPRLAND_SEAT_", "HYPRLAND_ACTION_")):
+            environment.pop(key)
+    known = {"XDG_RUNTIME_DIR", "USER", "HOME", "DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY",
+             "HYPRLAND_INSTANCE_SIGNATURE", "CORNICE_SHELL_SOCKET", "CORNICE_PRIMARY_SHELL_SOCKET"}
+    for component in ("compositorPid", "brokerPid", "shellPid"):
+        pid = info.get(component)
+        if type(pid) is not int or pid <= 0 or not start_identity(pid):
+            if component == "shellPid" and allow_dead_shell:
+                continue  # File rollback must remain possible after a failed UI startup.
+            raise RuntimeError("UI update cannot verify current component: " + component)
+        proc = Path("/proc") / str(pid)
+        if proc.stat().st_uid != os.getuid():
+            raise RuntimeError("UI update component belongs to another user")
+        values = ui_environment(pid, known | {"CORNICE_PATH"})
+        if component != "compositorPid" and Path(values.get("CORNICE_PATH", "")).resolve() != release / "cornice":
+            raise RuntimeError("UI update component runs another product: " + component)
+        if component == "shellPid" or (allow_dead_shell and component == "brokerPid"):
+            environment.update({key: values[key] for key in known if key in values})
+    if digest(Path("/proc") / str(info["compositorPid"]) / "exe") != digest(release / "Hyprland"):
+        raise RuntimeError("Running compositor differs from the current release")
+    if (environment.get("HYPRLAND_INSTANCE_SIGNATURE") != info.get("instance") or
+            environment.get("WAYLAND_DISPLAY") != info.get("display") or
+            not Path(environment.get("XDG_RUNTIME_DIR", "")).is_absolute()):
+        raise RuntimeError("UI update cannot identify the current compositor environment")
+    environment.update(CORNICE_PATH=str(release / "cornice"), XDG_CONFIG_HOME=str(release / "config-home"),
+                       CORNICE_TRIAL_STATE_DIR=str(STATE))
+    primary = environment.get("CORNICE_PRIMARY_SHELL_SOCKET") or environment.get("CORNICE_SHELL_SOCKET")
+    if not primary:
+        primary = str(Path(environment["XDG_RUNTIME_DIR"]) / ("cornice-" + environment["USER"] + ".sock"))
+    environment.update(CORNICE_SHELL_SOCKET=primary, CORNICE_PRIMARY_SHELL_SOCKET=primary)
+    return {"release": release, "environment": environment, "info": info}
+
+
+def ui_cli(cli, context, name, *arguments):
+    environment = context["environment"].copy()
+    if name:
+        environment["CORNICE_DESKTOP_NAME"] = name
+    else:
+        environment.pop("CORNICE_DESKTOP_NAME", None)
+    return run([cli, *arguments], env=environment, timeout=12)
+
+
+def ui_desktops(cli, context, cold=False):
+    value = json.loads(ui_cli(cli, context, "", "desktop", "list"))
+    desktops = value.get("desktops")
+    if (not isinstance(desktops, list) or not desktops or
+            not all(isinstance(item, dict) and re.fullmatch(r"[A-Za-z0-9_-]+", item.get("name", ""))
+                    for item in desktops) or len({item["name"] for item in desktops}) != len(desktops) or
+            sum(item.get("primary") is True for item in desktops) != 1):
+        raise RuntimeError("UI update cannot verify the managed desktop list")
+    for item in desktops:
+        if ((item.get("presentation") or {}).get("active") is not False or item.get("humanTakeover") is True or
+                item.get("humanLocked") is True or (item.get("handoff") or {}).get("status") == "in_progress"):
+            raise RuntimeError("UI update refused during desktop presentation, takeover or lock")
+        if cold and (item.get("occupied") is not False or item.get("paused") is not True):
+            raise RuntimeError("Cold UI maintenance requires every desktop to be unoccupied and paused")
+    return desktops
+
+
+def ui_runtime(cli, context, name):
+    return json.loads(ui_cli(cli, context, name, "ipc", "shell", "runtimeIdentity"))
+
+
+def ui_socket_peer(context, name):
+    runtime = Path(context["environment"]["XDG_RUNTIME_DIR"])
+    signature = context["environment"]["HYPRLAND_INSTANCE_SIGNATURE"]
+    digest8 = hashlib.sha256(signature.encode()).hexdigest()[:8]
+    path = Path(context["environment"]["CORNICE_SHELL_SOCKET"]) if not name else runtime / ("cs-" + digest8 + "-" + name + ".sock")
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(2)
+        connection.connect(str(path))
+        import struct
+        pid, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+    if (uid != os.getuid() or not start_identity(pid) or not ui_peer_matches(pid, name, context) or
+            (not name and pid != context["info"]["shellPid"])):
+        raise RuntimeError("UI update shell socket identity differs from current session")
+    parent = int((Path("/proc") / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()[1])
+    expected_parent = context["info"]["brokerPid"] if name else context["info"]["pid"]
+    if parent != expected_parent:
+        raise RuntimeError("UI shell socket peer is not owned by the current supervisor/Broker")
+    return {"name": name, "pid": pid, "processStart": start_identity(pid)}
+
+
+def ui_shells(cli, context):
+    result = []
+    signature = context["environment"]["HYPRLAND_INSTANCE_SIGNATURE"]
+    for desktop in ui_desktops(cli, context):
+        name = "" if desktop.get("primary") else desktop["name"]
+        peer = ui_socket_peer(context, name)
+        pid = peer["pid"]
+        before = None
+        try:
+            before = ui_runtime(cli, context, name)
+        except RuntimeError as error:
+            if "unknown method: shell.runtimeIdentity" not in str(error):
+                raise
+            # First bootstrap supports the old shell without this read-only method.
+        if before and (before.get("pid") != pid or before.get("instance") != signature or
+                       before.get("desktop") != (name or "main")):
+            raise RuntimeError("UI update runtime identity belongs to another shell")
+        if not ui_cli(cli, context, name, "ping").startswith("pong"):
+            raise RuntimeError("UI update shell failed its health check")
+        result.append({"name": name, "pid": pid, "processStart": start_identity(pid),
+                       "output": desktop["output"],
+                       "beforeBuild": before.get("uiBuildId") if before else None,
+                       "beforePlatform": before.get("platformBuildId") if before else None,
+                       "beforeTransport": before.get("ipcTransport") if before else None})
+    return result
+
+
+def ui_bar_mapped(context, shell):
+    if not shell.get("output"):
+        return True  # Old recovery journals predate this readback contract.
+    layers = ipc(context["environment"], "layers")
+    return any(layer.get("namespace") == "cornice-bar" and layer.get("pid") == shell["pid"]
+               for level in layers.get(shell["output"], {}).get("levels", {}).values() for layer in level)
+
+
+def ui_wait(cli, context, shell, expected, timeout=8, platform=None):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if start_identity(shell["pid"]) != shell["processStart"]:
+            raise RuntimeError("UI reload replaced or lost a shell process")
+        try:
+            if expected is None:
+                try:
+                    ui_runtime(cli, context, shell["name"])
+                except RuntimeError as error:
+                    if ("unknown method: shell.runtimeIdentity" in str(error) and
+                            ui_cli(cli, context, shell["name"], "ping").startswith("pong") and ui_bar_mapped(context, shell)):
+                        return
+            else:
+                value = ui_runtime(cli, context, shell["name"])
+                if (value.get("uiBuildId") == expected and value.get("pid") == shell["pid"] and
+                        value.get("desktop") == (shell["name"] or "main") and
+                        value.get("instance") == context["environment"]["HYPRLAND_INSTANCE_SIGNATURE"] and
+                        (platform is None or value.get("platformBuildId") == platform) and ui_bar_mapped(context, shell)):
+                    return
+        except (RuntimeError, ValueError, subprocess.SubprocessError):
+            pass
+        time.sleep(.1)
+    raise RuntimeError("UI build readback timed out for " + (shell["name"] or "main"))
+
+
+def ui_record(value):
+    directory = Path(value).resolve()
+    if directory.parent != (STATE / "ui-overlays").resolve():
+        raise RuntimeError("Invalid UI overlay record path")
+    record = read(directory / "record.json")
+    release = ui_release(record["currentRelease"])
+    slot = Path(record["slot"])
+    if slot.parent != release / "cornice" or slot.name != ".shell-ui-" + directory.name:
+        raise RuntimeError("Invalid UI overlay rollback slot")
+    platform = record.get("platform")
+    if platform:
+        platform_slot = Path(platform["slot"])
+        if (platform_slot.parent != release / "cornice" or platform_slot.name != ".Platform-ui-" + directory.name or
+                Path(platform["path"]) != release / UI_PLATFORM.rstrip("/")):
+            raise RuntimeError("Invalid UI platform rollback slot")
+    return directory, record, release, slot
+
+
+
+
+def ui_preflight(candidate, context):
+    """Parse every QML file and compile the real native IPC type privately.
+
+    PanelWindow needs a Wayland backend, so this deliberately proves grammar
+    and transport-module compatibility, not a successful complete visual start.
+    The latter is checked after each owner-managed UI replacement.
+    """
+    files = sorted((candidate / "cornice/shell").rglob("*.qml"))
+    parser = ("/usr/lib/qt6/bin/qmllint" if Path("/usr/lib/qt6/bin/qmllint").is_file()
+              else shutil.which("qmllint6") or shutil.which("qmllint"))
+    if not parser or not files or not re.search(r"qmllint 6\.", run([parser, "--version"])):
+        raise RuntimeError("UI preflight requires Qt 6 qmllint and a prepared QML tree")
+    # These are syntax diagnostics only. qs imports are supplied by Quickshell;
+    # lint-only import/type warnings cannot prove a running visual shell works.
+    result = subprocess.run([parser, "--ignore-settings", "--bare", "--json", "-", *map(str, files)], capture_output=True, text=True, timeout=20)
+    try:
+        parsed = json.loads(result.stdout)["files"]
+        if {item["filename"] for item in parsed} != set(map(str, files)):
+            raise ValueError("incomplete QML parser coverage")
+        failures = [str(Path(item["filename"]).relative_to(candidate)) + ":" + str(warning.get("line", "")) +
+                    ": " + warning["message"] for item in parsed for warning in item.get("warnings", [])
+                    if warning.get("id") == "syntax"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("UI preflight could not verify Qt syntax diagnostics") from error
+    if failures:
+        raise RuntimeError("UI QML preflight rejected the candidate: " + "; ".join(failures)[:2000])
+    with tempfile.TemporaryDirectory(prefix="cornice-ui-preflight-", dir="/tmp") as temporary:
+        private = Path(temporary)
+        shutil.copytree(candidate / "cornice/shell", private / "shell")
+        for name in ("runtime", "home", "config", "cache", "data", "state"):
+            (private / name).mkdir(mode=0o700)
+        # Compile only: creating the candidate root would register its session
+        # services. Its actual transport dependencies use no window backend.
+        (private / "shell/preflight.qml").write_text(
+            'import QtQuick\nimport Quickshell\nimport Cornice.Desktop\nShellRoot {\n'
+            '  function compileTransport() {\n'
+            '    const path = "file://" + Quickshell.env("CORNICE_PREFLIGHT_ROOT") + "/services/IpcServer.qml"\n'
+            '    const component = Qt.createComponent(path, Component.PreferSynchronous)\n'
+            '    if (component.status !== Component.Ready) {\n'
+            '      console.error("CORNICE_PREFLIGHT_ERROR " + component.errorString()); Qt.exit(1); return\n'
+            '    }\n'
+            '    component.destroy(); console.log("CORNICE_PREFLIGHT_OK"); Qt.quit()\n'
+            '  }\n  Component.onCompleted: Qt.callLater(compileTransport)\n}\n')
+        excluded = {"DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "DBUS_SESSION_BUS_ADDRESS",
+                    "DBUS_SYSTEM_BUS_ADDRESS", "QML_IMPORT_PATH", "QT_PLUGIN_PATH"}
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in excluded and not key.startswith(("CORNICE_", "HYPRLAND_", "QS_", "QT_", "XDG_"))}
+        environment.update(HOME=str(private / "home"), QT_QPA_PLATFORM="offscreen", QSG_RHI_BACKEND="software",
+            XDG_RUNTIME_DIR=str(private / "runtime"), XDG_CONFIG_HOME=str(private / "config"),
+            XDG_CACHE_HOME=str(private / "cache"), XDG_DATA_HOME=str(private / "data"), XDG_STATE_HOME=str(private / "state"),
+            DBUS_SESSION_BUS_ADDRESS="unix:path=" + str(private / "no-session-bus"),
+            DBUS_SYSTEM_BUS_ADDRESS="unix:path=" + str(private / "no-system-bus"),
+            QML_IMPORT_PATH=str(candidate / "cornice/native/qml"), CORNICE_PREFLIGHT_ROOT=str(private / "shell"),
+            QS_DISABLE_FILE_WATCHER="1", QS_NO_RELOAD_POPUP="1")
+        executable = (Path("/proc") / str(context["info"]["shellPid"]) / "exe").resolve(strict=True)
+        result = subprocess.run([str(executable), "--no-color", "-p", str(private / "shell/preflight.qml")],
+                                env=environment, capture_output=True, text=True, timeout=10)
+        output = result.stdout + result.stderr
+        if result.returncode or "CORNICE_PREFLIGHT_OK" not in output:
+            raise RuntimeError("UI native module preflight rejected the candidate: " + output.strip()[-2000:])
+
+def ui_native_identity(context):
+    return {key: {"pid": context["info"][key], "processStart": start_identity(context["info"][key])}
+            for key in ("pid", "compositorPid", "brokerPid")}
+
+
+def ui_native_unchanged(context, expected):
+    info = read(STATE / "current.json")
+    if info.get("release") != str(context["release"]):
+        raise RuntimeError("UI maintenance session release changed")
+    for key, proof in expected.items():
+        if info.get(key) != proof["pid"] or start_identity(proof["pid"]) != proof["processStart"]:
+            raise RuntimeError("UI maintenance changed a native session process: " + key)
+    return info
+
+
+def ui_stop_shell(context, shell):
+    """Stop one authenticated owner-tracked UI process, never its process group."""
+    peer = ui_socket_peer(context, shell["name"])
+    if any(peer[key] != shell[key] for key in ("name", "pid", "processStart")):
+        raise RuntimeError("UI shell identity changed before controlled replacement")
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        raise RuntimeError("Cold UI maintenance requires Linux pidfd signaling")
+    descriptor = os.pidfd_open(shell["pid"])
+    try:
+        if start_identity(shell["pid"]) != shell["processStart"]:
+            raise RuntimeError("UI shell process was replaced before signaling")
+        signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+    finally:
+        os.close(descriptor)
+
+
+def ui_replacement(cli, context, shell, expected, native, platform=None, timeout=35, fail_exited=False):
+    deadline = time.monotonic() + timeout
+    last = "owner has not restarted the shell"
+    while time.monotonic() < deadline:
+        info = ui_native_unchanged(context, native)
+        fresh = dict(context, info=info)
+        if (fail_exited and not shell["name"] and info.get("shellPid") != shell["pid"] and
+                not start_identity(info.get("shellPid", 0))):
+            raise RuntimeError("The supervisor-started UI exited before its build became readable")
+        try:
+            peer = ui_socket_peer(fresh, shell["name"])
+            if shell.get("output"):
+                peer["output"] = shell["output"]
+            if peer["pid"] == shell["pid"] and peer["processStart"] == shell["processStart"]:
+                raise RuntimeError("UI owner still serves the previous process")
+            ui_wait(cli, fresh, peer, expected, timeout=.3, platform=platform)
+            return peer
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            last = str(error)
+        time.sleep(.1)
+    raise RuntimeError("UI replacement readback timed out for " + (shell["name"] or "main") + ": " + last)
+
+
+def ui_paths_restore(current, record):
+    paths = [{"path": str(current / "cornice/shell"), "slot": record["slot"],
+              "originalIdentity": record["originalIdentity"], "newIdentity": record["newIdentity"]}]
+    if record.get("platform"):
+        paths.append(record["platform"])
+    # Verify both sides before touching either directory. A journal persisted
+    # before exchange makes interruption between the two renames recoverable.
+    for item in paths:
+        identity = ui_identity(item["path"])
+        if identity not in (item["originalIdentity"], item["newIdentity"]):
+            raise RuntimeError("UI payload changed independently; rollback refused")
+        opposite = item["newIdentity"] if identity == item["originalIdentity"] else item["originalIdentity"]
+        if ui_identity(item["slot"]) != opposite:
+            raise RuntimeError("Saved UI payload changed independently; rollback refused")
+    for item in paths:
+        if ui_identity(item["path"]) == item["newIdentity"]:
+            ui_exchange(item["path"], item["slot"])
+
+
+def ui_restore_cold(directory, record, context):
+    current = ui_release(record["currentRelease"])
+    original = (directory / "original-manifest.json").read_text()
+    new = (directory / "new-manifest.json").read_text()
+    if (current / "manifest.json").read_text() not in (original, new):
+        raise RuntimeError("Current manifest changed independently; refusing to overwrite it")
+    cli = ui_release(record["sourceRelease"]) / "cornice/bin/cornice"
+    if digest(cli) != record["cliHash"]:
+        raise RuntimeError("Saved UI maintenance CLI changed; rollback execution refused")
+    record["phase"] = "rollback-pending"
+    atomic(directory / "record.json", record)
+    atomic(STATE / "ui-overlay.json", {"record": str(directory)})
+    ui_paths_restore(current, record)
+    atomic(current / "manifest.json", original)
+    errors, pending, replacements = {}, [], list(record.get("replacements", []))
+    if context:
+        native = record["nativeIdentity"]
+        info = ui_native_unchanged(context, native)
+        context = dict(context, info=info)
+        try:
+            ui_desktops(cli, context, cold=True)
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            errors = {shell["name"]: str(error) for shell in record["shells"]}
+        for shell in record["shells"]:
+            name = shell["name"]
+            if name in errors:
+                pending.append(name)
+                continue
+            try:
+                peer = ui_socket_peer(context, name)
+                if shell.get("output"):
+                    peer["output"] = shell["output"]
+                try:
+                    ui_wait(cli, context, peer, shell["beforeBuild"], timeout=.3, platform=shell.get("beforePlatform"))
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+                    # It still has the candidate loaded. Replace only this
+                    # freshly authenticated UI; its owner starts restored files.
+                    ui_stop_shell(context, peer)
+                    peer = ui_replacement(cli, context, peer, shell["beforeBuild"], native,
+                                          platform=shell.get("beforePlatform"))
+                if peer["pid"] != shell["pid"] or peer["processStart"] != shell["processStart"]:
+                    replacements.append({"desktop": name or "main", "previousPid": shell["pid"],
+                                         "pid": peer["pid"], "processStart": peer["processStart"],
+                                         "restoredBuild": shell["beforeBuild"], "verifiedAt": time.time()})
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                # A process can already be gone while its owner is restarting.
+                try:
+                    peer = ui_replacement(cli, context, shell, shell["beforeBuild"], native,
+                                          platform=shell.get("beforePlatform"))
+                    replacements.append({"desktop": name or "main", "previousPid": shell["pid"],
+                                         "pid": peer["pid"], "processStart": peer["processStart"],
+                                         "restoredBuild": shell["beforeBuild"], "verifiedAt": time.time()})
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as replacement_error:
+                    pending.append(name)
+                    errors[name] = str(replacement_error)
+    messages = [(name or "main") + ": " + error for name, error in errors.items()]
+    record.update(phase="rollback-pending" if pending else ("restored-with-replacement" if replacements else "rolled-back"),
+                  rollbackPending=pending, rollbackAttemptAt=time.time(), reloadErrors=messages, replacements=replacements)
+    atomic(directory / "record.json", record)
+    if not pending:
+        previous = json.loads(original).get("uiOverlay")
+        atomic(STATE / "ui-overlay.json", {"record": previous["record"]} if previous else {"record": None})
+    return messages
+
+def ui_restore(directory, record, context=None):
+    if record.get("strategy") == "cold":
+        return ui_restore_cold(directory, record, context)
+    current = ui_release(record["currentRelease"])
+    shell_path, slot = current / "cornice/shell", Path(record["slot"])
+    original = (directory / "original-manifest.json").read_text()
+    new = (directory / "new-manifest.json").read_text()
+    if (current / "manifest.json").read_text() not in (original, new):
+        raise RuntimeError("Current manifest changed independently; refusing to overwrite it")
+    identity = ui_identity(shell_path)
+    if identity not in (record["originalIdentity"], record["newIdentity"]):
+        raise RuntimeError("Current UI directory changed independently; rollback refused")
+    source = ui_release(record["sourceRelease"])
+    cli = source / "cornice/bin/cornice"
+    if digest(cli) != record["cliHash"]:
+        raise RuntimeError("Saved UI maintenance CLI changed; rollback execution refused")
+    record["phase"] = "rollback-pending"
+    atomic(directory / "record.json", record)
+    atomic(STATE / "ui-overlay.json", {"record": str(directory)})
+    pending, prepared, errors, lost = [], [], {}, []
+    replacements = list(record.get("replacements", []))
+    if context:
+        # A request with an uncertain reply may already have finished. Check the
+        # compiled generation before issuing another explicit rollback attempt.
+        for shell in record["shells"]:
+            if start_identity(shell["pid"]) != shell["processStart"]:
+                # A supervisor recovery is not a successful same-PID reload.
+                # Reconcile only by observing a different authenticated current
+                # peer already running the original UI; never reload it here.
+                try:
+                    if identity != record["originalIdentity"]:
+                        raise RuntimeError("Replaced shell requires the original UI files before reconciliation")
+                    verify_release(current)
+                    peer = ui_socket_peer(context, shell["name"])
+                    if shell.get("output"):
+                        peer["output"] = shell["output"]
+                    ui_wait(cli, context, peer, shell["beforeBuild"], timeout=.2)
+                    proof = {"desktop": shell["name"] or "main", "previousPid": shell["pid"],
+                             "pid": peer["pid"], "processStart": peer["processStart"],
+                             "restoredBuild": shell["beforeBuild"], "verifiedAt": time.time()}
+                    if not any(item["desktop"] == proof["desktop"] and item["pid"] == proof["pid"] for item in replacements):
+                        replacements.append(proof)
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                    lost.append(shell["name"])
+                    errors[shell["name"]] = "Replaced shell restoration is not verified: " + str(error)
+                continue
+            try:
+                ui_wait(cli, context, shell, shell["beforeBuild"], timeout=.2)
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+                pending.append(shell)
+    if pending:
+        try:
+            ui_desktops(cli, context)
+            # An earlier interrupted rollback can already have restored legacy
+            # files that lack this controller. Briefly publish the saved new
+            # files to prepare it, without reloading any QML generation yet.
+            if identity == record["originalIdentity"]:
+                if ui_identity(slot) != record["newIdentity"]:
+                    raise RuntimeError("Saved new UI directory changed; rollback repair refused")
+                ui_exchange(shell_path, slot)
+                identity = record["newIdentity"]
+                atomic(current / "manifest.json", new)
+            for shell in pending:
+                try:
+                    ui_cli(cli, context, shell["name"], "reload-ui", "--prepare", "--bootstrap")
+                    prepared.append(shell)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    errors[shell["name"]] = str(error)
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            errors.update({shell["name"]: str(error) for shell in pending})
+    if identity == record["newIdentity"]:
+        if ui_identity(slot) != record["originalIdentity"]:
+            raise RuntimeError("Saved UI directory changed independently; rollback refused")
+        ui_exchange(shell_path, slot)
+    atomic(current / "manifest.json", original)
+    for shell in prepared:
+        try:
+            ui_cli(cli, context, shell["name"], "ipc", "shell", "call", "cn.runtime-control", "reload", "{}")
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            errors[shell["name"]] = str(error)
+    unresolved = list(lost)
+    for shell in pending:
+        try:
+            ui_wait(cli, context, shell, shell["beforeBuild"])
+            errors.pop(shell["name"], None)
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            unresolved.append(shell["name"])
+            errors.setdefault(shell["name"], str(error))
+    messages = [(name or "main") + ": " + message for name, message in errors.items()]
+    terminal = "restored-with-replacement" if replacements else "rolled-back"
+    record.update(phase="rollback-pending" if unresolved else terminal, rollbackPending=unresolved,
+                  rollbackAttemptAt=time.time(), reloadErrors=messages, replacements=replacements)
+    atomic(directory / "record.json", record)
+    if not unresolved:
+        previous = json.loads(original).get("uiOverlay")
+        atomic(STATE / "ui-overlay.json", {"record": previous["record"]} if previous else {"record": None})
+    return messages
+
+def update_ui(args):
+    with locked():
+        current_info = read(STATE / "current.json")
+        context = ui_context(current_info)
+        current = context["release"]
+        candidate = ui_release(args.release)
+        if candidate == current:
+            raise RuntimeError("UI update requires a separate immutable candidate")
+        current_manifest, candidate_manifest = verify_release(current), verify_release(candidate)
+        hashes = ui_compatible(current, current_manifest, candidate, candidate_manifest)
+        strategy = getattr(args, "strategy", "soft")
+        old_platform = {key: value for key, value in current_manifest["hashes"].items() if key.startswith(UI_PLATFORM)}
+        new_platform = {key: value for key, value in candidate_manifest["hashes"].items() if key.startswith(UI_PLATFORM)}
+        platform_changed = old_platform != new_platform
+        if platform_changed and strategy != "cold":
+            raise RuntimeError("Cornice.Platform changed; explicit --strategy cold is required")
+        stamp = (candidate / "cornice/shell/Commons/UiBuild.qml").read_text()
+        if ("id: " + json.dumps(candidate_manifest["id"]) not in stamp or
+                "platformId: " + json.dumps(ui_platform_id(candidate / "cornice")) not in stamp):
+            raise RuntimeError("Candidate UI does not contain its prepared build and platform identities")
+        cli = candidate / "cornice/bin/cornice"
+        if strategy == "cold":
+            ui_desktops(cli, context, cold=True)
+            ui_preflight(candidate, context)
+        shells = ui_shells(cli, context)
+        if strategy == "soft" and any(shell.get("beforeTransport") != "qt-local-v1" for shell in shells):
+            raise RuntimeError("Legacy UI transport requires explicit --strategy cold migration")
+        native = ui_native_identity(context)
+        active = STATE / "ui-overlay.json"
+        if active.exists() and read(active).get("record"):
+            _, previous, _, _ = ui_record(read(active)["record"])
+            if previous["phase"] not in ("applied", "rolled-back", "restored-with-replacement"):
+                raise RuntimeError("An interrupted UI update needs rollback-ui before another update")
+        identifier = uuid.uuid4().hex
+        directory = STATE / "ui-overlays" / identifier
+        directory.mkdir(parents=True, mode=0o700)
+        original = (current / "manifest.json").read_text()
+        atomic(directory / "original-manifest.json", original)
+        slot = current / "cornice" / (".shell-ui-" + identifier)
+        slot.symlink_to(candidate / "cornice/shell", target_is_directory=True)
+        record = {"schema": 1, "phase": "prepared", "currentRelease": str(current), "sourceRelease": str(candidate),
+                  "uiBuildId": candidate_manifest["id"], "slot": str(slot), "shells": shells,
+                  "strategy": strategy, "nativeIdentity": native,
+                  "cliHash": digest(cli),
+                  "originalIdentity": ui_identity(current / "cornice/shell"), "newIdentity": ui_identity(slot)}
+        if platform_changed:
+            platform_path = current / UI_PLATFORM.rstrip("/")
+            candidate_path = candidate / UI_PLATFORM.rstrip("/")
+            if not platform_path.is_dir() or not candidate_path.is_dir():
+                raise RuntimeError("Cold UI module update requires an existing and prepared Cornice.Platform module")
+            platform_slot = current / "cornice" / (".Platform-ui-" + identifier)
+            platform_slot.symlink_to(candidate_path, target_is_directory=True)
+            record["platform"] = {"path": str(platform_path), "slot": str(platform_slot),
+                                  "originalIdentity": ui_identity(platform_path), "newIdentity": ui_identity(platform_slot)}
+        manifest = dict(current_manifest)
+        manifest["hashes"] = {key: value for key, value in current_manifest["hashes"].items()
+                              if not key.startswith("cornice/shell/") and not key.startswith(UI_PLATFORM)} | hashes | new_platform
+        manifest["uiOverlay"] = {"schema": 1, "id": candidate_manifest["id"], "sourceRelease": str(candidate),
+                                 "record": str(directory), "appliedAt": time.time(), "strategy": strategy,
+                                 "platformBuildId": ui_platform_id(candidate / "cornice")}
+        atomic(directory / "new-manifest.json", manifest)
+        atomic(directory / "record.json", record)
+        atomic(active, {"record": str(directory)})
+        try:
+            # Recheck native control immediately before exchanging directories.
+            if {item["name"] for item in ui_desktops(cli, context, cold=(strategy == "cold"))} != {shell["name"] or "main" for shell in shells}:
+                raise RuntimeError("Desktop topology changed during UI update")
+            ui_exchange(current / "cornice/shell", slot)
+            if record.get("platform"):
+                ui_exchange(record["platform"]["path"], record["platform"]["slot"])
+            record["phase"] = "exchanged"
+            atomic(directory / "record.json", record)
+            atomic(current / "manifest.json", (directory / "new-manifest.json").read_text())
+            if strategy == "cold":
+                ui_desktops(cli, context, cold=True)
+                record["uiReplacements"] = []
+                # The old running supervisor cannot know a new maintenance
+                # hook. Keep every other bar mapped while one owner replaces
+                # its UI, and verify the primary before touching a secondary.
+                for shell in sorted(shells, key=lambda item: bool(item["name"])):
+                    fresh_info = ui_native_unchanged(context, native)
+                    fresh = dict(context, info=fresh_info)
+                    ui_desktops(cli, fresh, cold=True)
+                    ui_stop_shell(fresh, shell)
+                    peer = ui_replacement(cli, fresh, shell, candidate_manifest["id"], native,
+                                          platform=ui_platform_id(candidate / "cornice"), fail_exited=True)
+                    record["uiReplacements"].append(peer | {"previousPid": shell["pid"]})
+                    atomic(directory / "record.json", record)
+            else:
+                for shell in shells:
+                    ui_cli(cli, context, shell["name"], "reload-ui")
+                    ui_wait(cli, context, shell, candidate_manifest["id"], platform=ui_platform_id(candidate / "cornice"))
+            ui_native_unchanged(context, native)
+            record.update(phase="applied", appliedAt=time.time())
+            atomic(directory / "record.json", record)
+        except Exception as error:
+            rollback_errors = ui_restore(directory, record, context)
+            suffix = "; rollback reload incomplete: " + "; ".join(rollback_errors) if rollback_errors else "; previous UI restored"
+            raise RuntimeError("UI update failed: " + str(error) + suffix) from error
+        print(json.dumps({"updatedUi": str(candidate), "uiBuildId": candidate_manifest["id"],
+                          "currentRelease": str(current), "shells": [shell["name"] or "main" for shell in shells],
+                          "rollbackRecord": str(directory), "strategy": strategy,
+                          "uiReplaced": strategy == "cold", "nativePidsUnchanged": True,
+                          "uiReplacements": record.get("uiReplacements", [])}, ensure_ascii=False))
+
+
+def rollback_ui(args):
+    with locked():
+        pointer = read(STATE / "ui-overlay.json")
+        if not pointer.get("record"):
+            raise RuntimeError("No active UI overlay to roll back")
+        directory, record, current, _ = ui_record(pointer["record"])
+        info = read(STATE / "current.json") if (STATE / "current.json").exists() else {}
+        context = None
+        if is_running(info):
+            context = ui_context(info, allow_dead_shell=True)
+            if context["release"] != current:
+                raise RuntimeError("UI overlay belongs to a different running session")
+        if context and record.get("strategy") == "cold" and record.get("phase") == "applied":
+            cli = ui_release(record["sourceRelease"]) / "cornice/bin/cornice"
+            ui_desktops(cli, context, cold=True)
+        errors = ui_restore(directory, record, context)
+        print(json.dumps({"rolledBackUi": str(directory), "currentRelease": str(current), "reloadErrors": errors,
+                          "phase": record["phase"], "replacements": record.get("replacements", [])}, ensure_ascii=False))
+        if errors:
+            raise RuntimeError("UI files restored, but some running shells could not reload: " + "; ".join(errors))
 
 
 def prepare(args):
@@ -245,6 +945,7 @@ def prepare(args):
                           if (item if isinstance(item, str) else item.get("id")) == "cn.menu"), len(right))
             right.insert(index, {"id": "cn.screenshot"})
         atomic(config_file, settings)
+        ui_build(product / "shell", identifier)
         files = [p for p in product.rglob("*") if p.is_file()]
         files += [release / name for name in ("Hyprland", "runner", "hyprland.lua", "autostart.json")]
         stable_cli = (Path.home() / ".local/bin/cornice").resolve()
@@ -539,6 +1240,13 @@ class ComponentUnhealthy(RuntimeError):
         self.component = component
 
 
+class DesktopUiUnhealthy(RuntimeError):
+    """A secondary UI failed; its Broker and applications can remain healthy."""
+    def __init__(self, desktop, message):
+        super().__init__(message)
+        self.desktop = desktop
+
+
 class DesktopTopologyError(RuntimeError):
     """Managed intent/native topology is invalid; restarting Broker is not repair."""
 
@@ -557,6 +1265,7 @@ class Trial:
         self.components = {}
         self.recovery = {}
         self.component_failures = {}
+        self.desktop_ui_restarts = {}
         self.compositor = None
         self.health_failures = 0
         self.next_health_check = 0.0
@@ -630,6 +1339,26 @@ class Trial:
         self.component_failures[name] = 0
         self.report_health(componentRecovery=self.component_status(), lastHealthError=reason,
                            recoveryRetryAt=None)
+        return True
+
+    def recover_desktop_ui(self, name):
+        # Broker owns and automatically restarts each secondary QProcess. A
+        # missing bar is not evidence that this healthy native owner died.
+        context = ui_context(self.info)
+        cli = self.product / "bin/cornice"
+        ui_desktops(cli, context)
+        try:
+            peer = ui_socket_peer(context, name)
+        except (OSError, RuntimeError):
+            return False  # Dead UI: let the Broker's existing retry start it.
+        now = time.monotonic()
+        restarts = [at for at in self.desktop_ui_restarts.get(name, []) if now - at < 60]
+        self.desktop_ui_restarts[name] = restarts
+        if len(restarts) >= 3:
+            return False
+        self.command("desktop", "pause", name)
+        ui_stop_shell(context, peer)
+        restarts.append(now)
         return True
 
     def component_status(self):
@@ -733,6 +1462,17 @@ class Trial:
                         recoveryRequired=name, componentRecovery=self.component_status())
             if self.info.get("degraded"):
                 self.next_health_check = now + 2
+        except DesktopUiUnhealthy as error:
+            key = "ui:" + error.desktop
+            self.component_failures[key] = self.component_failures.get(key, 0) + 1
+            self.report_health(degraded=True, recoveryRequired=key, lastHealthError=str(error),
+                               healthFailures=self.component_failures[key])
+            if self.component_failures[key] >= 3:
+                try:
+                    self.recover_desktop_ui(error.desktop)
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as recovery_error:
+                    self.report_health(lastHealthError=str(error) + "; UI recovery: " + str(recovery_error))
+            self.next_health_check = now + .5
         except Exception as error:
             # Probe payloads can be valid JSON with a broken shape, raising
             # KeyError/TypeError/AttributeError. Such component diagnostics are
@@ -902,7 +1642,10 @@ class Trial:
                     if time.monotonic() - first_seen < self.ticket["startupSeconds"]:
                         initializing.append(desktop["name"])
                         continue
-                raise ComponentUnhealthy("desktop", "Desktop Cornice bar is missing: " + desktop["name"])
+                message = "Desktop Cornice bar is missing: " + desktop["name"]
+                if desktop.get("primary"):
+                    raise ComponentUnhealthy("cornice", message)
+                raise DesktopUiUnhealthy(desktop["name"], message)
             self.ready_desktops.add(identity)
         self.info["initializingDesktops"] = initializing
         self.info["healthStage"] = "complete"
@@ -1111,6 +1854,11 @@ def main():
     choosing = sub.add_parser("select", help="Persistently select a prepared immutable release for future logins")
     choosing.add_argument("--release", help="Prepared release path; defaults to the latest prepared snapshot")
     choosing.add_argument("--startup-seconds", type=int, default=60)
+    updating_ui = sub.add_parser("update-ui", help="Update shell QML and its Platform module while preserving the native session")
+    updating_ui.add_argument("--release", required=True, help="Prepared immutable UI source release")
+    updating_ui.add_argument("--strategy", choices=("soft", "cold"), default="soft",
+                             help="soft preserves UI PIDs; cold replaces idle owner-tracked UI processes for legacy/module migration")
+    sub.add_parser("rollback-ui", help="Restore previous UI files using the recorded maintenance strategy")
     sub.add_parser("status")
     sub.add_parser("cancel", help="Select stable login by clearing pending and persistent selection; current session unchanged")
     sub.add_parser("remove-hook", help="Cancel and remove only the managed login snippet, keeping other edits")
@@ -1130,6 +1878,10 @@ def main():
         if not 5 <= args.startup_seconds <= 300:
             raise RuntimeError("Startup must be 5..300 seconds")
         select_release(args)
+    elif args.action == "update-ui":
+        update_ui(args)
+    elif args.action == "rollback-ui":
+        rollback_ui(args)
     elif args.action == "is-login":
         return 0 if login_matches(args.pid) else 1
     elif args.action == "login":

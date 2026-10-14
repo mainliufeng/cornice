@@ -237,3 +237,44 @@ SDDM 直接 session scope 下的调用使用 app.slice。
 的服务里却无法连接 manager，则报错，不把仍属于 shell cgroup 的子进程称作独立应用。
 打包和快照都要求新增的 guard 可执行文件。真实 manager 的私有限额 fixture 已通过，
 完整图形与新登录验收分别记录在 `docs/validation/2026-10-11-desktop-recovery.md`。
+
+## 当前会话的兼容界面更新
+
+经过校验的独立快照可以更新当前 Cornice 界面：
+
+```sh
+./bin/cornice session-trial update-ui --release /absolute/path/to/prepared/release
+./bin/cornice session-trial update-ui --release /absolute/path/to/prepared/release --strategy cold
+./bin/cornice session-trial rollback-ui
+```
+
+默认 `soft` 只更新 QML，保持每个 Quickshell PID。首次从旧连接实现迁移，或更新
+`Cornice.Platform` 模块时，必须显式选择 `cold`：只重启经过身份核验的 Cornice 界面
+进程，由既有监督器和 Broker 恢复；不会重启 Hyprland、Broker 或应用。Qt 已加载的
+原生模块不能在同一进程里替换，因此这次迁移不能宣称为无进程重启。
+
+更新只原子切换 `cornice/shell` 与需要更新的 `Cornice.Platform`，不改当前配置、
+快捷键、输入授权及下次登录选择。所有桌面须退出观察和接管、没有锁屏；`cold` 还要求
+没有任务占用且各桌面已暂停。合成器、其他 native 模块、运行 helper 和服务声明必须
+一致；只有维护入口 `cornice` 与 `cornice-session-trial` 可有差异。新版每条 IPC 连接在
+断开后独立回收，长期存在的服务连接不会阻止回收其他连接。
+
+`cold` 发布前用 Qt 6 检查全部 QML 语法，并在私有 offscreen 进程中编译真实 IPC
+模块。这只能证明语法和模块可载入；完整界面仍需在隔离 Wayland 会话验收。实际替换
+逐个执行，先确认主界面的编译版本和对应 PID 的 bar 已映射，再替换次界面。
+
+新监督器把次桌面 bar 丢失归为界面故障，由对应界面及其原有 owner 恢复，保留独立
+恢复预算，不因此重启 Broker。已运行的旧监督器不会自动获得这项修复；首次迁移仅接受
+完成真实双桌面验收的候选，预检不能消除旧监督器对任意次界面运行故障的恢复限制。
+监督器升级由持久选择的新快照在下次正常登录生效。
+
+原目录、模块和 manifest 保存在私有状态目录，当前 manifest 的 `uiOverlay` 明确记录
+来源。每个界面必须读回实际编译的 UI build、PID、桌面和合成器身份，才能算更新完成；
+`cold` 同时记录界面 PID 更换及原生进程保持。加载失败会恢复旧路径和 manifest；若
+运行中界面尚未确认恢复，保留待恢复记录，可再次执行 `rollback-ui`。监督器替换旧
+界面后的恢复也必须核验新 peer 身份及旧 UI，不能把进程存活当作恢复成功。
+完整组件升级仍应使用 `prepare`、`select` 在下次正常登录生效。
+
+界面回归使用真实隔离合成器、原生输入及屏幕像素。长协作说明的像素验收另需开发测试
+依赖 `tesseract` 与英文训练数据（Arch：`tesseract-data-eng`）；也可通过
+`TESSDATA_PREFIX` 指定只读训练数据目录。它们不是 Cornice 产品运行依赖。

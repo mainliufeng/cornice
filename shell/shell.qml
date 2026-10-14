@@ -173,8 +173,11 @@ ShellRoot {
   }
 
   IpcServer {
+    id: ipcServer
     socketPath: shell.socketPath
   }
+
+  function prepareUiReload() { ipcServer.prepareReload() }
 
   // ---- the bar -------------------------------------------------------------
 
@@ -380,6 +383,14 @@ ShellRoot {
 
     function version(): string {
       return shell.version
+    }
+
+    // A compiled singleton identifies the running QML generation, rather than
+    // the files an older generation happens to see after a directory swap.
+    function runtimeIdentity(): string {
+      return JSON.stringify({uiBuildId: UiBuild.id, platformBuildId: UiBuild.platformId,
+        ipcTransport: "qt-local-v1", pid: Quickshell.processId,
+        desktop: DesktopSession.name || "main", instance: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || ""})
     }
 
     function debug(): string {

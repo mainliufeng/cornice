@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import Quickshell.Io
+import Cornice.Platform
 import qs.Commons
 
 // The shell's own IPC socket.
@@ -14,12 +14,34 @@ import qs.Commons
 // statically declared tree; plugins are loaded at runtime, so they would be
 // unreachable. Going through our own socket also skips spawning a `qs ipc`
 // client per call.
-Item {
+Scope {
   id: root
+  reloadableId: "cornice-shell-ipc-scope"
 
   property string socketPath: ""
+  property bool reloadPrepared: false
 
-  readonly property bool listening: server.active && socketPath !== ""
+  // The caller invokes this only after its IPC reply has been flushed. Stop
+  // accepting before a replacement (including an older shell) binds this path.
+  function prepareReload() { root.reloadPrepared = true }
+  function resumeReload() { root.reloadPrepared = false }
+  function finishReload() {
+    root.reloadPrepared = true
+    root.reloadPrepared = false
+  }
+
+  Connections {
+    target: Quickshell
+    function onReloadCompleted() {
+      // Reopen only after the previous QML generation has been dropped. The
+      // native transport frees disconnected clients instead of retaining all
+      // historical connections until this listener closes.
+      Qt.callLater(root.finishReload)
+    }
+    function onReloadFailed(error) { root.resumeReload() }
+  }
+
+  readonly property bool listening: server.listening && socketPath !== ""
 
   function handle(socket, line) {
     const text = String(line).trim()
@@ -47,20 +69,10 @@ Item {
     socket.flush()
   }
 
-  SocketServer {
+  LocalIpcServer {
     id: server
-
-    active: root.socketPath !== ""
+    active: root.socketPath !== "" && !root.reloadPrepared
     path: root.socketPath
-
-    handler: Component {
-      Socket {
-        id: connection
-
-        parser: SplitParser {
-          onRead: line => root.handle(connection, line)
-        }
-      }
-    }
+    onRequest: (connection, line) => root.handle(connection, line)
   }
 }

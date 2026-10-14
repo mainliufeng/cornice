@@ -133,12 +133,24 @@ done
 cornice ipc shell hide cn.weather >/dev/null
 section "localized saved places and cancellable idle warning"
 cornice weather place use Chengdu --lat 1 --lon 2 >/dev/null
-for _ in $(seq 1 40); do
+# Name localization can serialize the weather place and one clock place,
+# each with the service's ten-second curl deadline, after a 150ms debounce.
+# Wait for the rendered result within that contract, rather than assuming 4s.
+localization_deadline=$((SECONDS + 25))
+localized_place=""
+while ((SECONDS < localization_deadline)); do
   cornice ipc shell summon cn.weather '{}' >/dev/null
-  [[ $(panel_state weather | jq -r '.place') == 成都 ]] && break
+  localized_place=$(panel_state weather | jq -r '.place')
+  [[ $localized_place == 成都 ]] && break
   sleep .1
 done
-expect_eq "a saved English place displays in Chinese without config edits" 成都 "$(panel_state weather | jq -r '.place')"
+if [[ $localized_place != 成都 ]]; then
+  cornice ipc weather status > "$runtime/name-localization-weather.json" 2>&1
+  panel_state weather > "$runtime/name-localization-panel.json" 2>&1
+  cornice ipc shell config | jq '{language,weather:{place:.weather.place,geocodeUrl:.weather.geocodeUrl},clock:{zone:.clock.zone}}' > "$runtime/name-localization-config.json"
+  warn "name localization diagnostics saved in $runtime"
+fi
+expect_eq "a saved English place displays in Chinese without config edits" 成都 "$localized_place"
 expect_eq "localizing a name preserves the saved configuration" Chengdu "$(cornice ipc shell config | jq -r '.weather.place.name')"
 cornice ipc shell hide cn.weather >/dev/null
 cp "$XDG_CONFIG_HOME/cornice/config.json" "$runtime/warning-config-before.json"

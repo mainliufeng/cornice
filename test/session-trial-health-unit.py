@@ -41,6 +41,7 @@ def make_trial(directory):
     trial.components = {"desktop": {"arguments": ["test-broker"],
         "process": Process(900002), "restarts": [], "retryAt": 0.0}}
     trial.component_failures = {}
+    trial.desktop_ui_restarts = {}
     trial.recovery = {}
     trial.health_failures = 0
     trial.next_health_check = 0.0
@@ -429,3 +430,58 @@ with tempfile.TemporaryDirectory(prefix="cornice-trial-health-", dir="/tmp") as 
         trial.compositor.returncode = 0
         assert trial.supervise_once() is False and trial.info["status"] == "exited"
         print("PASS: explicit rollback and actual compositor exit retain their intended lifecycle")
+
+
+with tempfile.TemporaryDirectory(prefix="cornice-secondary-ui-health-", dir="/tmp") as directory:
+    clock = Clock()
+    trial, desktops, save, calls, outputs, bars, ipc_reply, _ = topology_trial(directory)
+    with patch.object(trial_module, "ipc", side_effect=ipc_reply):
+        trial.health()  # This secondary bar was already ready before failure.
+    bars.remove("blue-output")
+    native_pid = trial.components["desktop"]["process"].pid
+    with patch.object(trial_module.time, "monotonic", lambda: clock.value), \
+         patch.object(trial_module.time, "time", lambda: clock.value), \
+         patch.object(trial_module, "ipc", side_effect=ipc_reply), \
+         patch.object(trial, "recover_component") as native_repair, \
+         patch.object(trial, "recover_desktop_ui", return_value=False) as ui_repair:
+        for _ in range(4):
+            assert trial.supervise_once()
+            clock.advance(1)
+        native_repair.assert_not_called()
+        assert all(call.args == ("research-blue",) for call in ui_repair.call_args_list)
+        assert ui_repair.call_count == 2
+        assert trial.info["recoveryRequired"] == "ui:research-blue"
+        assert trial.components["desktop"]["process"].pid == native_pid
+        bars.add("blue-output")
+        assert trial.supervise_once()
+        assert not trial.info["degraded"] and not trial.component_failures
+    print("PASS: a previously-ready secondary bar loss routes to its UI owner and never restarts a healthy Broker or compositor")
+
+    trial, desktops, save, calls, outputs, bars, ipc_reply, _ = topology_trial(directory + "/primary")
+    with patch.object(trial_module, "ipc", side_effect=ipc_reply):
+        trial.health()
+        bars.remove("HEADLESS-1")
+        try:
+            trial.health()
+            raise AssertionError("primary bar absence passed health")
+        except trial_module.ComponentUnhealthy as error:
+            assert error.component == "cornice"
+    print("PASS: a primary-only bar loss remains a Cornice UI fault even while another desktop has a healthy bar")
+
+    trial.product = Path(directory) / "product"
+    trial.command = lambda *arguments: "ok"
+    peer = {"name": "research-blue", "pid": 900099, "processStart": "private-fixture"}
+    with patch.object(trial_module.time, "monotonic", lambda: clock.value), \
+         patch.object(trial_module, "ui_context", return_value={}), \
+         patch.object(trial_module, "ui_desktops"), \
+         patch.object(trial_module, "ui_socket_peer", return_value=peer), \
+         patch.object(trial_module, "ui_stop_shell") as stop:
+        assert trial.recover_desktop_ui("research-blue")
+        assert trial.recover_desktop_ui("research-blue")
+        assert trial.recover_desktop_ui("research-blue")
+        assert not trial.recover_desktop_ui("research-blue")
+        assert stop.call_count == 3
+        clock.advance(61)
+        assert trial.recover_desktop_ui("research-blue")
+        assert stop.call_count == 4
+    print("PASS: authenticated secondary UI replacement preserves its own three-attempts-per-minute budget without invoking native recovery")

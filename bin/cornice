@@ -35,6 +35,7 @@ Inspecting the running shell (IPC)
   language [list|<code>]       Show, list or set the UI language (persisted)
   reload              Re-read config.json and theme.json
   reload-plugins      Re-scan the plugin directories
+  reload-ui           Soft-reload this desktop shell without restarting
   ipc <target> <fn>   Raw IPC call, e.g. cornice ipc shell ping
   targets             IPC targets the running shell exposes
   panel <id> [json]   Toggle a panel plugin (e.g. cornice panel cn.audio)
@@ -275,6 +276,80 @@ call() {
   timeout "$ipc_timeout" "$qs" ipc -p "$config_dir" call "$@"
 }
 
+# Reloading a QML generation recreates service objects as well as views. Until
+# those services can transfer a live presentation, keep its native owner intact.
+ui_reload_safe() {
+  local state
+  if ! state=$(timeout "$ipc_timeout" "$bin_dir/cornice-desktop" list 2>/dev/null); then
+    state=$(call shell config) || return
+    if jq -e '.agentDesktop.enabled != true' <<<"$state" >/dev/null 2>&1; then return 0; fi
+    echo "cornice: desktop state unavailable; UI reload refused" >&2
+    return 1
+  fi
+  if ! jq -e '(.desktops | type) == "array" and (.desktops | length) > 0 and
+      all(.desktops[]; (.presentation.active | type) == "boolean" and
+          .presentation.active == false and .humanTakeover != true and .humanLocked != true and
+          .handoff.status != "in_progress")' <<<"$state" >/dev/null 2>&1; then
+    echo "cornice: UI reload refused during desktop presentation, takeover or lock" >&2
+    return 1
+  fi
+}
+
+# Discovery does not clear the live plugin registry by default. The explicit
+# bootstrap is needed only once for shells started before this controller; its
+# service rescan is guarded. No uncertain write request is replayed.
+reload_ui() {
+  local bootstrap=false prepare_only=false
+  for option in "$@"; do
+    case "$option" in
+      --bootstrap) bootstrap=true ;;
+      --prepare) prepare_only=true ;;
+      *) echo "usage: cornice reload-ui [--bootstrap] [--prepare]" >&2; return 2 ;;
+    esac
+  done
+  local ipc_timeout=1 deadline=$((SECONDS + 10)) answer ready=false
+  # Old Quickshell transports retain every historical connection. Their first
+  # migration must replace the idle tracked UI through session-trial cold mode.
+  answer=$(call shell runtimeIdentity) || { echo "cornice: legacy UI requires session-trial update-ui --strategy cold" >&2; return 1; }
+  if ! jq -e '.ipcTransport == "qt-local-v1"' <<<"$answer" >/dev/null 2>&1; then
+    echo "cornice: legacy UI requires session-trial update-ui --strategy cold" >&2
+    return 1
+  fi
+  answer=$(call shell plugins) || return
+  if ! jq -e 'type == "array" and any(.[]; .id == "cn.runtime-control")' <<<"$answer" >/dev/null 2>&1; then
+    [[ $bootstrap == true ]] || { echo "cornice: UI reload unsupported; runtime controller is not installed" >&2; return 1; }
+    ui_reload_safe || return
+    answer=$(call shell reloadPlugins) || return
+    [[ $answer == ok ]] || { echo "cornice: plugin discovery: $answer" >&2; return 1; }
+    while ((SECONDS < deadline)); do
+      answer=$(call shell plugins) || return
+      if jq -e 'type == "array" and any(.[]; .id == "cn.runtime-control")' <<<"$answer" >/dev/null 2>&1; then
+        ready=true
+        break
+      fi
+      sleep 0.1
+    done
+    [[ $ready == true ]] || { echo "cornice: runtime controller discovery timed out" >&2; return 1; }
+  fi
+  if [[ $prepare_only != true ]]; then ui_reload_safe || return; fi
+  answer=$(call shell summon cn.runtime-control '{"action":"prepare"}') || return
+  [[ $answer == ok ]] || { echo "cornice: runtime controller: $answer" >&2; return 1; }
+  ready=false
+  while ((SECONDS < deadline)); do
+    answer=$(call shell call cn.runtime-control status '{}') || return
+    case "$answer" in
+      ready) ready=true; break ;;
+      not-loaded) sleep 0.1 ;;
+      *) echo "cornice: runtime controller: $answer" >&2; return 1 ;;
+    esac
+  done
+  [[ $ready == true ]] || { echo "cornice: runtime controller loading timed out" >&2; return 1; }
+  if [[ $prepare_only == true ]]; then printf '%s\n' ready; return; fi
+  answer=$(call shell call cn.runtime-control reload '{}') || return
+  [[ $answer == requested ]] || { echo "cornice: UI reload: $answer" >&2; return 1; }
+  printf '%s\n' "$answer"
+}
+
 command="${1:-help}"
 shift || true
 
@@ -400,6 +475,10 @@ case "$command" in
 
   reload-plugins)
     call shell reloadPlugins
+    ;;
+
+  reload-ui)
+    reload_ui "$@"
     ;;
 
   ipc)
