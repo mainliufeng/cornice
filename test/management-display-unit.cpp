@@ -226,6 +226,33 @@ int main(int argc, char **argv) {
         });
     }
 
+    for (const auto absolute : {false, true}) {
+        run("named seat connections ignore inherited descriptors: " + QString::number(absolute), [absolute] {
+            Fixture fixture;
+            Listener target(fixture.directory.path() + "/target.sock");
+            Descriptor inherited(::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+            const auto endpoint = address(fixture.primary.path);
+            require(::connect(inherited.get(), reinterpret_cast<const sockaddr *>(&endpoint), sizeof endpoint) == 0, "ambient connection failed");
+            qputenv("WAYLAND_SOCKET", QByteArray::number(inherited.get()));
+            auto *raw = HyprlandAdapter::connectNamedDisplay(absolute ? target.path : "target.sock");
+            Display display(raw, &wl_display_disconnect);
+            require(display && peerPath(wl_display_get_fd(display.get())) == target.path, "ambient descriptor overrode the named seat");
+            require(::fcntl(inherited.get(), F_GETFD) >= 0, "named connection consumed another seat's descriptor");
+            require(qgetenv("WAYLAND_SOCKET") == QByteArray::number(inherited.get()), "named connection mutated process environment");
+        });
+    }
+    run("unavailable named target never consumes an ambient connection", [] {
+        Fixture fixture;
+        Descriptor inherited(::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+        const auto endpoint = address(fixture.primary.path);
+        require(::connect(inherited.get(), reinterpret_cast<const sockaddr *>(&endpoint), sizeof endpoint) == 0, "ambient connection failed");
+        qputenv("WAYLAND_SOCKET", QByteArray::number(inherited.get()));
+        bool threw = false;
+        try { auto *raw = HyprlandAdapter::connectNamedDisplay("absent.sock"); Display display(raw, &wl_display_disconnect); }
+        catch (const std::runtime_error &) { threw = true; }
+        require(threw && ::fcntl(inherited.get(), F_GETFD) >= 0, "missing seat consumed or used an ambient connection");
+    });
+
     run("no instance keeps the ordinary Wayland display", [] {
         Fixture fixture;
         const auto display = connect(QString());

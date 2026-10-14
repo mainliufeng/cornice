@@ -1,3 +1,5 @@
+#include "HyprlandAdapter.hpp"
+#include <exception>
 #include "ClipboardBridge.hpp"
 #include "wlr-data-control-unstable-v1.h"
 #include <QMap>
@@ -172,7 +174,8 @@ struct ClipboardBridge::Impl : QObject {
         if (current == display) flush();
     }
     void open() {
-        display = wl_display_connect(displayName.toUtf8().constData());
+        try { display = HyprlandAdapter::connectNamedDisplay(displayName); }
+        catch (const std::exception &failure) { error = QString::fromUtf8(failure.what()); return; }
         if (!display) { error = "Cannot connect to clipboard display"; return; }
         registry = wl_display_get_registry(display);
         static const wl_registry_listener listener = {

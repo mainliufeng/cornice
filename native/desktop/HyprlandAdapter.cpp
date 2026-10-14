@@ -69,23 +69,29 @@ wl_display *HyprlandAdapter::connectManagementDisplay() const {
     const auto name = response.object()["display"].toString();
     if (!response.isObject() || name.trimmed().isEmpty() || name.contains(QChar(0)))
         throw std::runtime_error("Compositor management display unavailable");
+    return connectNamedDisplay(name);
+}
+
+wl_display *HyprlandAdapter::connectNamedDisplay(const QString &name) {
+    if (name.trimmed().isEmpty() || name.contains(QChar(0)))
+        throw std::runtime_error("Bound Wayland display name unavailable");
     const auto runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
     if (!QDir::isAbsolutePath(name) && runtime.isEmpty())
-        throw std::runtime_error("Management display runtime directory unavailable");
+        throw std::runtime_error("Bound Wayland runtime directory unavailable");
     const auto path = QDir::isAbsolutePath(name) ? name : QDir(runtime).filePath(name);
     QLocalSocket socket;
     socket.connectToServer(path);
     if (!socket.waitForConnected(1000))
-        throw std::runtime_error("Management Wayland connection failed: " + socket.errorString().toStdString());
+        throw std::runtime_error("Bound Wayland connection failed: " + socket.errorString().toStdString());
     // wl_display_connect(name) still prefers an inherited WAYLAND_SOCKET FD.
     // Connect explicitly so a secondary client's environment cannot select its
     // restricted connection. Wayland owns this duplicate, including on failure.
     const auto fd = fcntl(static_cast<int>(socket.socketDescriptor()), F_DUPFD_CLOEXEC, 0);
     if (fd < 0)
-        throw std::runtime_error("Management Wayland descriptor duplication failed");
+        throw std::runtime_error("Bound Wayland descriptor duplication failed");
     const auto display = wl_display_connect_to_fd(fd);
     if (!display)
-        throw std::runtime_error("Management Wayland display initialization failed");
+        throw std::runtime_error("Bound Wayland display initialization failed");
     return display;
 }
 

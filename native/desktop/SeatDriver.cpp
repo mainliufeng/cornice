@@ -1,4 +1,5 @@
 #include "SeatDriver.hpp"
+#include "HyprlandAdapter.hpp"
 #include "virtual-keyboard-unstable-v1.h"
 #include "wlr-virtual-pointer-unstable-v1.h"
 #include <QElapsedTimer>
@@ -23,7 +24,7 @@ static uint32_t now() {
 
 SeatDriver::SeatDriver(const QString &display, const QString &name, const QString &output)
     : m_name(name), m_outputName(output) {
-    m_display = wl_display_connect(display.toUtf8().constData());
+    m_display = HyprlandAdapter::connectNamedDisplay(display);
     if (!m_display)
         fail("Cannot connect to bound seat display");
     try {

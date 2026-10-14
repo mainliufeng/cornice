@@ -12,6 +12,8 @@ class HyprlandAdapter {
     QByteArray command(const QString &command, bool json = false) const;
     // Caller owns the returned Wayland connection. Capability/query errors throw.
     wl_display *connectManagementDisplay() const;
+    // Explicit target; never consumes an inherited WAYLAND_SOCKET descriptor.
+    static wl_display *connectNamedDisplay(const QString &name);
     QJsonObject configure(const QJsonObject &configuration) const;
     void renew(const QString &owner) const;
     void remove(const QString &owner) const;

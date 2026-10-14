@@ -12,6 +12,7 @@ wayland-scanner client-header "$protocol" "$artifacts/wlr-data-control-unstable-
 wayland-scanner private-code "$protocol" "$artifacts/wlr-data-control-unstable-v1.c"
 cc -fPIC -c "$artifacts/wlr-data-control-unstable-v1.c" $(pkg-config --cflags wayland-client) -o "$artifacts/protocol.o"
 c++ -std=c++20 -fPIC "$prefix/test/clipboard-pump-unit.cpp" "$prefix/native/desktop/ClipboardBridge.cpp" \
+  "$prefix/native/desktop/HyprlandAdapter.cpp" \
   "$artifacts/protocol.o" -I"$prefix/native/desktop" -I"$artifacts" \
   $(pkg-config --cflags --libs Qt6Core Qt6Network wayland-client) -o "$artifacts/verify"
 timeout 5 "$artifacts/verify"

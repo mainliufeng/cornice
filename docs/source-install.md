@@ -54,7 +54,7 @@ export PATH="$prefix/bin:$PATH"
 
 Hyprland 的 CMake 安装其实际目标（包括 Hyprland、hyprctl、hyprpm 和资源/文档）到该 prefix；不修改 `/usr/bin/Hyprland` 或系统包数据库，但会覆盖 prefix 中同名文件。Cornice 安装到 `prefix/share/cornice`，CLI 放在 `prefix/bin`。默认完整构建六个 native helpers、`Cornice.Platform`/`Cornice.Desktop` 两组 QML 模块和锁定 npm 依赖；`--desktop` 保留为相同功能的别名。
 
-Cornice 的复制安装使用独立构建根和原子版本树；成功前检查真实动态库与 npm import。失败恢复原复制安装。`install.sh` 不构建或安装 Hyprland。默认 `--service=off`、`--takeover=off`，不启用 systemd 服务、修改登录选择或重启当前桌面。未加 `--copy` 时是开发软链安装，后续源码修改会影响该安装；正式复现建议用这里的复制路径。
+Cornice 的复制安装使用独立构建根和原子版本树；成功前检查真实动态库与 npm import。失败恢复原复制安装。`install.sh` 不构建或安装 Hyprland。未传 `--service` / `--takeover` 时保持关闭，不启用 systemd 服务、修改登录选择或重启当前桌面。未加 `--copy` 时是开发软链安装，后续源码修改会影响该安装；正式复现建议用这里的复制路径。
 
 ## 启用与回退
 
