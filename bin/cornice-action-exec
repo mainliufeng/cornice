@@ -1,0 +1,41 @@
+#!/usr/bin/python3
+"""Register this launch before its first Wayland connection, then exec it.
+
+Only the caller's explicit environment and own PID are used. No process
+command line or environment inspection, app-name routing, or delayed move.
+"""
+import os
+import pathlib
+import socket
+import sys
+
+
+def main():
+    if len(sys.argv) < 3 or sys.argv[1] != "--":
+        raise ValueError("explicit command required")
+    token = os.environ.get("XDG_ACTIVATION_TOKEN", "")
+    instance = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    runtime = pathlib.Path(os.environ["XDG_RUNTIME_DIR"])
+    if not token or any(ch.isspace() or ch == "\0" for ch in token) or not instance or "/" in instance:
+        raise ValueError("explicit activation token and compositor required")
+    path = runtime / "hypr" / instance / ".socket.sock"
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(4)
+        connection.connect(str(path))
+        connection.sendall(f"/seat route-client {token} {os.getpid()}".encode())
+        answer = bytearray()
+        while data := connection.recv(4096):
+            answer.extend(data)
+            if len(answer) > 4096:
+                raise ValueError("oversized routing reply")
+    if answer.decode().strip() != "ok":
+        raise ValueError("launch source expired or unavailable")
+    os.execvpe(sys.argv[2], sys.argv[2:], os.environ)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError) as error:
+        print(f"cornice-action-exec: {error}", file=sys.stderr)
+        sys.exit(1)

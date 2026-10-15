@@ -2146,6 +2146,8 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         auto environment = QProcessEnvironment::systemEnvironment();
         environment.remove("WAYLAND_SOCKET");
         environment.remove("DISPLAY");
+        environment.remove("XDG_ACTIVATION_TOKEN");
+        environment.remove("DESKTOP_STARTUP_ID");
         environment.insert("WAYLAND_DISPLAY", actual["display"].toString());
         environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
         plan.applyEnvironment(environment);
@@ -2226,6 +2228,8 @@ void Broker::ensureBrowser(const QString &name, const QString &program, const QS
     auto environment = QProcessEnvironment::systemEnvironment();
     environment.remove("WAYLAND_SOCKET");
     environment.remove("DISPLAY");
+    environment.remove("XDG_ACTIVATION_TOKEN");
+    environment.remove("DESKTOP_STARTUP_ID");
     environment.insert("WAYLAND_DISPLAY", actual["display"].toString());
     environment.insert("HYPRLAND_INSTANCE_SIGNATURE", m_instance);
     plan.applyEnvironment(environment);

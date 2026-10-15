@@ -249,9 +249,13 @@ bool BrowserSession::running() const {
 }
 bool BrowserSession::matchesLaunchEnvironment(const QJsonObject &requested) const {
   if (!running()) return false;
-  for (auto it = requested.begin(); it != requested.end(); ++it)
+  for (auto it = requested.begin(); it != requested.end(); ++it) {
+    // These describe the current user action, not the browser's persistent
+    // launch configuration. A warm launch must forward its new token.
+    if (it.key() == "XDG_ACTIVATION_TOKEN" || it.key() == "DESKTOP_STARTUP_ID") continue;
     if (!it.value().isString() || !m_launchEnvironment.contains(it.key()) ||
         m_launchEnvironment.value(it.key()) != it.value()) return false;
+  }
   return true;
 }
 bool BrowserSession::setStartupSubmissionCheck(std::function<QString()> check) {

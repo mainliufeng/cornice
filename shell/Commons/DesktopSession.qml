@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
+import Cornice.Platform
 QtObject {
   id: root
   readonly property string name: Quickshell.env("CORNICE_DESKTOP_NAME") || ""
@@ -43,6 +44,7 @@ QtObject {
   property var windowSnapshot: []
   property var primaryWorkspace: null
   property var primaryWindow: null
+  property var primaryMonitors: []
   readonly property var currentWorkspace: secondary
     ? workspaceIdentity({address:state.workspace, name:state.workspaceName || state.workspace})
     : workspaceIdentity(primaryWorkspace !== null ? primaryWorkspace : Hyprland.focusedWorkspace)
@@ -135,10 +137,11 @@ QtObject {
     contextRefreshScheduled = true
     Qt.callLater(function() {
       root.contextRefreshScheduled = false
-      if (root.secondary || workspacePoll.running || windowPoll.running || !root.contextRefreshPending) return
+      if (root.secondary || workspacePoll.running || windowPoll.running || monitorPoll.running || !root.contextRefreshPending) return
       root.contextRefreshPending = false
       workspacePoll.running = true
       windowPoll.running = true
+      monitorPoll.running = true
     })
   }
   property var workspacePoll: Process {
@@ -149,6 +152,11 @@ QtObject {
   property var windowPoll: Process {
     command:["hyprctl", "-j", "activewindow"]
     stdout:StdioCollector {onStreamFinished: {try {root.primaryWindow = JSON.parse(text)} catch (e) {}}}
+    onRunningChanged:if (!running && root.contextRefreshPending) root.refreshContext()
+  }
+  property var monitorPoll: Process {
+    command:["hyprctl", "-j", "monitors"]
+    stdout:StdioCollector {onStreamFinished: {try {root.primaryMonitors = JSON.parse(text)} catch (e) {}}}
     onRunningChanged:if (!running && root.contextRefreshPending) root.refreshContext()
   }
   property var contextEvents: Connections {
@@ -164,26 +172,73 @@ QtObject {
   }
   onSecondaryChanged:refreshContext()
   Component.onCompleted: {refreshContext(); refreshWindows()}
-  function launchApplication(argv) {
-    if (readOnly || !argv.length) return false
-    if (!secondary) {
-      const home = Quickshell.env("HOME") || ""
-      const path = (home ? home + "/.local/bin:" : "") + (Quickshell.env("PATH") || "/usr/local/bin:/usr/bin:/bin")
-      Quickshell.execDetached(["env", "PATH=" + path].concat(argv))
-      return true
+  property var actionCallbacks: ({})
+  property var trayCallbacks: ({})
+  property string actionError: ""
+  property var actionRouter: DesktopActionRouter {
+    onPrepared: (request, context, error) => {
+      const callback = root.actionCallbacks[request]
+      delete root.actionCallbacks[request]
+      if (error) { root.actionError = error; console.warn("cornice: " + error) }
+      if (callback) callback(context, error)
     }
-    if (!service || (!agentShell && (!service.observer || !service.observer.humanControl))) return false
-    const args = ["launch", selected]
-    // Native panels belong to this desktop's shell even during physical
-    // takeover. The Broker validates the current human seat and generation.
-    if (state.controlMode === "human") {
-      if (!state.seatId || !state.generation) return false
-      args.push("--human-seat", String(state.seatId), String(state.generation))
-    } else if (!agentShell) return false
-    // A launch is queued through the same result channel as workspace and
-    // control actions, so a failed app/profile policy stays visible and retryable.
-    service.operate(args.concat(["--"], argv))
+    onActionFinished: (request, success, error) => {
+      const callback = root.trayCallbacks[request]
+      delete root.trayCallbacks[request]
+      if (!success) { root.actionError = error; console.warn("cornice: " + error) }
+      if (callback) callback(success)
+    }
+  }
+  function withAction(callback, failure, sourceOutput) {
+    if (readOnly || (secondary && (!state.seatId || !state.generation))) return false
+    // Copy everything at invocation; callbacks must not read selected/state.
+    const output = String(sourceOutput || root.output || "-")
+    const monitor = primaryMonitors.find(item => item.name === output)
+    const workspace = !secondary && output !== "-" ? workspaceIdentity(monitor ? monitor.activeWorkspace : null) : observedWorkspace
+    if (!workspace.key) return false
+    const source = {output:output, desktop:selected || "main", secondary:secondary,
+      human:state.controlMode === "human", seat:String(state.seatId || "-"),
+      generation:String(state.generation || "-"), workspace:workspace.key}
+    if (source.secondary && !agentShell && (!observing || !service.observer.humanControl || !source.human)) return false
+    actionError = ""
+    const request = actionRouter.prepare(source.desktop, source.seat, source.generation, source.workspace, source.output)
+    actionCallbacks[request] = (context, error) => {
+      if (error) { if (failure) failure(); return }
+      callback(context, source)
+    }
     return true
+  }
+  function trayAction(item, method, entry, callback, delta, horizontal, sourceOutput, menuPath) {
+    return withAction(context => {
+      context.menuPath = menuPath || []
+      const request = actionRouter.invokeTray(item, entry || null, method, context, delta || 0, horizontal || false)
+      if (callback) trayCallbacks[request] = callback
+    }, () => { if (callback) callback(false) }, sourceOutput)
+  }
+  function launchApplication(argv, sourceOutput) {
+    if (readOnly || !argv.length) return false
+    const command = argv.slice()
+    return withAction((context, source) => {
+      const launch = ["env", "XDG_ACTIVATION_TOKEN=" + context.token, "DESKTOP_STARTUP_ID=" + context.token].concat(command)
+      if (!source.secondary) {
+        const home = Quickshell.env("HOME") || ""
+        const path = (home ? home + "/.local/bin:" : "") + (Quickshell.env("PATH") || "/usr/local/bin:/usr/bin:/bin")
+        const prefix = Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
+        Quickshell.execDetached(["env", "PATH=" + path, "XDG_ACTIVATION_TOKEN=" + context.token,
+          "DESKTOP_STARTUP_ID=" + context.token, prefix + "/bin/cornice-action-exec", "--"].concat(command))
+        return
+      }
+      if (!service) return
+      const args = ["launch", source.desktop]
+      // Native panels belong to this desktop's shell even during physical
+      // takeover. The Broker validates the current human seat and generation.
+      if (source.human) {
+        args.push("--human-seat", source.seat, source.generation)
+      } else if (!agentShell) return false
+      // A launch is queued through the same result channel as workspace and
+      // control actions, so a failed app/profile policy stays visible and retryable.
+      service.operate(args.concat(["--"], launch))
+    }, null, sourceOutput)
   }
   function focusWindow(address, expectedWorkspace) {
     address = windowAddress(address)

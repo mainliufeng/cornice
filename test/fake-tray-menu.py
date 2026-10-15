@@ -9,6 +9,7 @@ from gi.repository import Gio, GLib
 
 bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
 sni_xml = """<node><interface name="org.kde.StatusNotifierItem">
+<method name="ProvideXdgActivationToken"><arg type="s" direction="in"/></method>
 <property name="Id" type="s" access="read"/>
 <property name="Title" type="s" access="read"/>
 <property name="Category" type="s" access="read"/>
@@ -66,7 +67,10 @@ def layout(ident, depth):
 
 
 def method(_bus, _sender, _path, _iface, name, params, invocation):
-    if name == "GetLayout":
+    if name == "ProvideXdgActivationToken":
+        print("token " + params.unpack()[0], flush=True)
+        invocation.return_value(GLib.Variant("()", ()))
+    elif name == "GetLayout":
         ident, depth, _props = params.unpack()
         invocation.return_value(GLib.Variant("(u(ia{sv}av))", (1, layout(ident, depth))))
     elif name == "AboutToShow":
@@ -77,14 +81,18 @@ def method(_bus, _sender, _path, _iface, name, params, invocation):
 
 
 bus.register_object("/StatusNotifierItem", Gio.DBusNodeInfo.new_for_xml(sni_xml).interfaces[0],
-                    None, lambda *_args: properties[_args[-1]], None)
+                    method, lambda *_args: properties[_args[-1]], None)
 menu_props = {"Version": GLib.Variant("u", 3), "TextDirection": GLib.Variant("s", "ltr"),
               "Status": GLib.Variant("s", "normal"), "IconThemePath": GLib.Variant("as", [])}
 bus.register_object("/Menu", Gio.DBusNodeInfo.new_for_xml(menu_xml).interfaces[0], method,
                     lambda *_args: menu_props[_args[-1]], None)
+# Exercise the Shell's pinned unique-owner fallback for a registered
+# well-known SNI service, as common desktop libraries do.
+bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName",
+              GLib.Variant("(su)", ("org.cornice.MenuFixture", 0)), None, Gio.DBusCallFlags.NONE, 5000, None)
 bus.call_sync("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
               "org.kde.StatusNotifierWatcher", "RegisterStatusNotifierItem",
-              GLib.Variant("(s)", (bus.get_unique_name(),)), None,
+              GLib.Variant("(s)", ("org.cornice.MenuFixture",)), None,
               Gio.DBusCallFlags.NONE, 5000, None)
 print("ready", flush=True)
 GLib.MainLoop().run()

@@ -17,6 +17,8 @@
 set -uo pipefail
 
 title=""
+service=""
+object_path=""
 ident=""
 label=""
 index=0
@@ -25,6 +27,8 @@ dry=0
 list=0
 while (($#)); do
   case "$1" in
+    --service) service="${2:-}"; shift 2 ;;
+    --object-path) object_path="${2:-}"; shift 2 ;;
     --title) title="${2:-}"; shift 2 ;;
     --id) ident="${2:-}"; shift 2 ;;
     --label) label="${2:-}"; shift 2 ;;
@@ -51,13 +55,20 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
 
 # The watcher lists every item as "<bus name><object path>".
-items=$(gdbus call --session --dest org.kde.StatusNotifierWatcher \
-  --object-path /StatusNotifierWatcher \
-  --method org.freedesktop.DBus.Properties.Get \
-  org.kde.StatusNotifierWatcher RegisteredStatusNotifierItems 2>/dev/null |
-  grep -o "'[^']*'" | tr -d "'")
+items=""
+if [[ -z $service ]]; then
+  items=$(gdbus call --session --dest org.kde.StatusNotifierWatcher \
+    --object-path /StatusNotifierWatcher \
+    --method org.freedesktop.DBus.Properties.Get \
+    org.kde.StatusNotifierWatcher RegisteredStatusNotifierItems 2>/dev/null |
+    grep -o "'[^']*'" | tr -d "'")
 
-[[ -n $items ]] || { echo "cornice-tray-activate: no status notifier items registered" >&2; exit 1; }
+  [[ -n $items ]] || { echo "cornice-tray-activate: no status notifier items registered" >&2; exit 1; }
+else
+  [[ $service =~ ^:[0-9]+\.[0-9]+$ && $object_path =~ ^/([A-Za-z0-9_]+/)*[A-Za-z0-9_]*$ ]] || {
+    echo "cornice-tray-activate: exact unique service and object path required" >&2; exit 2;
+  }
+fi
 
 # gdbus prints values as (<'value'>,); pull the first quoted string out of that.
 grab() {
@@ -86,27 +97,32 @@ if ((list)); then
 fi
 
 [[ -n $label ]] || { echo "usage: cornice-tray-activate (--id ID | --title T) --label L" >&2; exit 2; }
-[[ -n $ident || -n $title ]] || { echo "cornice-tray-activate: pass --id or --title" >&2; exit 2; }
+[[ -n $service || -n $ident || -n $title ]] || { echo "cornice-tray-activate: pass --id or --title" >&2; exit 2; }
 
-match_service=""
-match_path=""
-while read -r entry; do
-  [[ -n $entry ]] || continue
-  svc="${entry%%/*}"
-  path="/${entry#*/}"
-  if [[ -n $ident ]]; then
-    item_ident=$(sni_id "$svc" "$path")
-    matched=$([[ ${item_ident,,} == "${ident,,}" ]] && echo 1 || echo 0)
-  else
-    item_title=$(sni_title "$svc" "$path")
-    matched=$([[ ${item_title,,} == "${title,,}" ]] && echo 1 || echo 0)
-  fi
-  if ((matched)); then
-    match_service="$svc"
-    match_path="$path"
-    break
-  fi
-done <<<"$items"
+if [[ -n $service ]]; then
+  match_service="$service"
+  match_path="$object_path"
+else
+  match_service=""
+  match_path=""
+  while read -r entry; do
+    [[ -n $entry ]] || continue
+    svc="${entry%%/*}"
+    path="/${entry#*/}"
+    if [[ -n $ident ]]; then
+      item_ident=$(sni_id "$svc" "$path")
+      matched=$([[ ${item_ident,,} == "${ident,,}" ]] && echo 1 || echo 0)
+    else
+      item_title=$(sni_title "$svc" "$path")
+      matched=$([[ ${item_title,,} == "${title,,}" ]] && echo 1 || echo 0)
+    fi
+    if ((matched)); then
+      match_service="$svc"
+      match_path="$path"
+      break
+    fi
+  done <<<"$items"
+fi
 
 [[ -n $match_service ]] || {
   echo "cornice-tray-activate: no tray item with id '$ident' title '$title'" >&2
@@ -162,9 +178,16 @@ def parse():
     return ast.literal_eval(token)
 
 _, tree = parse()
+def clean_label(value):
+    text = str(value)
+    index = 0
+    while index < len(text) - 1:
+        if text[index] == "_": text = text[:index] + text[index + 1:]
+        index += 1
+    return text
 if route:
     for segment in json.loads(route):
-        matches = [child for child in tree[2] if child[1].get("label", "") == segment["text"]]
+        matches = [child for child in tree[2] if clean_label(child[1].get("label", "")) == segment["text"]]
         index = int(segment.get("index", 0))
         if index < 0 or index >= len(matches):
             sys.exit(1)

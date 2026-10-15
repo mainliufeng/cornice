@@ -132,6 +132,13 @@ void ApplicationScope::begin() {
         m_spec.program = QStandardPaths::findExecutable(m_spec.program,paths);
     }
     if (m_spec.program.isEmpty() || !QFileInfo(m_spec.program).isExecutable()) { finish("Application executable unavailable; no application was submitted"); return; }
+    if (m_spec.environment.contains("XDG_ACTIVATION_TOKEN")) {
+        const auto prefix = m_spec.environment.value("CORNICE_PATH", "/usr/share/cornice");
+        const auto helper = prefix + "/bin/cornice-action-exec";
+        if (!QFileInfo(helper).isExecutable()) { finish("Application routing helper unavailable; no application was submitted"); return; }
+        m_spec.arguments = QStringList{"--", m_spec.program} + m_spec.arguments;
+        m_spec.program = helper;
+    }
     const auto runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
     const auto manager = runtime + "/systemd/private";
     struct stat identity{};

@@ -126,12 +126,12 @@ Item {
             const item = entry.modelData
             // A left click on a tray item means "show me its menu" for most
             // items (nm-applet, fcitx, bluetooth); items without one activate.
-            if (mouse.button === Qt.MiddleButton) { if (!DesktopSession.readOnly) item.secondaryActivate() }
+            if (mouse.button === Qt.MiddleButton) DesktopSession.trayAction(item, "SecondaryActivate", null, null, 0, false, entry.QsWindow.window.screen.name)
             else if (item.hasMenu) root.showMenu(item, entry)
-            else if (!DesktopSession.readOnly) item.activate()
+            else DesktopSession.trayAction(item, "Activate", null, null, 0, false, entry.QsWindow.window.screen.name)
           }
 
-          onWheel: wheel => { if (!DesktopSession.readOnly) entry.modelData.scroll(wheel.angleDelta.y > 0 ? 1 : 0, false) }
+          onWheel: wheel => DesktopSession.trayAction(entry.modelData, "Scroll", null, null, wheel.angleDelta.y, false, entry.QsWindow.window.screen.name)
         }
 
         Connections {
@@ -161,9 +161,8 @@ Item {
     }
     openItem = item
     openAnchor = anchorItem
-    // The menu needs to know which item it belongs to: entries that Quickshell
-    // cannot activate are clicked through cornice-tray-activate, which looks the
-    // item up by its status-notifier id.
+    // Keep the exact registration, including duplicate logical item IDs.
+    menu.ownerItem = item
     menu.ownerId = String(item.id || "")
     menu.ownerTitle = String(item.title || "")
     menu.handle = item.menu
@@ -191,12 +190,14 @@ Item {
     target: "tray"
 
     // Diagnostics: try each activation path for an item and report what it did.
+    function actionError(): string { return DesktopSession.actionError }
     function invoke(id: string, method: string): string {
-      for (const item of root.items) {
-        if (String(item.id) !== id) continue
-        if (method === "activate") item.activate()
-        else if (method === "secondary") item.secondaryActivate()
-        else if (method === "display") item.display()
+      const matches = root.items.filter(item => String(item.id) === id)
+      if (matches.length > 1) return "ambiguous-item"
+      for (const item of matches) {
+        if (method === "activate") DesktopSession.trayAction(item, "Activate")
+        else if (method === "secondary") DesktopSession.trayAction(item, "SecondaryActivate")
+        else if (method === "display") root.showMenu(item, trayRepeater.itemAt(root.items.indexOf(item)))
         else if (method === "menu") root.showMenu(item, trayRepeater.itemAt(root.items.indexOf(item)))
         else return "unknown-method"
         return "ok"

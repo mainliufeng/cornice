@@ -107,7 +107,7 @@ PanelFrame {
 
   function runInTerminal(command) {
     if (command === undefined || String(command).trim() === "") return
-    DesktopSession.launchApplication([terminal, "-e", "sh", "-c", String(command)])
+    DesktopSession.launchApplication([terminal, "-e", "sh", "-c", String(command)], window.screen ? window.screen.name : "")
   }
 
   // .desktop Exec lines carry field codes (%U, %F, %c, %k, %i, ...). We have no
@@ -138,7 +138,7 @@ PanelFrame {
       if (/^%[uUfFdDnNi]$/.test(arg)) continue
       argv.push(arg.replace(/%[ck%]/g, code => code === "%c" ? (entry.name || "") : code === "%k" ? (entry.id || "") : "%"))
     }
-    DesktopSession.launchApplication(argv)
+    DesktopSession.launchApplication(argv, window.screen ? window.screen.name : "")
   }
 
   Column {

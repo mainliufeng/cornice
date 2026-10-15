@@ -40,7 +40,7 @@ if [[ -n ${CORNICE_TEST_HYPRLAND_PREFIX:-} ]]; then
 fi
 suite=${1:-desktop-recovery-verify.py}
 case "$suite" in
-  isolation-boundary-verify.py|session-ui-cold-update-verify.py|session-ui-update-verify.py|headless-verify.sh|install-verify.sh|screenshot-controller-verify.py|desktop-clipboard-verify.py|core-lifecycle-verify.py|browser-recovery-verify.py|desktop-product-ui-verify.py|session-services-verify.py|desktop-state-contract-verify.py|desktop-context-verify.py|launcher-native-seat-verify.py|screen-recording-verify.py|application-launch-config-verify.py|voice-overlay-verify.py|launcher-seat-regression.py|desktop-handoff-verify.py|native-accessibility-response-verify.py|native-accessibility-verify.py|desktop-acquire-verify.py|generic-seat-controller-verify.py|desktop-harness-verify.py|agent-product-verify.py|desktop-switcher-verify.py|desktop-preview-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-lock-continuity-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|layout-shortcuts-verify.py|seat-focus-lifecycle-verify.py|seat-action-routing-verify.py|seat-foreign-activation-verify.py|keyboard-capability-focus-verify.py) ;;
+  desktop-routing-shell-verify.py|isolation-boundary-verify.py|session-ui-cold-update-verify.py|session-ui-update-verify.py|headless-verify.sh|install-verify.sh|screenshot-controller-verify.py|desktop-clipboard-verify.py|core-lifecycle-verify.py|browser-recovery-verify.py|desktop-product-ui-verify.py|session-services-verify.py|desktop-state-contract-verify.py|desktop-context-verify.py|launcher-native-seat-verify.py|screen-recording-verify.py|application-launch-config-verify.py|voice-overlay-verify.py|launcher-seat-regression.py|desktop-handoff-verify.py|native-accessibility-response-verify.py|native-accessibility-verify.py|desktop-acquire-verify.py|generic-seat-controller-verify.py|desktop-harness-verify.py|agent-product-verify.py|desktop-switcher-verify.py|desktop-preview-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-lock-continuity-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|layout-shortcuts-verify.py|seat-focus-lifecycle-verify.py|seat-action-routing-verify.py|seat-foreign-activation-verify.py|keyboard-capability-focus-verify.py) ;;
   *) echo 'Unknown isolated suite' >&2; exit 2 ;;
 esac
 # The selected binary may live under /tmp, which is hidden below. Bind only
@@ -106,7 +106,7 @@ interpreter=/usr/bin/python3
 # Only explicit fixture controls survive. Ambient client/binding/profile paths,
 # loader variables and model credentials never enter this test session.
 test_environment=()
-for name in CORNICE_TEST_PRODUCT CORNICE_TEST_UI_BASELINE CORNICE_TEST_HYPRLAND_SOURCE \
+for name in CORNICE_MENU_ONLY CORNICE_TEST_PRODUCT CORNICE_TEST_UI_BASELINE CORNICE_TEST_HYPRLAND_SOURCE \
   CORNICE_TEST_HYPRLAND CORNICE_TEST_DESKTOP_MENU_ONLY CORNICE_TEST_DESKTOP_PREVIEW_ONLY \
   CORNICE_TEST_FOCUS_PHASE CORNICE_TEST_KEYBOARD_EMPTY_KEYMAP CORNICE_TEST_KEYBOARD_FIXTURE_ONLY \
   CORNICE_TEST_SCALE CORNICE_TEST_WAYLAND_DEBUG CORNICE_TEST_INHERITED_DISPLAY_MODE \

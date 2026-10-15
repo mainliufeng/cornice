@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Services.Pipewire
 import qs.Commons
 import qs.Ui
@@ -57,7 +58,7 @@ Item {
       else if (mouse.button === Qt.RightButton)
         Util.execSession("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")
       else if (mouse.button === Qt.MiddleButton)
-        Util.exec("pavucontrol-qt || pavucontrol")
+        Util.exec("pavucontrol-qt || pavucontrol", root.QsWindow.window.screen.name)
     }
 
     onWheel: wheel => {

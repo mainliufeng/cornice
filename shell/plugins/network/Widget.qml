@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Networking
 import qs.Commons
 
@@ -71,7 +72,7 @@ Item {
     acceptedButtons: Qt.LeftButton | Qt.RightButton
     cursorShape: Qt.PointingHandCursor
     onClicked: mouse => {
-      if (mouse.button === Qt.RightButton) Util.exec("nm-connection-editor")
+      if (mouse.button === Qt.RightButton) Util.exec("nm-connection-editor", root.QsWindow.window.screen.name)
       else if (root.host) root.host.toggle("cn.network", {})
     }
   }

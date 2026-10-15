@@ -12,6 +12,8 @@ Item {
   property var handle: null
   property string ownerId: ""
   property string ownerTitle: ""
+  property var ownerItem: null
+  property bool actionPending: false
   property real anchorX: 0
   property var anchorWindow: null
   property int preferredWidth: 320
@@ -96,21 +98,21 @@ Item {
   function activate(level, entry, index) {
     if (!opened || !entry || !entry.enabled || entry.isSeparator || entries(level)[index] !== entry) return
     if (canOpen(entry)) { openSubmenu(level, entry, index); return }
-    if (DesktopSession.readOnly) return
-    try {
-      if (typeof entry.sendTriggered === "function") entry.sendTriggered()
-      else if (root.ownerId !== "") {
-        const path = branch.slice(0, level).map(row => ({text: row.text, index: row.index}))
-        path.push({text: entry.text, index: entries(level).slice(0, index).filter(row => row.text === entry.text).length})
-        const command = "cornice-tray-activate --id " + Util.shellQuote(root.ownerId)
-          + " --label " + Util.shellQuote(entry.text) + " --path " + Util.shellQuote(JSON.stringify(path))
-        console.log("cornice: tray menu activate → " + command)
-        Util.exec(command)
-      } else entry.display()
-    } catch (error) { console.warn("cornice: menu entry failed: " + error) }
-    entryChosen(entry)
-    close()
+    if (DesktopSession.readOnly || actionPending) return
+    if (ownerItem) {
+      actionPending = true
+      const path = branch.slice(0, level).map(row => ({text:row.text, index:row.index}))
+      path.push({text:entry.text, index:entries(level).slice(0, index).filter(row => row.text === entry.text).length})
+      const accepted = DesktopSession.trayAction(ownerItem, "Menu", entry, success => {
+        root.actionPending = false
+        if (success) { root.entryChosen(entry); root.close() }
+      }, 0, false, anchorWindow && anchorWindow.screen ? anchorWindow.screen.name : "", path)
+      if (!accepted) actionPending = false
+      return
+    }
+    console.warn("cornice: menu action has no exact tray registration")
   }
+
   function close() { handle = null }
   onHandleChanged: {
     trim(0)
