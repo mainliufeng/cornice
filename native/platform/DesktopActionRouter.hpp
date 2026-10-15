@@ -20,6 +20,7 @@ signals:
     void prepared(const QString& request, const QVariantMap& context, const QString& error);
     void actionFinished(const QString& request, bool success, const QString& error);
 private:
+    // Bounds ordinary human actions; this is not a token association lock.
     QSet<QString> m_busyItems;
     int m_pending = 0;
 };

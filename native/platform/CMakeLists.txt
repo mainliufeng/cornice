@@ -26,3 +26,7 @@ target_compile_definitions(cornice-local-ipc-verify PRIVATE
 add_executable(cornice-desktop-action-verify EXCLUDE_FROM_ALL ../../test/desktop-action-router-verify.cpp)
 target_include_directories(cornice-desktop-action-verify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(cornice-desktop-action-verify PRIVATE cornice_platform Qt6::Core Qt6::DBus)
+
+add_executable(cornice-tray-interleaving-verify EXCLUDE_FROM_ALL ../../test/tray-setter-interleaving-verify.cpp)
+target_include_directories(cornice-tray-interleaving-verify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(cornice-tray-interleaving-verify PRIVATE cornice_platform Qt6::Core Qt6::DBus)

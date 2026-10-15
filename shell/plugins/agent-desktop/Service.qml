@@ -338,7 +338,10 @@ Item {
       }
     }
     const operation=item.operation || operationLabel(item.args || []), desktop=item.desktop || (item.args || [])[1] || ""
-    if (exitCode !== 0) reportError(operation,desktop,action.stderrText || action.stdoutText || "操作未完成",item.command ? {command:item.command,operation:operation,desktop:desktop} : {args:item.args,meta:meta})
+    if (exitCode !== 0) {
+      reportError(operation,desktop,action.stderrText || action.stdoutText || "操作未完成",item.command ? {command:item.command,operation:operation,desktop:desktop} : {args:item.args,meta:meta})
+      if ((item.args || [])[0] === "launch") ActionFeedback.show(actionResult.error, desktop, meta.sourceOutput || "")
+    }
     else if (actionResult.operation === operation && actionResult.desktop === desktop) dismissError()
     if (exitCode === 0 && meta.openAfter) pendingView=meta.openAfter
     currentAction=({});refresh();dispatch()

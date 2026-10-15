@@ -15,3 +15,4 @@ BarTooltip 1.0 BarTooltip.qml
 
 MenuColumn 1.0 MenuColumn.qml
 DesktopBar 1.0 DesktopBar.qml
+ActionNotice 1.0 ActionNotice.qml
