@@ -9,11 +9,13 @@ authentication into one interface. An external harness such as Codex or Pi owns
 the task, model and conversation; Cornice supplies the assigned desktop and its
 observation and control tools.
 
-[![Human and Agent desktops using synthetic example data in a real isolated environment](docs/media/cornice-four-scenes.png)](docs/media/cornice-four-scenes.mp4)
+[![Pi researching Cornice through its own Chrome desktop](docs/media/cornice-pi-real-browser-v4.png)](docs/media/cornice-pi-real-browser-v4.mp4)
 
-[Watch the four-chapter demonstration](docs/media/cornice-four-scenes.mp4): independent desktops, manual takeover, Agent-requested cooperation, and human-only lock with a prior `continue` policy.
+[Watch Pi research Cornice in a real browser](docs/media/cornice-pi-real-browser-v4.mp4). The launcher submits the prompt automatically; Pi 1.1.0's model performs the searches, clicks, page reading and source-linked answer. Google returns a verification/429 page; Pi makes one normal DuckDuckGo search and reads the GitHub repository and README. No verification is bypassed.
 
-*70.532-second main film with 2 fps sampling. Real isolated environment, synthetic demo data, automated operation of real applications and Cornice controls. Cornice `6ca3a36` + Hyprland fork `b18a6b9`. Both input sides are driven by a test script; model decision-making is outside this recording's scope. The Agent column is blank when the desktop control is unavailable, sampling is busy, or capture is denied; previous screenshots are not reused. Lock authentication uses an isolated test PAM fixture. Full-session lock is a separate supplemental check, outside the main film.*
+*57.901 seconds at **1.5× speed**, trimmed from one 94.643-second take in its original order. Temporary identifiers, internal endpoints and verification-page details are masked; the original Pi answer is preserved. The working directory, session and Chrome profile are fresh demo instances. Cornice `6ca3a36` + Hyprland fork `b18a6b9`. Operator output recording is separate from Pi's task MCP capture; the two outputs retain independent capture timestamps.*
+
+The answer's “Agent mode is read-only” wording has an ambiguous subject: the human's default observation window is read-only. Explicit takeover routes human input to that desktop and pauses Agent control. This research run does not validate process architecture, the personal website, or the takeover and lock features below; those capability statements rely on separate engineering validation.
 
 ## Your desktop, and the Agent's
 
@@ -37,9 +39,8 @@ Agent input currently excludes Xwayland, and application single-instance and
 multi-seat support still have limits.
 
 See [desktop usage](docs/agent-desktop.md), [harness integration](docs/desktop-harness.md)
-and [the product boundary](docs/agent-desktop-product.md). The main film above shows
-real isolated operations with synthetic data; the images below show historical
-daily-shell features.
+and [the product boundary](docs/agent-desktop-product.md). The film above shows a live Pi research run in a fresh demo environment; the
+images below show historical daily-shell features.
 
 ---
 

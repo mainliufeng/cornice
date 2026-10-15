@@ -7,11 +7,13 @@
 polkit 认证收进统一界面。任务、模型和对话由 Codex、Pi 等外部执行器管理；
 Cornice 提供分配给它的桌面及观察、控制工具。
 
-[![真实隔离环境中的人侧和 Agent 桌面，使用合成示例数据](docs/media/cornice-four-scenes.png)](docs/media/cornice-four-scenes.mp4)
+[![Pi 在自己的 Chrome 桌面中真实调研 Cornice](docs/media/cornice-pi-real-browser-v4.png)](docs/media/cornice-pi-real-browser-v4.mp4)
 
-[观看四章演示](docs/media/cornice-four-scenes.mp4)：独立桌面、人主动接管、Agent 请求协作，以及预先配置 `continue` 后只锁人侧。
+[观看 Pi 真实浏览器调研](docs/media/cornice-pi-real-browser-v4.mp4)。启动脚本自动提交提示词，搜索、点击、页面阅读和带来源的原始答复均由 Pi 1.1.0 的模型实际执行。Google 返回验证/429 页面后，Pi 正常使用 DuckDuckGo 搜索一次，再阅读真实 GitHub 仓库与 README；没有绕过验证。
 
-*主片 70.532 秒，按 2 帧/秒采样。真实隔离环境、合成演示数据、自动操作真实应用与 Cornice 控件。Cornice `6ca3a36` + Hyprland fork `b18a6b9`。人侧和 Agent 侧动作均由测试脚本触发，模型决策不在演示范围内。Agent 桌面控制不可用、采样忙或截图被拒绝时，Agent 栏留白，不沿用旧截图。锁屏认证使用隔离环境的测试 PAM 夹具。完整会话锁作为单独的真实补充检查，不在主视频中。*
+*57.901 秒，**1.5 倍速**；从同一次 94.643 秒原片按原顺序截取。临时标识、内部端点和验证页信息已实框遮挡，Pi 原答保留不改。工作目录、会话与 Chrome profile 均为全新演示实例。Cornice `6ca3a36` + Hyprland fork `b18a6b9`。摄像采用操作员权限的输出采集，与 Pi 任务的 MCP capture 分开；两侧保留各自的采样时间。*
+
+原答中“Agent 方式是只读观察”的主语有歧义：默认只读的是人对 Agent 桌面的观察窗；显式接管后，人的输入进入该桌面并暂停 Agent 控制。本段只展示真实浏览器调研，没有验证进程架构、个人官网或下文的接管与锁屏功能；下文能力说明依据独立的工程验收。
 
 ## 你的桌面，和 Agent 的桌面
 
@@ -31,7 +33,7 @@ Cornice 提供分配给它的桌面及观察、控制工具。
 应用单实例及多 seat 支持仍有兼容限制。
 
 详见[桌面使用](docs/agent-desktop.md)、[执行器对接](docs/desktop-harness.md)及
-[产品边界](docs/agent-desktop-product.md)。上方主片展示使用合成数据的真实隔离操作，
+[产品边界](docs/agent-desktop-product.md)。上方主片展示全新演示环境中的真实 Pi 调研，
 下方保留日常 Shell 的历史图片。
 
 ---
