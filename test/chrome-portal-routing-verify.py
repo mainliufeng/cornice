@@ -199,7 +199,9 @@ try:
         match = re.search(r"zxdg_imported_v2#\d+\.set_parent_of\(wl_surface#(\d+)\)", line)
         if not match: continue
         surface = match[1]
-        attached = next(i for i in range(index + 1, len(trace)) if f"wl_surface#{surface}.attach(wl_buffer#" in trace[i])
+        created = max(i for i in range(index) if f".create_surface(new id wl_surface#{surface})" in trace[i])
+        attached = next(i for i in range(created + 1, len(trace)) if f"wl_surface#{surface}.attach(wl_buffer#" in trace[i])
+        assert index < attached, (line, trace[attached])
         # A preceding initial empty commit is not a mapped frame. The actual
         # installed backend announces the foreign parent before attaching pixels.
         parent_timing.append({"surface": surface, "parentLine": index + 1, "firstBufferLine": attached + 1})
