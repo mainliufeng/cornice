@@ -15,6 +15,7 @@ Rectangle {
   readonly property var sections: [left, center, right]
   height: Style.barHeight
   color: Color.barBackground
+  ActionNotice { host: root.host }
   BarSection {
     id: left
     anchors {left:parent.left;leftMargin:Style.padding;verticalCenter:parent.verticalCenter}

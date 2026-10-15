@@ -1,4 +1,6 @@
 {
+  "actions.failed": "Action could not be completed",
+  "actions.trayUnsupported": "This tray service cannot identify the source desktop, so the action was not sent. Use its original desktop to open the window.",
   "audio.devices": "Output devices",
   "audio.input": "Microphone volume",
   "audio.noOutput": "No audio output available",

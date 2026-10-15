@@ -1,4 +1,6 @@
 {
+  "actions.failed": "操作未完成",
+  "actions.trayUnsupported": "此托盘服务无法识别操作来自哪个桌面，因此未发送操作。请在应用原来的桌面打开窗口。",
   "audio.devices": "输出设备",
   "audio.input": "麦克风音量",
   "audio.noOutput": "没有可用的音频输出",

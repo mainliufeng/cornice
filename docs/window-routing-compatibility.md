@@ -64,6 +64,15 @@ follow the clicked workspace. Cornice cannot infer whether an action creates a
 window from the base SNI interface. Agent actions never fall back to the human
 desktop. These remain real limits, not full shared-service compatibility.
 
+The Shell shows preparation and tray refusals for 15 seconds on the captured
+source desktop and output, including direct tray clicks without a completion
+callback. Launcher failures use the same passive notice after the Launcher
+closes. It takes no keyboard focus or pointer input and is hidden while locked;
+changing the viewed desktop does not retarget an earlier result. The persistent
+desktop operation result remains available for launch errors. This feedback does
+not add a missing activation-token contract or prove a successful launch created
+a window.
+
 Per-desktop service processes and private D-Bus sessions can provide a default
 route without modifying their toolkit, at the cost of service lifecycle,
 activation and configuration orchestration. A shared producer can instead

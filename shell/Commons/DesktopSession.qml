@@ -179,15 +179,18 @@ QtObject {
     onPrepared: (request, context, error) => {
       const callback = root.actionCallbacks[request]
       delete root.actionCallbacks[request]
-      if (error) { root.actionError = error; console.warn("cornice: " + error) }
       if (callback) callback(context, error)
     }
     onActionFinished: (request, success, error) => {
       const callback = root.trayCallbacks[request]
       delete root.trayCallbacks[request]
-      if (!success) { root.actionError = error; console.warn("cornice: " + error) }
-      if (callback) callback(success)
+      if (callback) callback(success, error)
     }
+  }
+  function reportActionError(error, source) {
+    actionError = String(error)
+    ActionFeedback.show(actionError, source.desktop, source.output)
+    console.warn("cornice: " + actionError)
   }
   function withAction(callback, failure, sourceOutput) {
     if (readOnly || (secondary && (!state.seatId || !state.generation))) return false
@@ -201,18 +204,22 @@ QtObject {
       generation:String(state.generation || "-"), workspace:workspace.key}
     if (source.secondary && !agentShell && (!observing || !service.observer.humanControl || !source.human)) return false
     actionError = ""
+    if (ActionFeedback.visibleFor(source.desktop, source.output)) ActionFeedback.clear()
     const request = actionRouter.prepare(source.desktop, source.seat, source.generation, source.workspace, source.output)
     actionCallbacks[request] = (context, error) => {
-      if (error) { if (failure) failure(); return }
+      if (error) { root.reportActionError(error, source); if (failure) failure(); return }
       callback(context, source)
     }
     return true
   }
   function trayAction(item, method, entry, callback, delta, horizontal, sourceOutput, menuPath) {
-    return withAction(context => {
+    return withAction((context, source) => {
       context.menuPath = menuPath || []
       const request = actionRouter.invokeTray(item, entry || null, method, context, delta || 0, horizontal || false)
-      if (callback) trayCallbacks[request] = callback
+      trayCallbacks[request] = (success, error) => {
+        if (!success) root.reportActionError(error, source)
+        if (callback) callback(success)
+      }
     }, () => { if (callback) callback(false) }, sourceOutput)
   }
   function launchApplication(argv, sourceOutput) {
@@ -237,7 +244,7 @@ QtObject {
       } else if (!agentShell) return false
       // A launch is queued through the same result channel as workspace and
       // control actions, so a failed app/profile policy stays visible and retryable.
-      service.operate(args.concat(["--"], launch))
+      service.operate(args.concat(["--"], launch), {sourceOutput:source.output})
     }, null, sourceOutput)
   }
   function focusWindow(address, expectedWorkspace) {
