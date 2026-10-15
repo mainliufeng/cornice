@@ -5,6 +5,7 @@ Consecutive first-child submenus reproduce unwanted event reuse. Repeated leaf
 labels across branches, disabled/separator/checked items and a tall sixth level
 verify actual activation, navigation and scrolling through Quickshell.
 """
+import os
 from gi.repository import Gio, GLib
 
 bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
@@ -18,6 +19,8 @@ sni_xml = """<node><interface name="org.kde.StatusNotifierItem">
 <property name="Menu" type="o" access="read"/>
 <property name="ItemIsMenu" type="b" access="read"/>
 </interface></node>"""
+if os.environ.get("CORNICE_MENU_LEGACY_TRAY") == "1":
+    sni_xml = sni_xml.replace('<method name="ProvideXdgActivationToken"><arg type="s" direction="in"/></method>', '')
 menu_xml = """<node><interface name="com.canonical.dbusmenu">
 <method name="GetLayout"><arg type="i" direction="in"/><arg type="i" direction="in"/>
 <arg type="as" direction="in"/><arg type="u" direction="out"/>

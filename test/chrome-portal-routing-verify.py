@@ -240,6 +240,12 @@ try:
     error = wait(lambda: shell("B", "ipc", "tray", "actionError"), timeout=10)
     assert "UnknownMethod" in error and "per-action activation tokens" in error
     record("installed Fcitx tray activation capability result", {"id": item["id"], "error": error})
+    before = (runtime.base / "portal-dbus.log").read_text().count("member=Activate")
+    shell("main", "ipc", "tray", "invoke", item["id"], "activate")
+    wait(lambda: (runtime.base / "portal-dbus.log").read_text().count("member=Activate") > before)
+    assert shell("main", "ipc", "tray", "actionError") == ""
+    assert runtime.ctl("activewindow", True)["address"] == guard_address
+    record("installed tokenless Fcitx accepts the validated human tray action while Agent action remains refused", {"id": item["id"], "humanActionDelivered": True, "humanFocusUnchanged": True})
 finally:
     if events: events.close()
     for client in clients:

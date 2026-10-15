@@ -2,6 +2,9 @@
 #include <QCoreApplication>
 #include <QDBusAbstractInterface>
 #include <QDBusConnection>
+#include <QDBusContext>
+#include <QTemporaryDir>
+#include <QFile>
 #include <QEventLoop>
 #include <QTimer>
 #include <QDebug>
@@ -30,7 +33,16 @@ class PlainItem : public QObject {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.kde.StatusNotifierItem")
 public slots:
-    void Activate(int, int) { events << "unsupported:activate"; }
+    void Activate(int, int) { events << "plain:activate"; }
+    void SecondaryActivate(int, int) { events << "plain:secondary"; }
+    void Scroll(int delta, const QString& orientation) { events << "plain:scroll:" + QString::number(delta) + ":" + orientation; }
+};
+class DeniedItem : public QObject, protected QDBusContext {
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.kde.StatusNotifierItem")
+public slots:
+    void ProvideXdgActivationToken(const QString&) { sendErrorReply(QDBusError::AccessDenied, "denied by fixture"); }
+    void Activate(int, int) { events << "denied:activate"; }
 };
 class MenuEntry : public QObject {
     Q_OBJECT
@@ -51,26 +63,28 @@ int main(int argc, char** argv) {
     try {
         auto bus = QDBusConnection::sessionBus();
         require(bus.isConnected() && bus.registerService("org.cornice.RouterTest"), "private bus registration");
-        TokenItem first, second; PlainItem plain;
+        TokenItem first, second; PlainItem plain; DeniedItem denied;
         first.identity = "first"; second.identity = "second";
         require(bus.registerObject("/first", &first, QDBusConnection::ExportAllSlots)
                 && bus.registerObject("/second", &second, QDBusConnection::ExportAllSlots)
-                && bus.registerObject("/plain", &plain, QDBusConnection::ExportAllSlots), "export synthetic SNI services");
+                && bus.registerObject("/plain", &plain, QDBusConnection::ExportAllSlots)
+                && bus.registerObject("/denied", &denied, QDBusConnection::ExportAllSlots), "export synthetic SNI services");
         // These represent two registrations with identical logical IDs. The
         // router receives exact QObject handles and never searches by ID.
-        QObject a, b, unsupported;
-        Handle ah(&a, bus.baseService(), "/first"), bh(&b, bus.baseService(), "/second"), ph(&unsupported, bus.baseService(), "/plain");
+        QObject a, b, unsupported, accessDenied;
+        Handle ah(&a, bus.baseService(), "/first"), bh(&b, bus.baseService(), "/second"), ph(&unsupported, bus.baseService(), "/plain"), dh(&accessDenied, bus.baseService(), "/denied");
         MenuEntry menu;
         QObject::connect(&menu, &MenuEntry::triggered, [&] { events << "second:menu"; });
         DesktopActionRouter router;
-        const auto invoke = [&](QObject* item, const QString& method, const QString& token, QObject* entry = nullptr, int delta = 0) {
+        const auto invoke = [&](QObject* item, const QString& method, const QString& token, QObject* entry = nullptr, int delta = 0, QVariantMap context = {}) {
             QEventLoop loop; bool success = false, completed = false;
             QString request;
             auto connection = QObject::connect(&router, &DesktopActionRouter::actionFinished,
                 [&](const QString& id, bool ok, const QString&) {
                     if (id == request) { completed = true; success = ok; loop.quit(); }
                 });
-            request = router.invokeTray(item, entry, method, {{"token", token}}, delta);
+            context.insert("token", token);
+            request = router.invokeTray(item, entry, method, context, delta);
             QTimer::singleShot(4500, &loop, &QEventLoop::quit);
             loop.exec(); QObject::disconnect(connection);
             require(completed, "bounded asynchronous completion");
@@ -86,6 +100,36 @@ int main(int argc, char** argv) {
         require(!invoke(&unsupported, "Activate", "agent-A") && events.size() == 8,
                 "unsupported token extension fails closed without sending Activate");
         require(!invoke(&b, "Menu", "agent-A", &second), "non-menu objects cannot dispatch fallback");
+        {
+            QTemporaryDir tools;
+            QFile ctl(tools.path() + "/hyprctl");
+            require(ctl.open(QIODevice::WriteOnly), "private source validator fixture");
+            ctl.write("#!/usr/bin/python3\nimport json,sys\nsource=sys.argv[-1]\nprint(json.dumps({'valid':source!='expired', 'name':'A' if source=='agent-context' else 'main', 'mode':'control'}))\n");
+            ctl.close(); ctl.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+            const auto originalPath = qgetenv("PATH");
+            qputenv("PATH", tools.path().toUtf8() + ":" + originalPath);
+            const QVariantMap human{{"desktop", "main"}, {"context", "human-valid"}};
+            const QVariantMap mislabeledAgent{{"desktop", "main"}, {"context", "agent-context"}};
+            const QVariantMap expired{{"desktop", "main"}, {"context", "expired"}};
+            auto before = events.size();
+            require(!invoke(&unsupported, "Activate", "agent", nullptr, 0, {{"desktop", "A"}, {"context", "agent-context"}})
+                    && !invoke(&unsupported, "Activate", "missing", nullptr, 0, {{"desktop", "main"}})
+                    && !invoke(&unsupported, "Activate", "spoof", nullptr, 0, mislabeledAgent)
+                    && !invoke(&unsupported, "Activate", "stale", nullptr, 0, expired) && events.size() == before,
+                    "Agent, missing, relabeled and expired sources never take human compatibility");
+            require(!invoke(&accessDenied, "Activate", "denied", nullptr, 0, human) && events.size() == before,
+                    "token authorization failures never trigger legacy fallback");
+            MenuEntry legacyMenu;
+            QObject::connect(&legacyMenu, &MenuEntry::triggered, [&] { events << "plain:menu"; });
+            require(invoke(&unsupported, "Activate", "legacy-human", nullptr, 0, human)
+                    && invoke(&unsupported, "SecondaryActivate", "legacy-human", nullptr, 0, human)
+                    && invoke(&unsupported, "Scroll", "legacy-human", nullptr, -120, human)
+                    && invoke(&unsupported, "Menu", "legacy-human", &legacyMenu, 0, human),
+                    "validated human source supports generic tokenless activation, secondary, scroll and menu");
+            require(events.mid(before) == QStringList{"plain:activate", "plain:secondary", "plain:scroll:-120:vertical", "plain:menu"},
+                    "legacy human compatibility dispatches each exact action once");
+            qputenv("PATH", originalPath);
+        }
         if (!qEnvironmentVariable("CORNICE_ROUTE_E2E_CLIENT").isEmpty()) {
             require(qEnvironmentVariable("HYPRLAND_TEST_SANDBOX") == "1", "real compositor tests require the private sandbox");
             const auto ctl = [](const QStringList& arguments) {

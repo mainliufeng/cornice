@@ -49,12 +49,20 @@ contract or must leave unattributed windows pending.
 
 ## Compatibility limits
 
-Tokenless shared tray services are currently refused before their action is
-sent. This includes the tested installed Fcitx tray `Activate` path, which
-returns `org.freedesktop.DBus.Error.UnknownMethod` for the activation-token
-method. This also restricts an action which happens not to create a window.
-Cornice cannot infer that property from the base SNI interface. This is a real
-behavioral limit, not full tray compatibility.
+For a human source, a tray service missing the optional activation-token method
+can receive its ordinary action after the compositor revalidates the captured
+context as a current primary control context. Only `UnknownMethod` permits this
+generic compatibility path; authorization errors, vanished owners and timeouts
+do not. A caller's `desktop=main` label alone is insufficient. The exact unique
+owner and selected menu entry remain pinned. The installed tokenless Fcitx
+`Activate` path is tested on the human desktop, without an application-name rule.
+
+Tokenless services remain refused for Agent, missing, expired or relabeled Agent
+contexts. A human compatibility action does not supply precise source-to-window
+binding to a legacy producer, nor prove that its next window's placement will
+follow the clicked workspace. Cornice cannot infer whether an action creates a
+window from the base SNI interface. Agent actions never fall back to the human
+desktop. These remain real limits, not full shared-service compatibility.
 
 Per-desktop service processes and private D-Bus sessions can provide a default
 route without modifying their toolkit, at the cost of service lifecycle,

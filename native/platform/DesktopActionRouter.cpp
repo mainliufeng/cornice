@@ -96,47 +96,79 @@ QString DesktopActionRouter::invokeTray(QObject* item, QObject* entry, const QSt
             m_busyItems.remove(key);
             emit actionFinished(request, ok, error);
         };
-        if (reply.isError() || !guard) {
-            finish(false, reply.isError() ? "Tray service does not accept per-action activation tokens: " + reply.error().name()
-                                          : "Tray item disappeared");
-            return;
-        }
-        if (method == "Menu") {
-            if (!menu) { finish(false, "Menu entry disappeared"); return; }
-            if (uniqueDestination) {
-                // QS keeps this exact entry and the menu's unique bus owner.
-                const bool ok = QMetaObject::invokeMethod(menu, "triggered", Qt::DirectConnection);
-                finish(ok, ok ? QString{} : "Menu entry disappeared");
+        const auto dispatch = [=, this] {
+            if (!guard) { finish(false, "Tray item disappeared"); return; }
+            if (method == "Menu") {
+                if (!menu) { finish(false, "Menu entry disappeared"); return; }
+                if (uniqueDestination) {
+                    // QS keeps this exact entry and the menu's unique bus owner.
+                    const bool ok = QMetaObject::invokeMethod(menu, "triggered", Qt::DirectConnection);
+                    finish(ok, ok ? QString{} : "Menu entry disappeared");
+                    return;
+                }
+                // A QS menu targeting a well-known name could be rebound between
+                // token and Event. Pin its unique owner and exact object path in
+                // the generic fallback instead of looking up a logical item ID.
+                const auto route = context.value("menuPath").toList();
+                if (route.isEmpty()) { finish(false, "Exact menu path required"); return; }
+                auto* process = new QProcess(this);
+                const auto helper = qEnvironmentVariable("CORNICE_PATH", "/usr/share/cornice") + "/bin/cornice-tray-activate";
+                connect(process, &QProcess::finished, this, [process, finish](int exit, QProcess::ExitStatus status) {
+                    const bool ok = status == QProcess::NormalExit && exit == 0;
+                    finish(ok, ok ? QString{} : "Exact-owner menu dispatch failed or timed out");
+                    process->deleteLater();
+                });
+                connect(process, &QProcess::errorOccurred, this, [process, finish](QProcess::ProcessError error) {
+                    if (error == QProcess::FailedToStart) { finish(false, "Menu dispatcher unavailable"); process->deleteLater(); }
+                });
+                process->start("/usr/bin/timeout", {"--kill-after=1", "5", helper, "--service", owner.value(), "--object-path", path,
+                    "--label", route.last().toMap().value("text").toString(), "--path", QString::fromUtf8(QJsonDocument::fromVariant(route).toJson(QJsonDocument::Compact))});
                 return;
             }
-            // A QS menu targeting a well-known name could be rebound between
-            // token and Event. Pin its unique owner and exact object path in
-            // the generic fallback instead of looking up a logical item ID.
-            const auto route = context.value("menuPath").toList();
-            if (route.isEmpty()) { finish(false, "Exact menu path required"); return; }
-            auto* process = new QProcess(this);
-            const auto helper = qEnvironmentVariable("CORNICE_PATH", "/usr/share/cornice") + "/bin/cornice-tray-activate";
-            connect(process, &QProcess::finished, this, [process, finish](int exit, QProcess::ExitStatus status) {
-                const bool ok = status == QProcess::NormalExit && exit == 0;
-                finish(ok, ok ? QString{} : "Exact-owner menu dispatch failed or timed out");
-                process->deleteLater();
+            auto action = QDBusMessage::createMethodCall(owner.value(), path, "org.kde.StatusNotifierItem", method);
+            if (method == "Scroll") action << delta << (horizontal ? "horizontal" : "vertical");
+            else action << 0 << 0;
+            auto* actionCall = new QDBusPendingCallWatcher(connection.asyncCall(action, 3000), this);
+            connect(actionCall, &QDBusPendingCallWatcher::finished, this, [finish](QDBusPendingCallWatcher* completed) {
+                const QDBusPendingReply<> result = *completed;
+                finish(!result.isError(), result.isError() ? result.error().name() : QString{});
+                completed->deleteLater();
             });
-            connect(process, &QProcess::errorOccurred, this, [process, finish](QProcess::ProcessError error) {
-                if (error == QProcess::FailedToStart) { finish(false, "Menu dispatcher unavailable"); process->deleteLater(); }
-            });
-            process->start("/usr/bin/timeout", {"--kill-after=1", "5", helper, "--service", owner.value(), "--object-path", path,
-                "--label", route.last().toMap().value("text").toString(), "--path", QString::fromUtf8(QJsonDocument::fromVariant(route).toJson(QJsonDocument::Compact))});
+        };
+        if (!reply.isError()) { dispatch(); return; }
+        // Only a missing optional method permits legacy compatibility. A
+        // timeout, owner failure or access error must never send another action.
+        const auto source = context.value("context").toString();
+        if (reply.error().name() != "org.freedesktop.DBus.Error.UnknownMethod"
+            || context.value("desktop").toString() != "main"
+            || !QRegularExpression("^[^\\s\\x00]+$").match(source).hasMatch()) {
+            finish(false, "Tray service does not accept per-action activation tokens: " + reply.error().name());
             return;
         }
-        auto action = QDBusMessage::createMethodCall(owner.value(), path, "org.kde.StatusNotifierItem", method);
-        if (method == "Scroll") action << delta << (horizontal ? "horizontal" : "vertical");
-        else action << 0 << 0;
-        auto* actionCall = new QDBusPendingCallWatcher(connection.asyncCall(action, 3000), this);
-        connect(actionCall, &QDBusPendingCallWatcher::finished, this, [finish](QDBusPendingCallWatcher* completed) {
-            const QDBusPendingReply<> result = *completed;
-            finish(!result.isError(), result.isError() ? result.error().name() : QString{});
-            completed->deleteLater();
+        // The caller's desktop label is not authority. Ask the compositor to
+        // revalidate the captured context, including generation, lock epoch and
+        // expiry, and require an actual primary control context. Never turn an
+        // Agent action into a human action because its service lacks tokens.
+        auto* validation = new QProcess(this);
+        auto* timer = new QTimer(validation);
+        timer->setSingleShot(true);
+        connect(timer, &QTimer::timeout, validation, &QProcess::kill);
+        connect(validation, &QProcess::finished, this, [validation, finish, dispatch] {
+            const auto value = QJsonDocument::fromJson(validation->readAllStandardOutput()).object();
+            const bool valid = validation->exitStatus() == QProcess::NormalExit && validation->exitCode() == 0
+                && value["valid"].toBool() && value["name"] == "main" && value["mode"] == "control";
+            validation->deleteLater();
+            if (!valid) { finish(false, "Tokenless tray action requires a current human source"); return; }
+            dispatch();
         });
+        connect(validation, &QProcess::errorOccurred, this, [validation, finish](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart) {
+                finish(false, "Human action context validation unavailable");
+                validation->deleteLater();
+            }
+        });
+        timer->start(3000);
+        validation->start("hyprctl", {"-j", "--", "seat", "validate-context", source});
     });
     return request;
 }
