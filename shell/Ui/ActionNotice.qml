@@ -14,7 +14,7 @@ Item {
   readonly property bool showing: !!barWindow && !(lock && lock.locked)
     && !DesktopSession.state.humanLocked
     && ActionFeedback.visibleFor(DesktopSession.selected, barWindow.screen ? barWindow.screen.name : "")
-  readonly property string message: ActionFeedback.detail === "Tray service does not accept per-action activation tokens: org.freedesktop.DBus.Error.UnknownMethod"
+  readonly property string message: ActionFeedback.detail === "Per-request tray activation is unavailable; no action was sent"
     ? I18n.t("actions.trayUnsupported") : ActionFeedback.detail
   PanelWindow {
     visible: root.showing
