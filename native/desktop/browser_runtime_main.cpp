@@ -203,9 +203,13 @@ class Runtime : public QObject {
                 }
                 const auto requested = message["requestedEnvironment"].toObject();
                 bool matches = true;
-                for (auto it = requested.begin(); it != requested.end(); ++it)
+                for (auto it = requested.begin(); it != requested.end(); ++it) {
+                    // Startup tokens describe this invocation, not persistent
+                    // browser configuration, including after Broker recovery.
+                    if (it.key() == "XDG_ACTIVATION_TOKEN" || it.key() == "DESKTOP_STARTUP_ID") continue;
                     if (!it.value().isString() || !launchEnvironment.contains(it.key()) ||
                         launchEnvironment.value(it.key()) != it.value()) { matches = false; break; }
+                }
                 if (!matches) {
                     deliver(socket, {{"ok", false}, {"error", "Managed browser launch environment changed; close this desktop's browser before relaunching"}});
                     socket->disconnectFromServer(); return;
