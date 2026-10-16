@@ -221,6 +221,10 @@ QtObject {
   function trayAction(item, method, entry, callback, delta, horizontal, sourceOutput, menuPath) {
     return withAction((context, source) => {
       context.menuPath = menuPath || []
+      // Only the physical shell can request ordinary tray compatibility while
+      // a person has taken over another desktop. Native code rechecks the
+      // Broker's seat identity/generation before granting this path.
+      context.humanTakeover = source.secondary && source.human && root.observing && !root.agentShell
       const request = actionRouter.invokeTray(item, entry || null, method, context, delta || 0, horizontal || false)
       trayCallbacks[request] = (success, error) => {
         if (!success) root.reportActionError(error, source)

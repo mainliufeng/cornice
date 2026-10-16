@@ -22,7 +22,9 @@ group; an output or workspace alone is not a complete isolation boundary.
   file to the correct page, takes input from its source seat, and preserves the
   human focus.
 - Ordinary human SNI tray actions, after revalidating a captured primary control
-  context. Exact unique D-Bus owners and selected menu entries remain pinned.
+  context or physical takeover of a secondary desktop. Takeover also requires
+  the Broker's current human control mode, seat identity and generation to match
+  the compositor-validated context. Exact unique D-Bus owners and selected menu entries remain pinned.
   The Shell does not supply a separate process-global activation token.
 
 ## First display and late parents
@@ -63,7 +65,8 @@ enable this path. This is an explicit compatibility limit, not an application
 launch repair. Toolkits may still support XDG tokens on other launch paths.
 
 For a human source, the existing ordinary-action compatibility remains after
-the compositor revalidates the captured context as current primary control.
+the compositor revalidates the captured context as current primary control, or
+the matching secondary context plus the Broker prove current human takeover.
 No global token is injected, and a caller's `desktop=main` label alone is
 insufficient. Exact owner/menu identities remain pinned. Missing, expired,
 relabeled and read-only sources fail; ordinary action errors are returned
@@ -107,6 +110,13 @@ Build `cornice-desktop-action-verify` and `cornice-tray-interleaving-verify` fro
 `native/platform` first. The tests
 require both concurrent Agent requests to fail without any setter/action/menu
 delivery, and retain source-validated ordinary human dispatch and error handling.
+They also check that a takeover flag alone, a paused/Agent-controlled desktop,
+or a changed seat/generation cannot enable ordinary dispatch.
+
+`chatgpt-tray-takeover-verify.py`, through `isolated-desktop-test.sh`, launches
+the installed ChatGPT with an empty private profile and no network. It clicks
+Quit with physical input during secondary-desktop takeover and checks that
+both the tray registration and the actual application process disappear.
 
 Use the matching Cornice and Hyprland development builds. Tests create their own
 HOME, runtime, profiles, session buses, PID/network namespaces, input clients and

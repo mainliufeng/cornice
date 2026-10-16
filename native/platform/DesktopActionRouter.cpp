@@ -114,7 +114,9 @@ QString DesktopActionRouter::invokeTray(QObject* item, QObject* entry, const QSt
     // a request-to-surface contract. Do not send even the setter for Agent
     // actions until such an atomic contract is actually implemented.
     const auto source = context.value("context").toString();
-    if (context.value("desktop").toString() != "main") {
+    const auto sourceDesktop = context.value("desktop").toString();
+    const bool humanTakeover = sourceDesktop != "main" && context.value("humanTakeover").toBool();
+    if (sourceDesktop != "main" && !humanTakeover) {
         const QDBusReply<QString> owner = target->connection().interface()->serviceOwner(target->service());
         const QDBusReply<uint> pid = owner.isValid() ? target->connection().interface()->servicePid(owner.value()) : QDBusReply<uint>{};
         const auto desktop = pid.isValid() ? CorniceApplication::desktopForPid(pid.value()) : QString{};
@@ -188,13 +190,40 @@ QString DesktopActionRouter::invokeTray(QObject* item, QObject* entry, const QSt
     auto* timer = new QTimer(validation);
     timer->setSingleShot(true);
     connect(timer, &QTimer::timeout, validation, &QProcess::kill);
-    connect(validation, &QProcess::finished, this, [validation, finish, dispatch] {
+    connect(validation, &QProcess::finished, this, [=, this] {
         const auto value = QJsonDocument::fromJson(validation->readAllStandardOutput()).object();
         const bool valid = validation->exitStatus() == QProcess::NormalExit && validation->exitCode() == 0
-            && value["valid"].toBool() && value["name"] == "main" && value["mode"] == "control";
+            && value["valid"].toBool() && value["name"].toString() == sourceDesktop && value["mode"] == "control";
         validation->deleteLater();
         if (!valid) { finish(false, "Tray action requires a current human source"); return; }
-        dispatch();
+        if (!humanTakeover) { dispatch(); return; }
+        // A control context alone also exists for Agent input. Only the Broker
+        // knows whether physical takeover is active. Match its current seat and
+        // generation to the compositor-validated context; a QML flag is not
+        // authority. No process-global activation token is provided.
+        auto* takeover = new QProcess(this);
+        auto* deadline = new QTimer(takeover);
+        deadline->setSingleShot(true);
+        connect(deadline, &QTimer::timeout, takeover, &QProcess::kill);
+        connect(takeover, &QProcess::finished, this, [=] {
+            const auto state = QJsonDocument::fromJson(takeover->readAllStandardOutput()).object();
+            const bool allowed = takeover->exitStatus() == QProcess::NormalExit && takeover->exitCode() == 0
+                && state["name"].toString() == sourceDesktop && state["controlMode"] == "human"
+                && !value["seatId"].toString().isEmpty() && state["seatId"] == value["seatId"]
+                && !value["generation"].toString().isEmpty() && state["generation"] == value["generation"];
+            takeover->deleteLater();
+            if (!allowed) { finish(false, "Tray action requires current human takeover of this desktop"); return; }
+            dispatch();
+        });
+        connect(takeover, &QProcess::errorOccurred, this, [takeover, finish](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart) {
+                finish(false, "Human takeover validation unavailable");
+                takeover->deleteLater();
+            }
+        });
+        deadline->start(3000);
+        const auto helper = qEnvironmentVariable("CORNICE_PATH", "/usr/share/cornice") + "/bin/cornice-desktop";
+        takeover->start(helper, {"state", sourceDesktop});
     });
     connect(validation, &QProcess::errorOccurred, this, [validation, finish](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) {

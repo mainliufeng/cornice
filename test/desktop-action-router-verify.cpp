@@ -4,6 +4,7 @@
 #include <QDBusConnection>
 #include <QDBusContext>
 #include <QTemporaryDir>
+#include <QDir>
 #include <QFile>
 #include <QEventLoop>
 #include <QTimer>
@@ -72,9 +73,20 @@ int main(int argc, char** argv) {
         QTemporaryDir tools;
         QFile ctl(tools.path() + "/hyprctl");
         require(ctl.open(QIODevice::WriteOnly), "private source validator fixture");
-        ctl.write("#!/usr/bin/python3\nimport json,sys\nassert sys.argv[1:5]==['-j','--','seat','validate-context']\nsource=sys.argv[-1]\nprint(json.dumps({'valid':source!='expired', 'name':'A' if source=='agent-context' else 'main', 'mode':'observe' if source=='read-only' else 'control'}))\n");
+        ctl.write("#!/usr/bin/python3\nimport json,sys\nassert sys.argv[1:5]==['-j','--','seat','validate-context']\nsource=sys.argv[-1]\nprint(json.dumps({'valid':source!='expired', 'name':'A' if source in ('agent-context','takeover') else 'main', 'seatId':'seat-A', 'generation':'7', 'mode':'readonly' if source=='read-only' else 'control'}))\n");
         ctl.close(); ctl.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
         qputenv("PATH", tools.path().toUtf8() + ":" + qgetenv("PATH"));
+        QDir().mkpath(tools.path() + "/bin");
+        QFile broker(tools.path() + "/bin/cornice-desktop");
+        require(broker.open(QIODevice::WriteOnly), "private takeover validator fixture");
+        broker.write("#!/usr/bin/python3\nimport pathlib,sys\nassert sys.argv[1:]==['state','A']\nprint((pathlib.Path(__file__).parent.parent/'state.json').read_text())\n");
+        broker.close(); broker.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        qputenv("CORNICE_PATH", tools.path().toUtf8());
+        const auto takeoverState = [&](const QByteArray& value) {
+            QFile state(tools.path() + "/state.json");
+            require(state.open(QIODevice::WriteOnly | QIODevice::Truncate), "write current takeover state");
+            state.write(value);
+        };
         const QVariantMap human{{"desktop", "main"}, {"context", "human-valid"}};
         const QVariantMap agent{{"desktop", "A"}, {"context", "agent-context"}};
         DesktopActionRouter router;
@@ -135,6 +147,26 @@ int main(int argc, char** argv) {
         require(!invoke(&accessDenied, "Activate", human) && events.mid(before) == QStringList{"denied:attempt"},
                 "ordinary action authorization error is returned without a retry or fallback");
         require(!invoke(&b, "Menu", human, &second), "non-menu objects cannot dispatch a signal");
+        const QVariantMap takeover{{"desktop", "A"}, {"context", "takeover"}, {"humanTakeover", true}};
+        const auto start = events.size();
+        for (const auto& state : {
+                R"({"name":"A","controlMode":"agent","seatId":"seat-A","generation":"7"})",
+                R"({"name":"A","controlMode":"paused","seatId":"seat-A","generation":"7"})",
+                R"({"name":"B","controlMode":"human","seatId":"seat-A","generation":"7"})",
+                R"({"name":"A","controlMode":"human","seatId":"other-seat","generation":"7"})",
+                R"({"name":"A","controlMode":"human","seatId":"seat-A","generation":"8"})"}) {
+            takeoverState(state);
+            require(!invoke(&b, "Menu", takeover, &menu) && events.size() == start,
+                    "a forged human flag, ended takeover or changed seat cannot dispatch any menu action");
+        }
+        takeoverState(R"({"name":"A","controlMode":"human","seatId":"seat-A","generation":"7"})");
+        require(!invoke(&b, "Menu", {{"desktop", "A"}, {"context", "human-valid"}, {"humanTakeover", true}}, &menu)
+                && events.size() == start, "primary context cannot be relabeled as secondary human takeover");
+        require(invoke(&b, "Menu", takeover, &menu) && invoke(&a, "Activate", takeover)
+                && invoke(&b, "SecondaryActivate", takeover) && invoke(&a, "Scroll", takeover, nullptr, -120),
+                "verified physical takeover supports menus, activation and scrolling on the selected desktop");
+        require(events.mid(start) == QStringList{"second:menu", "first:activate", "second:secondary", "first:scroll:-120:vertical"},
+                "human takeover dispatch preserves exact duplicate item identity");
         require(!events.join(',').contains(":token:"), "no invocation writes a process-global activation token");
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << std::endl; return 1; }
