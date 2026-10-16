@@ -218,7 +218,7 @@ Item {
   readonly property bool busy: action.running || pending.length > 0
 
   function readableError(detail) {
-    const text=String(detail || "操作未完成").replace(/^cornice:\s*/, "")
+    const text=String(detail || "操作未完成").replace(/^(?:cornice(?: desktop)?:\s*)+/, "")
     if (/stale|changed|generation|no longer/i.test(text)) return "桌面状态已变化，请刷新后重试。"
     if (/locked|Unlock session/i.test(text)) return "桌面已锁定，当前操作不可用。"
     if (/Another viewer|another human|owns human/i.test(text)) return "这个桌面正在由另一个观察者接管，请先结束接管。"

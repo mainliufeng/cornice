@@ -17,6 +17,7 @@ struct ApplicationLaunchPlan {
 // retains compositor identity, authorization and browser transport ownership.
 class ApplicationLaunch {
   public:
+    static QString singletonConflict(const QStringList &argv, const QString &desktop, bool primary);
     static ApplicationLaunchPlan prepare(const QStringList &argv, const QString &desktop, bool primary);
     static ApplicationLaunchPlan browser(const QString &desktop, bool primary, const QString &program = {},
                                          const QStringList &arguments = {});

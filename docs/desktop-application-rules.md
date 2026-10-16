@@ -8,7 +8,8 @@ application launches. Rules match the executable in the outer argv: a rule for
 `kitty` applies to a terminal-wrapped command; rules do not inspect shell scripts
 or recursively rewrite executables inside them.
 The desktop's compositor identity and permission checks remain Broker responsibilities.
-Primary native launches outside the Broker do not use this policy.
+The primary Launcher checks single-instance ownership before native execution.
+Other primary native launches outside the Broker do not use this policy.
 
 Defaults include Chrome/Chromium, Firefox, and ChatGPT/Codex launcher aliases.
 These executable names, startup arguments and environment variables live in JSON;
@@ -57,6 +58,7 @@ folder. `profile` accepts one directory name, not an absolute path or `..` trave
 | `environment` | String-valued environment additions; supports the same templates. |
 | `reservedArguments` | Option prefixes the caller may not override. |
 | `enabled` | Defaults to true. False disables that rule. A rule may also be set to null. |
+| `singleInstance` | Display name of an application known to allow only one running instance per user; cross-desktop attempts explain where it is running. |
 | `backend` | `process` (default) or `chromium`, the managed CDP pipe driver. |
 
 Fields merge by rule ID and environment variable; arrays replace the corresponding
@@ -143,3 +145,26 @@ it on this desktop: Chrome profiles belong to one running browser at a time.
 Do not assign one profile to multiple simultaneously running desktops. Other
 desktops continue to use their own profile directories. Changes apply after
 closing and relaunching this desktop's browser.
+
+## Single-instance applications
+
+Clash Verge is shipped with `"singleInstance": "Clash Verge"`. A secondary
+Launcher, CLI or MCP launch refuses to forward to a copy running on another
+desktop and explains where to use it. The primary Launcher performs the same
+check. The passive notice stays on the requesting desktop after Launcher closes;
+it does not switch desktops or take keyboard focus. Tray refusals also explain
+that the application must be used on its original desktop.
+
+For another application known to enforce one instance per user, add a rule with
+its executable basenames and a `singleInstance` string containing its display
+name. Ordinary applications remain free to open multiple windows. This policy
+uses the actual executable identity, so similarly named unrelated processes do
+not match. It also detects a running app whose window is hidden in the tray.
+Only the matching process's initial compositor/desktop identity is inspected;
+unknown or other-login ownership is described without inventing a desktop number.
+Native launches outside Cornice and arbitrary scripts are outside this policy.
+
+`single-instance-plan-verify.py` checks real executable identities, hidden processes,
+URI handlers, aliases, reverse desktop direction and unknown-login ownership.
+`single-instance-desktop-verify.py` runs a Qt single-instance/tray fixture in the
+private compositor, including physical takeover and source-scoped screenshots.

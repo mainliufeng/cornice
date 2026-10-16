@@ -1,6 +1,6 @@
 {
   "actions.failed": "Action could not be completed",
-  "actions.trayUnsupported": "This tray interface cannot bind each action to its source desktop, so the action was not sent. Use the application’s original desktop.",
+  "actions.trayUnsupported": "This application cannot be opened from this desktop’s tray. Switch to the desktop where the application is running.",
   "audio.devices": "Output devices",
   "audio.input": "Microphone volume",
   "audio.noOutput": "No audio output available",

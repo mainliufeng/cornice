@@ -1,4 +1,7 @@
 #include "DesktopActionRouter.hpp"
+#include "../common/ApplicationLocation.hpp"
+#include <QFileInfo>
+#include <QJsonArray>
 #include <QDBusAbstractInterface>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
@@ -51,6 +54,42 @@ QString DesktopActionRouter::prepare(const QString& desktop, const QString& seat
     return request;
 }
 
+QString DesktopActionRouter::checkApplication(const QStringList& argv, const QString& desktop) {
+    const auto request = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto prefix = qEnvironmentVariable("CORNICE_PATH", "/usr/share/cornice");
+    auto helper = prefix + "/native/bin/cornice-desktop-runtime";
+    if (!QFileInfo::exists(helper)) helper = prefix + "/native/build/cornice-desktop-runtime";
+    // Core-only installs have no multi-desktop policy/runtime.
+    if (!QFileInfo::exists(helper)) {
+        QTimer::singleShot(0, this, [=, this] { emit applicationChecked(request, {}); });
+        return request;
+    }
+    if (m_pending >= 8) {
+        QTimer::singleShot(0, this, [=, this] { emit applicationChecked(request, "Application check busy; try again"); });
+        return request;
+    }
+    auto* process = new QProcess(this);
+    ++m_pending;
+    auto* timer = new QTimer(process); timer->setSingleShot(true);
+    connect(timer, &QTimer::timeout, process, &QProcess::kill);
+    const auto finish = [=, this] {
+        --m_pending;
+        const bool ok = process->exitStatus() == QProcess::NormalExit && process->exitCode() == 0;
+        auto error = QString::fromUtf8(process->readAllStandardError()).trimmed();
+        if (!ok && error.isEmpty()) error = "Application check failed or timed out";
+        emit applicationChecked(request, ok ? QString{} : error);
+        process->deleteLater();
+    };
+    connect(process, &QProcess::finished, this, finish);
+    connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) finish();
+    });
+    process->start(helper, {"check-singleton", desktop, desktop == "main" ? "true" : "false",
+        QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(argv)).toJson(QJsonDocument::Compact))});
+    timer->start(4000);
+    return request;
+}
+
 QString DesktopActionRouter::invokeTray(QObject* item, QObject* entry, const QString& method,
                                         const QVariantMap& context, int delta, bool horizontal) {
     const auto request = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -76,7 +115,13 @@ QString DesktopActionRouter::invokeTray(QObject* item, QObject* entry, const QSt
     // actions until such an atomic contract is actually implemented.
     const auto source = context.value("context").toString();
     if (context.value("desktop").toString() != "main") {
-        reject("Per-request tray activation is unavailable; no action was sent");
+        const QDBusReply<QString> owner = target->connection().interface()->serviceOwner(target->service());
+        const QDBusReply<uint> pid = owner.isValid() ? target->connection().interface()->servicePid(owner.value()) : QDBusReply<uint>{};
+        const auto desktop = pid.isValid() ? CorniceApplication::desktopForPid(pid.value()) : QString{};
+        if (!desktop.isEmpty() && desktop != context.value("desktop").toString())
+            reject(QStringLiteral("此应用已在") + CorniceApplication::label(desktop)
+                + QStringLiteral("运行，无法从当前桌面的托盘打开。请切换到应用所在的桌面使用。"));
+        else reject("Per-request tray activation is unavailable; no action was sent");
         return request;
     }
     if (!QRegularExpression("^[^\\s\\x00]+$").match(source).hasMatch()) {

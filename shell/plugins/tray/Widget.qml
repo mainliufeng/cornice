@@ -191,6 +191,9 @@ Item {
 
     // Diagnostics: try each activation path for an item and report what it did.
     function actionError(): string { return DesktopSession.actionError }
+    function actionNotice(): string {
+      return JSON.stringify({detail:ActionFeedback.detail, desktop:ActionFeedback.desktop, output:ActionFeedback.output})
+    }
     function invoke(id: string, method: string): string {
       const matches = root.items.filter(item => String(item.id) === id)
       if (matches.length > 1) return "ambiguous-item"

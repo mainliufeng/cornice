@@ -1,4 +1,6 @@
 #include "ApplicationLaunch.hpp"
+#include "../common/ApplicationLocation.hpp"
+#include <unistd.h>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -64,9 +66,11 @@ QJsonObject settings() {
         if (it.value().isNull()) continue;
         if (!it.value().isObject()) invalid(it.key() + " must be an object or null");
         const auto rule = it.value().toObject();
-        const QSet<QString> fields{"executables", "backend", "profile", "profilePaths", "arguments", "environment", "reservedArguments", "scope", "enabled"};
+        const QSet<QString> fields{"executables", "backend", "profile", "profilePaths", "arguments", "environment", "reservedArguments", "scope", "enabled", "singleInstance"};
         for (auto field = rule.begin(); field != rule.end(); ++field)
             if (!fields.contains(field.key())) invalid(it.key() + ": unknown field " + field.key());
+        if (rule.contains("singleInstance") && (!rule["singleInstance"].isString() || rule["singleInstance"].toString().trimmed().isEmpty() || rule["singleInstance"].toString().size() > 128 || rule["singleInstance"].toString().contains(QChar(0))))
+            invalid(it.key() + ".singleInstance must be a nonempty application name");
         if (rule.contains("enabled") && !rule["enabled"].isBool()) invalid(it.key() + ".enabled must be boolean");
         if (!rule["enabled"].toBool(true)) continue;
         const auto names = strings(rule["executables"], it.key() + ".executables");
@@ -198,10 +202,10 @@ QStringList urlCommand(const QJsonObject &config, const QString &target, bool pr
         bool adapted = false;
         for (const auto &entry : config["rules"].toObject()) {
             const auto rule = entry.toObject();
-            if (rule["enabled"].toBool(true) && rule.contains("profile") &&
+            if (rule["enabled"].toBool(true) && (rule.contains("profile") || rule.contains("singleInstance")) &&
                 strings(rule["executables"], "handler.executables", true).contains(QFileInfo(argv.first()).fileName())) adapted = true;
         }
-        if (!adapted) invalid("URL handler needs a desktopApplications profile rule on secondary desktops: " + desktopId);
+        if (!adapted) invalid("URL handler needs a desktopApplications profile or singleInstance rule on secondary desktops: " + desktopId);
     }
     return argv;
 }
@@ -288,6 +292,28 @@ ApplicationLaunchPlan build(const QStringList &argv, const QString &desktop, con
     for (auto it = environment.begin(); it != environment.end(); ++it) plan.environment[it.key()] = expand(it.value().toString(), plan.profile, desktop);
     return plan;
 }
+QString singletonConflict(const QJsonObject &config, const QStringList &command, const QJsonObject &environment, const QString &desktop, bool primary) {
+    for (const auto &value : config["rules"].toObject()) {
+        const auto rule = value.toObject();
+        if (!rule["enabled"].toBool(true) || !rule.contains("singleInstance") || (primary && rule["scope"] == "secondary")) continue;
+        if (!strings(rule["executables"], "singleInstance.executables").contains(QFileInfo(command.first()).fileName())) continue;
+        const auto search = environment["PATH"].toString(QDir::homePath() + "/.local/bin:" + qEnvironmentVariable("PATH"));
+        const auto executable = QFileInfo(QStandardPaths::findExecutable(command.first(), search.split(':', Qt::SkipEmptyParts))).canonicalFilePath();
+        if (executable.isEmpty()) return {};
+        for (const auto &pid : QDir("/proc").entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+            bool numeric = false; const auto number = pid.toLongLong(&numeric);
+            if (!numeric || number == getpid() || QFileInfo("/proc/" + pid).ownerId() != getuid()) continue;
+            if (QFileInfo("/proc/" + pid + "/exe").canonicalFilePath() != executable) continue;
+            const auto owner = CorniceApplication::desktopForPid(number);
+            if (owner == desktop) continue;
+            if (owner.isEmpty()) return rule["singleInstance"].toString() + QStringLiteral(" 已有一个实例在运行，无法确认所在桌面。请在已有实例所在的桌面使用。");
+            const auto location = CorniceApplication::label(owner);
+            return rule["singleInstance"].toString() + QStringLiteral(" 已在") + location
+                + QStringLiteral("运行，只能打开一个实例。请切换到应用所在的桌面使用。");
+        }
+    }
+    return {};
+}
 ApplicationLaunchPlan prepare(const QJsonObject &config, const QStringList &requested, const QString &desktop, bool primary) {
     QJsonObject requestedEnvironment;
     QStringList warnings;
@@ -304,6 +330,8 @@ ApplicationLaunchPlan prepare(const QJsonObject &config, const QStringList &requ
         if (!id.isEmpty()) invalid("multiple rules match " + argv.first());
         id = it.key(); selected = rule;
     }
+    const auto conflict = singletonConflict(config, argv, requestedEnvironment, desktop, primary);
+    if (!conflict.isEmpty()) throw std::runtime_error(conflict.toStdString());
     auto plan = build(argv, desktop, id, selected);
     plan.warnings = warnings; plan.basePolicy = plan.policy; plan.requestedEnvironment = requestedEnvironment;
     for (auto it = requestedEnvironment.begin(); it != requestedEnvironment.end(); ++it) {
@@ -346,6 +374,13 @@ ApplicationLaunchPlan ApplicationLaunchPlan::fromJson(const QJsonObject &value) 
 }
 void ApplicationLaunchPlan::applyEnvironment(QProcessEnvironment &target) const {
     for (auto it = environment.begin(); it != environment.end(); ++it) target.insert(it.key(), it.value().toString());
+}
+QString ApplicationLaunch::singletonConflict(const QStringList &argv, const QString &desktop, bool primary) {
+    const auto config = settings();
+    QJsonObject environment;
+    QStringList warnings;
+    const auto command = normalizeCommand(config, argv, primary, environment, warnings);
+    return ::singletonConflict(config, command, environment, desktop, primary);
 }
 ApplicationLaunchPlan ApplicationLaunch::prepare(const QStringList &argv, const QString &desktop, bool primary) {
     return ::prepare(settings(), argv, desktop, primary);

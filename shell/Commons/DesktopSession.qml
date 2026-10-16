@@ -173,6 +173,7 @@ QtObject {
   onSecondaryChanged:refreshContext()
   Component.onCompleted: {refreshContext(); refreshWindows()}
   property var actionCallbacks: ({})
+  property var applicationCallbacks: ({})
   property var trayCallbacks: ({})
   property string actionError: ""
   property var actionRouter: DesktopActionRouter {
@@ -181,6 +182,11 @@ QtObject {
       delete root.actionCallbacks[request]
       if (callback) callback(context, error)
     }
+    onApplicationChecked: (request, error) => {
+      const callback = root.applicationCallbacks[request]
+      delete root.applicationCallbacks[request]
+      if (callback) callback(error)
+    }
     onActionFinished: (request, success, error) => {
       const callback = root.trayCallbacks[request]
       delete root.trayCallbacks[request]
@@ -188,7 +194,7 @@ QtObject {
     }
   }
   function reportActionError(error, source) {
-    actionError = String(error)
+    actionError = String(error).replace(/^(?:cornice(?: desktop)?:\s*)+/, "")
     ActionFeedback.show(actionError, source.desktop, source.output)
     console.warn("cornice: " + actionError)
   }
@@ -231,8 +237,12 @@ QtObject {
         const home = Quickshell.env("HOME") || ""
         const path = (home ? home + "/.local/bin:" : "") + (Quickshell.env("PATH") || "/usr/local/bin:/usr/bin:/bin")
         const prefix = Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
-        Quickshell.execDetached(["env", "PATH=" + path, "XDG_ACTIVATION_TOKEN=" + context.token,
-          "DESKTOP_STARTUP_ID=" + context.token, prefix + "/bin/cornice-action-exec", "--"].concat(command))
+        const request = actionRouter.checkApplication(command, source.desktop)
+        applicationCallbacks[request] = error => {
+          if (error) { root.reportActionError(error, source); return }
+          Quickshell.execDetached(["env", "PATH=" + path, "XDG_ACTIVATION_TOKEN=" + context.token,
+            "DESKTOP_STARTUP_ID=" + context.token, prefix + "/bin/cornice-action-exec", "--"].concat(command))
+        }
         return
       }
       if (!service) return

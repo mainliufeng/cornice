@@ -181,6 +181,12 @@
         "reservedArguments": [
           "--user-data-dir"
         ]
+      },
+      "clash-verge": {
+        "executables": [
+          "clash-verge"
+        ],
+        "singleInstance": "Clash Verge"
       }
     }
   },

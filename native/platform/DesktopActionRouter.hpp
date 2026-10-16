@@ -14,10 +14,12 @@ public:
     explicit DesktopActionRouter(QObject* parent = nullptr);
     Q_INVOKABLE QString prepare(const QString& desktop, const QString& seat,
                                const QString& generation, const QString& workspace, const QString& output = QString{});
+    Q_INVOKABLE QString checkApplication(const QStringList& argv, const QString& desktop);
     Q_INVOKABLE QString invokeTray(QObject* item, QObject* entry, const QString& method,
                                   const QVariantMap& context, int delta = 0, bool horizontal = false);
 signals:
     void prepared(const QString& request, const QVariantMap& context, const QString& error);
+    void applicationChecked(const QString& request, const QString& error);
     void actionFinished(const QString& request, bool success, const QString& error);
 private:
     // Bounds ordinary human actions; this is not a token association lock.

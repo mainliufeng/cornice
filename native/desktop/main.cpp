@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
         // Internal preparation worker. It reads application policy and resolves
         // desktop-entry handlers without blocking the Broker event loop. Only
         // the Broker can submit the resulting plan after checking a live grant.
-        if (command == "plan-launch") {
+        if (command == "plan-launch" || command == "check-singleton") {
             const auto desktop = take(args), primary = take(args);
             const auto array = QJsonDocument::fromJson(take(args).toUtf8()).array();
             if (!args.isEmpty() || (primary != "true" && primary != "false") || array.isEmpty() || array.size() > 128)
@@ -57,6 +57,11 @@ int main(int argc, char **argv) {
                 if (!entry.isString() || entry.toString().contains(QChar(0)) || entry.toString().size() > 16384)
                     throw std::runtime_error("Invalid application argument");
                 requested.append(entry.toString());
+            }
+            if (command == "check-singleton") {
+                const auto conflict = ApplicationLaunch::singletonConflict(requested, desktop, primary == "true");
+                if (!conflict.isEmpty()) throw std::runtime_error(conflict.toStdString());
+                return 0;
             }
             QTextStream(stdout) << QJsonDocument(ApplicationLaunch::prepare(requested, desktop, primary == "true").toJson()).toJson(QJsonDocument::Compact) << '\n';
             return 0;
