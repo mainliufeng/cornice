@@ -42,7 +42,6 @@ Item {
   property bool inhibited: false
   property bool logindWatching: false
   property string lastSignal: ""
-  property string signalBuffer: ""
   property bool dimmed: false
   property bool screenOff: false
   // Desired DPMS state; reconciled with `screenOff` when an off/on command that
@@ -356,16 +355,9 @@ Item {
   //   Manager.PrepareForSleep (true,)   → suspending now
   //   Manager.PrepareForSleep (false,)  → resumed
   //   Session.Lock ()                   → loginctl lock-session, lid scripts, ...
-  // Chunks split lines, so keep the tail in signalBuffer instead of assuming one
-  // line per chunk.
-  function consumeSignals(chunk) {
-    if (!chunk) return
-    const combined = signalBuffer + chunk
-    const lines = combined.split("\n")
-    signalBuffer = lines.pop()
-    for (const line of lines) handleSignalLine(line)
-  }
-
+  // SplitParser buffers incomplete lines and delivers each signal once. A
+  // StdioCollector's text contains the entire stream: feeding it on every
+  // dataChanged replays old lid/sleep/Lock signals after successful unlock.
   function handleSignalLine(line) {
     if (line === "" || line.indexOf("org.freedesktop.login1.") < 0) return
     lastSignal = line.trim()
@@ -425,9 +417,8 @@ Item {
   readonly property Process logindMonitor: Process {
     command: ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1"]
 
-    stdout: StdioCollector {
-      waitForEnd: false
-      onDataChanged: root.consumeSignals(text)
+    stdout: SplitParser {
+      onRead: line => root.handleSignalLine(line)
     }
 
     onStarted: root.logindWatching = true

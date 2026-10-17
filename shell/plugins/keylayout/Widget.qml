@@ -96,9 +96,9 @@ Item {
     running: root.socketPath !== ""
     command: ["socat", "-", "UNIX-CONNECT:" + root.socketPath]
 
-    stdout: StdioCollector {
-      waitForEnd: false
-      onDataChanged: root.consume(text)
+    // Deliver complete new events, without replaying the accumulated stream.
+    stdout: SplitParser {
+      onRead: line => root.consume(line)
     }
   }
 

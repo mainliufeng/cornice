@@ -382,6 +382,11 @@ try:
     assert len([e for e in events() if e["event"] == "suspend"]) == 1
     record("real inhibitor FDs delay fake logind until presented full lock; resume stays locked/paused; lid requests full lock")
     os.killpg(guard.pid, signal.SIGTERM); guard.wait()
+    # These seats have completed their lock/CDP assertions. Release their
+    # private outputs before repeated native lock and laptop-resolution UI
+    # checks, keeping the existing 3 GiB isolated memory budget.
+    for name in ("continuing2", "pausing"):
+        cli("remove", name)
     # Exercise the actual Cornice service, observer and suspend command. The
     # only system bus here is the owned fixture above; never the host logind.
     fixture.stdin.write('{"LidClosed":false}\n'); fixture.stdin.flush()
@@ -398,6 +403,33 @@ try:
     cornice_ui = start([str(PRODUCT / "bin/cornice-qs"), "-p", str(PRODUCT / "shell")], "cornice-shell", ui_env)
     wait(lambda: json.loads(shell("ipc", "lock", "status"))["humanLockAvailable"])
     wait(lambda: json.loads(shell("ipc", "idle", "status"))["sleepGuardReady"])
+    # Reproduce the real closed -> open -> password -> LockedHint sequence.
+    # Reading an accumulated StdioCollector replays the old close on every
+    # later signal, including the hint emitted by successful authentication.
+    fixture.stdin.write('{"HandleLidSwitch":"ignore"}\n'); fixture.stdin.flush()
+    config_path = config_dir / "config.json"
+    config = json.loads(config_path.read_text())
+    config["idle"]["lockOnLidClose"] = True
+    config_path.write_text(json.dumps(config)); shell("reload")
+    wait(lambda: json.loads(shell("ipc", "idle", "status"))["lockOnLidClose"])
+    for cycle in range(2):
+        fixture.stdin.write('{"LidClosed":true}\n'); fixture.stdin.flush()
+        wait(lambda: ctl("seat lock-state", True)["secure"])
+        fixture.stdin.write('{"LidClosed":false}\n'); fixture.stdin.flush()
+        wait(lambda: json.loads(shell("ipc", "idle", "status"))["lastAction"] == "lid-open")
+        time.sleep(.3)
+        for command in ("motion 640 400", "type secret", "key 28 1", "key 28 0"):
+            human.stdin.write(command + "\n"); human.stdin.flush()
+            assert select.select([human.stdout], [], [], 5)[0] and human.stdout.readline().strip() == "done"
+        wait(lambda: json.loads(shell("ipc", "lock", "status"))["journal"].count("|unlock:ok") == cycle + 1)
+        time.sleep(1.5)  # Includes the guardian's LockedHint updates and several probes.
+        status = json.loads(shell("ipc", "lock", "status"))
+        assert not status["locked"] and not ctl("seat lock-state", True)["locked"], status
+        assert status["journal"].count("|lock:lid") == cycle + 1, status
+        assert status["journal"].count("|unlock:ok") == cycle + 1, status
+    config["idle"]["lockOnLidClose"] = False
+    config_path.write_text(json.dumps(config)); shell("reload")
+    record("two real lid-close/open and typed PAM unlock cycles stay unlocked through LockedHint changes; no historical signal replay")
     cli("resume", "continuing"); fresh = bind("continuing")
     shell("desktop", "observe", "continuing")
     wait(lambda: json.loads(shell("ipc", "desktopObserver", "status"))["presentation"].get("active"))

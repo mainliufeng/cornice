@@ -53,6 +53,8 @@ def method(connection, sender, object_path, interface, name, args, invocation):
     elif name == 'GetSessionByPID': invocation.return_value(GLib.Variant('(o)', ('/org/freedesktop/login1/session/test',)))
     elif name == 'SetLockedHint':
         record('hint', locked=values[0]); invocation.return_value(None)
+        bus.emit_signal(None, object_path, 'org.freedesktop.DBus.Properties', 'PropertiesChanged',
+                        GLib.Variant('(sa{sv}as)', (interface, {'LockedHint': GLib.Variant('b', values[0])}, [])))
     elif name == 'Suspend':
         state = lock_state(); record('suspend', state=state)
         invocation.return_value(None)
@@ -70,8 +72,15 @@ def control(fd, condition):
     request = json.loads(line)
     if request.get('event') == 'resume':
         bus.emit_signal(None, manager, 'org.freedesktop.login1.Manager', 'PrepareForSleep', GLib.Variant('(b)', (False,)))
-    elif 'LidClosed' in request:
-        properties['LidClosed'] = request['LidClosed']
+    else:
+        changed = {}
+        for name, value in request.items():
+            if name in properties:
+                properties[name] = value
+                changed[name] = GLib.Variant('b' if isinstance(value, bool) else 's', value)
+        if changed:
+            bus.emit_signal(None, manager, 'org.freedesktop.DBus.Properties', 'PropertiesChanged',
+                            GLib.Variant('(sa{sv}as)', ('org.freedesktop.login1.Manager', changed, [])))
     return True
 GLib.io_add_watch(sys.stdin.fileno(), GLib.IO_IN | GLib.IO_HUP, control)
 record('ready')
