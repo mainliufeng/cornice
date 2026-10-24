@@ -64,27 +64,42 @@ private test outputs. They are not captures of the user's running desktop.
 * MCP lifecycle, transport and cancellation regressions. Completion outcome is
   asserted on the wire; ordinary disconnect does not become normal completion.
 
-## Full-suite failure and remaining gaps
+## Full-suite gap closed by baseline reproduction and a compatibility fix
 
-`human-lock-verify.py` **did not pass as a whole**. It passed real GTK shared
-workspace input, Chrome/CDP revocation, PAM success/failure and primary input,
-secure human/full presentation, continuous protected output sampling, DPMS and
-unknown-output hotplug, stale-owner refusal/recovery policy, guardian loss,
-private-logind inhibitor ordering and two lid/PAM/LockedHint cycles. It then
-failed its global no-QML-errors assertion at line 471:
+The first `human-lock-verify.py` run stopped at its strict no-QML-errors
+assertion. This was investigated rather than suppressed. An untouched export of
+Cornice `14d6b79` reproduced the same media/polkit `Color.foreground.r` errors
+under the same Qt 6.12.0 and private compositor. QtQuick 6.12 adds its own `Color`
+singleton; unqualified lookup selected it instead of the project theme singleton.
+A minimal unchanged-baseline probe resolved `Color.rgba` but no `foreground`;
+explicit `Commons.Color` resolved the existing `#c9d1d9` theme value.
 
-```
-shell/plugins/media/Panel.qml:110: TypeError: Cannot read property 'r' of undefined
-shell/plugins/polkit/Polkit.qml:104: TypeError: Cannot read property 'r' of undefined
-shell/plugins/polkit/Polkit.qml:166: TypeError: Cannot read property 'r' of undefined
-```
+The compatibility-only fix adds a module alias and qualifies 352 references in
+55 QML files. An automated reverse comparison against `c310022` confirmed the
+migration changes only those imports/qualifications, not layout, tokens, data or
+behavior. Actual full-shell baseline/candidate rendering, after bar IPC geometry
+was ready, measured the empty bar pixel as `[255,255,255]` on baseline versus the
+expected mono theme `[13,17,23]` on candidate. QML errors disappeared. Screenshot
+readiness requires the real bar and exact theme color, not merely a dark frame.
 
-These shell files were not modified in this candidate (`git diff HEAD -- shell`
-was empty). The assertion was not suppressed and the failure remains recorded.
-The following end-of-suite Cornice UI/guard crash/restart assertions were not
-reached in that run. Broker restart and original/new task revocation were
-independently verified by the two passing suites above. This report does not
-claim a clean full shell acceptance or physical-session acceptance.
+The **unchanged original full lock suite now passes**, including all previously
+unreached UI/guard crash and output-loss assertions. A separate
+`human-lock-recovery-verify.py` also passes native locker SIGKILL, whole UI/guard
+SIGKILL, authentication recovery without Agent restoration, secure-full-before-
+suspend and locked simulated wake using real private logind inhibitor FDs.
+`headless-verify.sh` passes 379 checks, including actual panels/input/rendering
+and log hygiene. `session-trial-verify.py` passes its real immutable snapshot,
+synthetic SDDM login, failure, persistence and rollback checks. Final binary
+identity is the committed Hyprland `4d6ef13c`, not the earlier base stamp; final
+artifact checks are recorded separately after that metadata rebuild.
+
+Original failed logs are retained. The result JSONs distinguish the initial run,
+closure and final-artifact verification; no assertion was removed to obtain a
+pass. See `qml-color-resolution-verify-final.log`, `human-lock-verify-final.log`,
+`human-lock-recovery-verify-final.log`, `headless-verify-closed.log` and
+`session-trial-verify-final.log` in the evidence directory.
+
+## Remaining acceptance limits
 
 No physical DRM hotplug/mirroring, real lid/suspend/wake, or current user's PAM
 configuration was tested. Same-UID applications remain outside an OS filesystem
@@ -95,7 +110,10 @@ retracted by withdrawing desktop control.
 
 Installation remains a separate explicitly approved action. Use matching
 compositor and Cornice artifacts; preserve the previous pair and configuration.
-Investigate the full-suite QML failure and run remaining shell recovery/physical
-acceptance before treating this as release-ready. To roll back an eventual
+Software gaps described above are closed. Physical acceptance remains required
+before treating this as production-accepted. Preparing/arming one future paired
+trial is reasonable only after explicit owner approval. To roll back an eventual
 trial, pause candidate tasks and restore the previous paired artifacts; do not
 migrate active lease credentials. No new permission switch needs to be enabled.
+
+Exact reviewed deployment and rollback plan: [paired rollout](../locked-agent-task-rollout.md).
