@@ -4,6 +4,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
 import qs.Commons
+import qs.Commons as Commons
 
 // Owns one recorder per desktop shell. The encoding backend has no UI.
 Item {
@@ -135,8 +136,8 @@ Item {
     Rectangle {
       anchors.horizontalCenter: parent.horizontalCenter
       width: Math.min(parent.width - Style.space(4), label.implicitWidth + Style.space(4)); height: parent.height
-      radius: Style.radius; color: Color.panel; border.width: 1; border.color: Color.surfaceBorder
-      Text {id: label; anchors.fill: parent; anchors.margins: Style.space(1); text: root.message; elide: Text.ElideMiddle; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.fontSize}
+      radius: Style.radius; color: Commons.Color.panel; border.width: 1; border.color: Commons.Color.surfaceBorder
+      Text {id: label; anchors.fill: parent; anchors.margins: Style.space(1); text: root.message; elide: Text.ElideMiddle; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; color: Commons.Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.fontSize}
     }
   }
   ShellIpc {

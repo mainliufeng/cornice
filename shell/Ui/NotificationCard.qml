@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // One notification in the popup stack or the history list.
@@ -176,7 +177,7 @@ Item {
       Text {
         width: parent.width - (Style.fontSize + 6) - Style.space(0.8)
         text: root.appName
-        color: Color.muted
+        color: Commons.Color.muted
         elide: Text.ElideRight
         font.family: Style.fontFamily
         font.pixelSize: Style.smallFontSize
@@ -187,7 +188,7 @@ Item {
       width: parent.width
       visible: root.summary !== ""
       text: root.summary
-      color: Color.foreground
+      color: Commons.Color.foreground
       wrapMode: Text.Wrap
       maximumLineCount: 2
       elide: Text.ElideRight
@@ -200,7 +201,7 @@ Item {
       width: parent.width
       visible: root.body !== "" && !root.replying
       text: root.body
-      color: Color.foreground
+      color: Commons.Color.foreground
       opacity: 0.85
       wrapMode: Text.Wrap
       maximumLineCount: 4
@@ -225,7 +226,7 @@ Item {
           width: Math.min(parent.width, actionLabel.implicitWidth + Style.space(2))
           height: Style.space(5.5)
           radius: Style.radius
-          color: actionColor.containsMouse ? Color.accent : Color.hover
+          color: actionColor.containsMouse ? Commons.Color.accent : Commons.Color.hover
 
           Text {
             id: actionLabel
@@ -233,7 +234,7 @@ Item {
             width: parent.width - Style.space(2)
             text: modelData.text
             elide: Text.ElideRight
-            color: Color.foreground
+            color: Commons.Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.smallFontSize
           }
@@ -259,13 +260,13 @@ Item {
       width: replyLabel.implicitWidth + Style.space(2)
       height: Style.space(5.5)
       radius: Style.radius
-      color: replyHover.containsMouse ? Color.accent : Color.hover
+      color: replyHover.containsMouse ? Commons.Color.accent : Commons.Color.hover
 
       Text {
         id: replyLabel
         anchors.centerIn: parent
         text: I18n.t("notifications.reply")
-        color: Color.foreground
+        color: Commons.Color.foreground
         font.family: Style.fontFamily
         font.pixelSize: Style.smallFontSize
       }

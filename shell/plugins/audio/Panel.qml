@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Services.Pipewire
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Audio panel: default output and input, plus the list of sinks.
@@ -77,7 +78,7 @@ PanelFrame {
           width: parent.width
           height: Style.space(19.5)
           visible: modelData.target === "@DEFAULT_AUDIO_SINK@" || !!modelData.node
-          color: Color.surface
+          color: Commons.Color.surface
           radius: Style.radius
           Column {
             anchors.fill: parent
@@ -90,7 +91,7 @@ PanelFrame {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 text: modelData.label
-                color: Color.foreground
+                color: Commons.Color.foreground
                 font.family: Style.fontFamily
                 font.pixelSize: Style.fontSize + 2
                 font.bold: true
@@ -107,7 +108,7 @@ PanelFrame {
             Text {
               width: parent.width
               text: modelData.node ? (modelData.node.description || modelData.node.nickname || modelData.node.name) : I18n.t("audio.noOutput")
-              color: Color.muted
+              color: Commons.Color.muted
               elide: Text.ElideRight
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
@@ -128,7 +129,7 @@ PanelFrame {
                 anchors.verticalCenter: parent.verticalCenter
                 horizontalAlignment: Text.AlignRight
                 text: modelData.node && modelData.node.audio ? Math.round(modelData.node.audio.volume * 100) + "%" : "—"
-                color: Color.foreground
+                color: Commons.Color.foreground
                 font.family: Style.fontFamily
                 font.pixelSize: Style.fontSize + 2
               }
@@ -138,7 +139,7 @@ PanelFrame {
       }
       Text {
         text: I18n.t("audio.devices")
-        color: Color.muted
+        color: Commons.Color.muted
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
       }
@@ -154,13 +155,13 @@ PanelFrame {
           width: sinkList.width
           height: Style.space(7)
           radius: Style.radius
-          color: hover.containsMouse ? Color.hover : modelData === root.sink ? Color.surface : "transparent"
+          color: hover.containsMouse ? Commons.Color.hover : modelData === root.sink ? Commons.Color.surface : "transparent"
           Text {
             x: Style.space(1.5)
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width - Style.space(7)
             text: modelData.description || modelData.nickname || modelData.name
-            color: Color.foreground
+            color: Commons.Color.foreground
             elide: Text.ElideRight
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
@@ -170,7 +171,7 @@ PanelFrame {
             anchors.rightMargin: Style.space(1.5)
             anchors.verticalCenter: parent.verticalCenter
             text: modelData === root.sink ? "\uf00c" : ""
-            color: Color.accent
+            color: Commons.Color.accent
             font.family: Style.iconFamily
             font.pixelSize: Style.fontSize + 2
           }

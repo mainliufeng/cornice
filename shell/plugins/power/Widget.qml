@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Services.UPower
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 Item {
@@ -48,7 +49,7 @@ Item {
     id: label
     anchors.centerIn: parent
     text: root.icon
-    color: root.critical && !root.charging ? Color.urgent : Color.barForeground
+    color: root.critical && !root.charging ? Commons.Color.urgent : Commons.Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }

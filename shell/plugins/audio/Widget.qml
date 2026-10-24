@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Services.Pipewire
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 Item {
@@ -40,7 +41,7 @@ Item {
     id: label
     anchors.centerIn: parent
     text: root.icon
-    color: root.muted ? Color.muted : Color.barForeground
+    color: root.muted ? Commons.Color.muted : Commons.Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }

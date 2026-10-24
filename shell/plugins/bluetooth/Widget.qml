@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Bluetooth
 import qs.Commons
+import qs.Commons as Commons
 
 // Bluetooth indicator. Shows connected devices, or nothing when the adapter is
 // off (nothing to say). Click opens the device panel.
@@ -32,7 +33,7 @@ Item {
     id: label
     anchors.centerIn: parent
     text: root.icon + (root.connectedCount > 0 ? " " + root.connectedCount : "")
-    color: root.connectedCount > 0 ? Color.barForeground : Color.muted
+    color: root.connectedCount > 0 ? Commons.Color.barForeground : Commons.Color.muted
     font.family: Style.iconFamily
     font.pixelSize: Style.fontSize
   }

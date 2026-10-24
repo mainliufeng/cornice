@@ -31,6 +31,12 @@ if [[ -n ${CORNICE_TEST_UI_BASELINE:-} ]]; then
   CORNICE_TEST_UI_BASELINE=$(fixture_directory "$CORNICE_TEST_UI_BASELINE")
   [[ -f $CORNICE_TEST_UI_BASELINE/bin/cornice ]] || { echo 'Selected baseline missing' >&2; exit 2; }
 fi
+qml_baseline_mount=()
+if [[ -n ${CORNICE_TEST_QML_BASELINE:-} ]]; then
+  CORNICE_TEST_QML_BASELINE=$(fixture_directory "$CORNICE_TEST_QML_BASELINE")
+  [[ -f $CORNICE_TEST_QML_BASELINE/shell/Commons/Color.qml && -f $CORNICE_TEST_QML_BASELINE/shell/shell.qml ]] || { echo 'Selected QML baseline incomplete' >&2; exit 2; }
+  qml_baseline_mount=(--ro-bind "$CORNICE_TEST_QML_BASELINE" "$CORNICE_TEST_QML_BASELINE")
+fi
 hyprland_prefix_mount=()
 if [[ -n ${CORNICE_TEST_HYPRLAND_PREFIX:-} ]]; then
   CORNICE_TEST_HYPRLAND_PREFIX=$(fixture_directory "$CORNICE_TEST_HYPRLAND_PREFIX")
@@ -40,7 +46,7 @@ if [[ -n ${CORNICE_TEST_HYPRLAND_PREFIX:-} ]]; then
 fi
 suite=${1:-desktop-recovery-verify.py}
 case "$suite" in
-  chatgpt-tray-takeover-verify.py|single-instance-desktop-verify.py|chrome-portal-routing-verify.py|desktop-routing-shell-verify.py|isolation-boundary-verify.py|session-ui-cold-update-verify.py|session-ui-update-verify.py|headless-verify.sh|install-verify.sh|screenshot-controller-verify.py|desktop-clipboard-verify.py|core-lifecycle-verify.py|browser-recovery-verify.py|desktop-product-ui-verify.py|session-services-verify.py|desktop-state-contract-verify.py|desktop-context-verify.py|launcher-native-seat-verify.py|screen-recording-verify.py|application-launch-config-verify.py|voice-overlay-verify.py|launcher-seat-regression.py|desktop-handoff-verify.py|native-accessibility-response-verify.py|native-accessibility-verify.py|desktop-acquire-verify.py|generic-seat-controller-verify.py|desktop-harness-verify.py|agent-product-verify.py|desktop-switcher-verify.py|desktop-preview-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|human-lock-verify.py|desktop-locked-start-verify.py|desktop-lock-continuity-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|layout-shortcuts-verify.py|seat-focus-lifecycle-verify.py|seat-action-routing-verify.py|seat-foreign-activation-verify.py|keyboard-capability-focus-verify.py) ;;
+  chatgpt-tray-takeover-verify.py|single-instance-desktop-verify.py|chrome-portal-routing-verify.py|desktop-routing-shell-verify.py|isolation-boundary-verify.py|session-ui-cold-update-verify.py|session-ui-update-verify.py|headless-verify.sh|install-verify.sh|screenshot-controller-verify.py|desktop-clipboard-verify.py|core-lifecycle-verify.py|browser-recovery-verify.py|desktop-product-ui-verify.py|session-services-verify.py|desktop-state-contract-verify.py|desktop-context-verify.py|launcher-native-seat-verify.py|screen-recording-verify.py|application-launch-config-verify.py|voice-overlay-verify.py|launcher-seat-regression.py|desktop-handoff-verify.py|native-accessibility-response-verify.py|native-accessibility-verify.py|desktop-acquire-verify.py|generic-seat-controller-verify.py|desktop-harness-verify.py|agent-product-verify.py|desktop-switcher-verify.py|desktop-preview-verify.py|desktop-recovery-verify.py|agent-desktop-verify.py|qml-color-resolution-verify.py|human-lock-recovery-verify.py|human-lock-verify.py|desktop-locked-start-verify.py|desktop-lock-continuity-verify.py|desktop-demo-record.py|capture-lock-race-verify.py|session-trial-verify.py|ime-session-verify.py|presentation-pacing-verify.py|agent-launcher-verify.py|workspace-response-verify.py|voice-seat-verify.py|layout-shortcuts-verify.py|seat-focus-lifecycle-verify.py|seat-action-routing-verify.py|seat-foreign-activation-verify.py|keyboard-capability-focus-verify.py) ;;
   *) echo 'Unknown isolated suite' >&2; exit 2 ;;
 esac
 # The selected binary may live under /tmp, which is hidden below. Bind only
@@ -107,7 +113,7 @@ interpreter=/usr/bin/python3
 # loader variables and model credentials never enter this test session.
 test_environment=()
 for name in CORNICE_MENU_ONLY CORNICE_MENU_LEGACY_TRAY CORNICE_TEST_PRODUCT CORNICE_TEST_UI_BASELINE CORNICE_TEST_HYPRLAND_SOURCE \
-  CORNICE_TEST_HYPRLAND CORNICE_TEST_DESKTOP_MENU_ONLY CORNICE_TEST_DESKTOP_PREVIEW_ONLY \
+  CORNICE_TEST_HYPRLAND CORNICE_TEST_QML_BASELINE CORNICE_TEST_DESKTOP_MENU_ONLY CORNICE_TEST_DESKTOP_PREVIEW_ONLY \
   CORNICE_TEST_FOCUS_PHASE CORNICE_TEST_KEYBOARD_EMPTY_KEYMAP CORNICE_TEST_KEYBOARD_FIXTURE_ONLY \
   CORNICE_TEST_SCALE CORNICE_TEST_WAYLAND_DEBUG CORNICE_TEST_INHERITED_DISPLAY_MODE \
   CORNICE_TEST_ISOLATION_SENTINEL; do
@@ -122,7 +128,7 @@ exec /usr/bin/python3 "$prefix/test/sandbox-exec.py" /usr/bin/nice -n 15 \
   --chdir "$prefix" --clearenv --setenv PATH /usr/bin:/bin --setenv LANG C.UTF-8 \
   --setenv USER "$(id -un)" --setenv LOGNAME "$(id -un)" \
   --setenv CORNICE_TEST_RESOURCE_SCOPE 1 "${test_environment[@]}" \
-  --bind "$artifacts" /tmp/t "${product_mount[@]}" "${hyprland_mount[@]}" "${hyprland_prefix_mount[@]}" "${voice_mount[@]}" "${clipboard_probe_mount[@]}" \
+  --bind "$artifacts" /tmp/t "${product_mount[@]}" "${hyprland_mount[@]}" "${hyprland_prefix_mount[@]}" "${qml_baseline_mount[@]}" "${voice_mount[@]}" "${clipboard_probe_mount[@]}" \
   --setenv HOME /tmp/t/home --setenv TMPDIR /tmp/t \
   --setenv XDG_CONFIG_HOME /tmp/t/home/.config \
   --setenv XDG_DATA_HOME /tmp/t/home/.local/share \

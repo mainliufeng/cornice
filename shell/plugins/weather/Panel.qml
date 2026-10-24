@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Spacious current conditions and forecasts; the editor keeps using the real
@@ -45,7 +46,7 @@ PanelFrame {
           width: parent.width - placeToggle.width - Style.space(2)
           text: root.placeTitle
           elide: Text.ElideRight
-          color: Color.foreground
+          color: Commons.Color.foreground
           font.family: Style.fontFamily
           font.pixelSize: Style.largeFontSize + 4
           font.bold: true
@@ -69,7 +70,7 @@ PanelFrame {
           spacing: Style.space(0.5)
           Text {
             text: root.ready ? root.service.temperatureLabel : "--"
-            color: Color.foreground
+            color: Commons.Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize * 4.2
           }
@@ -77,7 +78,7 @@ PanelFrame {
             text: root.ready ? root.service.label
               : root.service && (root.service.status === "error" || root.service.status === "unconfigured")
                 ? I18n.t("weather.unavailable") : I18n.t("weather.loading")
-            color: Color.foreground
+            color: Commons.Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: root.bodySize
           }
@@ -87,7 +88,7 @@ PanelFrame {
           anchors.rightMargin: Style.space(2)
           anchors.verticalCenter: parent.verticalCenter
           text: root.glyph
-          color: Color.accent
+          color: Commons.Color.accent
           font.family: Style.iconFamily
           font.pixelSize: Style.fontSize * 5
         }
@@ -104,14 +105,14 @@ PanelFrame {
             height: Style.space(4.5)
             width: Math.min(body.width, placeLabel.implicitWidth + Style.space(3))
             radius: Style.radius
-            color: modelData.active ? Color.workspaceActive : Color.surface
+            color: modelData.active ? Commons.Color.workspaceActive : Commons.Color.surface
             Text {
               id: placeLabel
               anchors.centerIn: parent
               width: parent.width - Style.space(3)
               elide: Text.ElideRight
               text: root.service.displayName(modelData.name)
-              color: modelData.active ? Color.workspaceActiveText : Color.foreground
+              color: modelData.active ? Commons.Color.workspaceActiveText : Commons.Color.foreground
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
             }
@@ -135,7 +136,7 @@ PanelFrame {
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width - clearPlace.width - Style.space(1)
             text: root.places.length > 0 ? root.service.displayName(root.places[0].name) : I18n.t("weather.noPlace")
-            color: Color.foreground
+            color: Commons.Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: root.bodySize
             elide: Text.ElideRight
@@ -181,15 +182,15 @@ PanelFrame {
             required property var modelData
             width: (body.width - Style.space(2)) / 3
             height: Style.space(8)
-            color: Color.surface
+            color: Commons.Color.surface
             radius: Style.radius
             Column {
               anchors.left: parent.left
               anchors.leftMargin: Style.space(1.5)
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(0.6)
-              Text { text: modelData.label; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
-              Text { text: modelData.value; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: root.bodySize }
+              Text { text: modelData.label; color: Commons.Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
+              Text { text: modelData.value; color: Commons.Color.foreground; font.family: Style.fontFamily; font.pixelSize: root.bodySize }
             }
           }
         }
@@ -199,7 +200,7 @@ PanelFrame {
         width: parent.width
         spacing: Style.space(1)
         visible: root.ready && !root.editing && root.hours.length > 0
-        Text { text: I18n.t("weather.nextHours"); color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
+        Text { text: I18n.t("weather.nextHours"); color: Commons.Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
         Row {
           width: parent.width
           spacing: Style.space(1)
@@ -209,9 +210,9 @@ PanelFrame {
               required property var modelData
               width: (body.width - Style.space(5)) / 6
               spacing: Style.space(0.8)
-              Text { anchors.horizontalCenter: parent.horizontalCenter; text: modelData.label; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
-              Text { anchors.horizontalCenter: parent.horizontalCenter; text: root.service.glyphFor(modelData.code, true); color: Color.foreground; font.family: Style.iconFamily; font.pixelSize: Style.fontSize * 1.5 }
-              Text { anchors.horizontalCenter: parent.horizontalCenter; text: Math.round(modelData.temperature) + "°"; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: root.bodySize }
+              Text { anchors.horizontalCenter: parent.horizontalCenter; text: modelData.label; color: Commons.Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize }
+              Text { anchors.horizontalCenter: parent.horizontalCenter; text: root.service.glyphFor(modelData.code, true); color: Commons.Color.foreground; font.family: Style.iconFamily; font.pixelSize: Style.fontSize * 1.5 }
+              Text { anchors.horizontalCenter: parent.horizontalCenter; text: Math.round(modelData.temperature) + "°"; color: Commons.Color.foreground; font.family: Style.fontFamily; font.pixelSize: root.bodySize }
             }
           }
         }
@@ -221,7 +222,7 @@ PanelFrame {
         width: parent.width
         spacing: Style.space(0.5)
         visible: root.ready && !root.editing && root.days.length > 0
-        Text { text: I18n.t("weather.nextDays"); color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
+        Text { text: I18n.t("weather.nextDays"); color: Commons.Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
         Repeater {
           id: dayItems
           model: root.days
@@ -230,7 +231,7 @@ PanelFrame {
             required property int index
             width: body.width
             height: Style.space(5)
-            color: index % 2 === 0 ? Color.surface : "transparent"
+            color: index % 2 === 0 ? Commons.Color.surface : "transparent"
             radius: Style.radius
             function inspect() {
               const point = rangeLabel.mapToItem(root.window.contentItem, 0, 0)
@@ -241,13 +242,13 @@ PanelFrame {
               anchors.verticalCenter: parent.verticalCenter
               width: Style.space(7)
               text: modelData.isToday ? I18n.t("weather.today") : I18n.dayName(modelData.date, "ddd")
-              color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: root.bodySize
+              color: Commons.Color.foreground; font.family: Style.fontFamily; font.pixelSize: root.bodySize
             }
             Text {
               x: Style.space(9)
               anchors.verticalCenter: parent.verticalCenter
               text: root.service.glyphFor(modelData.code, true)
-              color: Color.foreground; font.family: Style.iconFamily; font.pixelSize: root.bodySize
+              color: Commons.Color.foreground; font.family: Style.iconFamily; font.pixelSize: root.bodySize
             }
             Text {
               x: Style.space(13)
@@ -255,7 +256,7 @@ PanelFrame {
               width: Math.max(0, rangeLabel.x - x - Style.space(1))
               text: root.service.labelFor(modelData.code)
               elide: Text.ElideRight
-              color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.fontSize
+              color: Commons.Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.fontSize
             }
             Text {
               id: rangeLabel
@@ -263,7 +264,7 @@ PanelFrame {
               anchors.rightMargin: Style.space(1.2)
               anchors.verticalCenter: parent.verticalCenter
               text: Math.round(modelData.high) + "° / " + Math.round(modelData.low) + "°"
-              color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: root.bodySize
+              color: Commons.Color.foreground; font.family: Style.fontFamily; font.pixelSize: root.bodySize
             }
           }
         }
@@ -273,7 +274,7 @@ PanelFrame {
         width: parent.width
         visible: !!root.service && (root.service.status === "error" || root.service.status === "unconfigured")
         text: root.service ? root.service.error : ""
-        color: Color.muted; wrapMode: Text.Wrap
+        color: Commons.Color.muted; wrapMode: Text.Wrap
         font.family: Style.fontFamily; font.pixelSize: Style.fontSize
       }
       Item {
@@ -285,7 +286,7 @@ PanelFrame {
           anchors.verticalCenter: parent.verticalCenter
           width: parent.width - refreshButton.width - Style.space(1)
           text: root.ready ? I18n.t("weather.updated") + " " + root.service.updatedLabel : ""
-          color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize
+          color: Commons.Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.smallFontSize
           elide: Text.ElideRight
         }
         PanelButton {

@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // A readable, keyboard-operable action for the larger information panels.
 Rectangle {
@@ -13,10 +14,10 @@ Rectangle {
   implicitWidth: content.implicitWidth + Style.space(3)
   implicitHeight: Style.space(5.5)
   radius: Style.radius
-  color: root.destructive ? Color.urgent : root.selected ? Color.workspaceActive : hit.containsMouse ? Color.hover : filled ? Color.surface : "transparent"
+  color: root.destructive ? Commons.Color.urgent : root.selected ? Commons.Color.workspaceActive : hit.containsMouse ? Commons.Color.hover : filled ? Commons.Color.surface : "transparent"
   opacity: enabled ? 1 : 0.45
   border.width: activeFocus ? 1 : 0
-  border.color: Color.accent
+  border.color: Commons.Color.accent
   activeFocusOnTab: true
   Keys.onReturnPressed: clicked()
   Keys.onSpacePressed: clicked()
@@ -27,7 +28,7 @@ Rectangle {
     Text {
       visible: root.glyph !== ""
       text: root.glyph
-      color: root.selected ? Color.workspaceActiveText : Color.foreground
+      color: root.selected ? Commons.Color.workspaceActiveText : Commons.Color.foreground
       font.family: Style.iconFamily
       font.pixelSize: Style.fontSize
       anchors.verticalCenter: parent.verticalCenter
@@ -35,7 +36,7 @@ Rectangle {
     Text {
       visible: root.label !== ""
       text: root.label
-      color: root.selected ? Color.workspaceActiveText : Color.foreground
+      color: root.selected ? Commons.Color.workspaceActiveText : Commons.Color.foreground
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
       anchors.verticalCenter: parent.verticalCenter

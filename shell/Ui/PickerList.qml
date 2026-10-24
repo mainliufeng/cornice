@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Search-and-pick list for the places / world-clock editors.
 //
@@ -70,7 +71,7 @@ Item {
 
       width: list.width
       height: root.rowHeight
-      color: hoverArea.containsMouse ? Color.hover : "transparent"
+      color: hoverArea.containsMouse ? Commons.Color.hover : "transparent"
 
       Row {
         anchors.fill: parent
@@ -82,7 +83,7 @@ Item {
           width: parent.width - detailText.width - Style.space(0.8)
           anchors.verticalCenter: parent.verticalCenter
           text: modelData.label
-          color: Color.foreground
+          color: Commons.Color.foreground
           elide: Text.ElideRight
           font.family: Style.fontFamily
           font.pixelSize: root.textSize
@@ -92,7 +93,7 @@ Item {
           id: detailText
           anchors.verticalCenter: parent.verticalCenter
           text: modelData.detail === undefined ? "" : modelData.detail
-          color: Color.muted
+          color: Commons.Color.muted
           font.family: Style.fontFamily
           font.pixelSize: root.detailSize
         }
@@ -114,7 +115,7 @@ Item {
     width: parent.width
     visible: root.rows.length === 0
     text: root.busy ? I18n.t("editor.searching") : root.emptyText
-    color: Color.muted
+    color: Commons.Color.muted
     font.family: Style.fontFamily
     font.pixelSize: Style.smallFontSize
   }

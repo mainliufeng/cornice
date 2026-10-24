@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Shared hierarchy for device panels: one clear title and a quieter status.
 Item {
@@ -15,11 +16,11 @@ Item {
     width: Style.space(6)
     height: width
     radius: Style.radius
-    color: Color.surface
+    color: Commons.Color.surface
     Text {
       anchors.centerIn: parent
       text: root.glyph
-      color: Color.accent
+      color: Commons.Color.accent
       font.family: Style.iconFamily
       font.pixelSize: Style.fontSize + 10
     }
@@ -33,7 +34,7 @@ Item {
     Text {
       width: parent.width
       text: root.title
-      color: Color.foreground
+      color: Commons.Color.foreground
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize + 8
       font.bold: true
@@ -43,7 +44,7 @@ Item {
       width: parent.width
       visible: root.subtitle !== ""
       text: root.subtitle
-      color: Color.muted
+      color: Commons.Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize
       elide: Text.ElideRight

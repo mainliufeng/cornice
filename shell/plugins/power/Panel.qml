@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.UPower
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Power panel: battery detail, power profile, and session actions.
@@ -74,7 +75,7 @@ PanelFrame {
         width: parent.width
         height: root.percent >= 0 ? Style.space(17) : Style.space(9)
         radius: Style.radius
-        color: Color.surface
+        color: Commons.Color.surface
         Column {
           anchors.fill: parent
           anchors.margins: Style.space(2)
@@ -84,14 +85,14 @@ PanelFrame {
             spacing: Style.space(1.5)
             Text {
               text: root.percent >= 0 ? root.percent + "%" : "—"
-              color: Color.foreground
+              color: Commons.Color.foreground
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize * 2.5
             }
             Text {
               anchors.verticalCenter: parent.verticalCenter
               text: root.percent < 0 ? I18n.t("panel.noBattery") : I18n.t(root.device.state === UPowerDeviceState.Charging ? "power.charging" : root.device.state === UPowerDeviceState.FullyCharged ? "power.full" : "power.battery")
-              color: Color.muted
+              color: Commons.Color.muted
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
             }
@@ -111,7 +112,7 @@ PanelFrame {
                 parts.push(Math.round(root.device.changeRate * 10) / 10 + " W");
               return parts.join(" · ");
             }
-            color: Color.muted
+            color: Commons.Color.muted
             elide: Text.ElideRight
             font.family: Style.fontFamily
             font.pixelSize: Style.smallFontSize
@@ -121,12 +122,12 @@ PanelFrame {
             width: parent.width
             height: Style.space(1)
             radius: height / 2
-            color: Color.hover
+            color: Commons.Color.hover
             Rectangle {
               width: parent.width * Util.clamp(root.percent / 100, 0, 1)
               height: parent.height
               radius: height / 2
-              color: root.percent <= 15 ? Color.urgent : Color.accent
+              color: root.percent <= 15 ? Commons.Color.urgent : Commons.Color.accent
             }
           }
         }
@@ -137,7 +138,7 @@ PanelFrame {
         visible: root.profiles.length > 0
         Text {
           text: I18n.t("power.profile")
-          color: Color.muted
+          color: Commons.Color.muted
           font.family: Style.fontFamily
           font.pixelSize: Style.fontSize
         }
@@ -161,7 +162,7 @@ PanelFrame {
       }
       Text {
         text: I18n.t("power.session")
-        color: Color.muted
+        color: Commons.Color.muted
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
       }

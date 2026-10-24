@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "../notifications" as Notifications
 
@@ -268,15 +269,15 @@ PanelFrame {
             width: parent.width
             height: 1
             visible: row.modelData.separator === true
-            color: Color.surfaceBorder
+            color: Commons.Color.surfaceBorder
           }
 
           Rectangle {
             anchors.fill: parent
             visible: row.modelData.separator !== true
             radius: Style.radius
-            color: row.index === displayedSelection ? Color.workspaceActive
-                 : row.hovered ? Color.hover : "transparent"
+            color: row.index === displayedSelection ? Commons.Color.workspaceActive
+                 : row.hovered ? Commons.Color.hover : "transparent"
           }
 
           Row {
@@ -290,7 +291,7 @@ PanelFrame {
               anchors.verticalCenter: parent.verticalCenter
               width: Style.space(1.8)
               text: row.modelData.glyph || ""
-              color: row.index === displayedSelection ? Color.workspaceActiveText : Color.accent
+              color: row.index === displayedSelection ? Commons.Color.workspaceActiveText : Commons.Color.accent
               font.family: Style.iconFamily
               font.pixelSize: Style.fontSize
             }
@@ -299,7 +300,7 @@ PanelFrame {
               anchors.verticalCenter: parent.verticalCenter
               width: parent.width - Style.space(3.4)
               text: row.modelData.label || ""
-              color: row.index === displayedSelection ? Color.workspaceActiveText : Color.foreground
+              color: row.index === displayedSelection ? Commons.Color.workspaceActiveText : Commons.Color.foreground
               elide: Text.ElideRight
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
@@ -342,7 +343,7 @@ PanelFrame {
     x: parent.width / 2
     width: 1
     height: parent.height
-    color: Color.surfaceBorder
+    color: Commons.Color.surfaceBorder
   }
   MenuViewport {
     id: themeViewport

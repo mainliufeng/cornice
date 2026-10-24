@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Built-in bar. One layer-shell surface per screen, three sections each.
@@ -75,7 +76,7 @@ Item {
       screen: modelData
       implicitHeight: bar.surfaceHeight
       exclusiveZone: bar.surfaceHeight
-      color: bar.transparent ? "transparent" : Color.barBackground
+      color: bar.transparent ? "transparent" : Commons.Color.barBackground
       visible: true
 
       anchors {
@@ -104,7 +105,7 @@ Item {
         anchors.centerIn: parent
         visible: bar.registry !== null && bar.registry.ready && bar.registry.plugins.length === 0
         text: "cornice: no plugins found (CORNICE_PATH=" + Quickshell.env("CORNICE_PATH") + ")"
-        color: Color.urgent
+        color: Commons.Color.urgent
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
       }

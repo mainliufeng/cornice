@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Current workspace windows, followed by the focused title. Kept in the existing
@@ -111,8 +112,8 @@ Item {
         width: root.slotWidth
         height: Style.widgetHeight
         radius: Style.radius
-        color: modelData.address === root.focusedAddress ? Color.workspaceActive
-          : hit.containsMouse ? Color.hover : "transparent"
+        color: modelData.address === root.focusedAddress ? Commons.Color.workspaceActive
+          : hit.containsMouse ? Commons.Color.hover : "transparent"
         readonly property string icon: root.iconSource(modelData)
         Image {
           id: image
@@ -128,7 +129,7 @@ Item {
           anchors.centerIn: parent
           visible: button.icon === "" || image.status === Image.Error
           text: root.appName(button.modelData).slice(0, 1).toUpperCase()
-          color: button.modelData.address === root.focusedAddress ? Color.workspaceActiveText : Color.barForeground
+          color: button.modelData.address === root.focusedAddress ? Commons.Color.workspaceActiveText : Commons.Color.barForeground
           font.family: Style.fontFamily
           font.pixelSize: Style.fontSize
         }
@@ -150,12 +151,12 @@ Item {
       visible: root.overflowWindows.length > 0
       radius: Style.radius
       color: root.overflowWindows.some(window => window.address === root.focusedAddress)
-        ? Color.workspaceActive : moreHit.containsMouse ? Color.hover : "transparent"
+        ? Commons.Color.workspaceActive : moreHit.containsMouse ? Commons.Color.hover : "transparent"
       Text {
         anchors.centerIn: parent
         text: "+" + root.overflowWindows.length
         color: root.overflowWindows.some(window => window.address === root.focusedAddress)
-          ? Color.workspaceActiveText : Color.barForeground
+          ? Commons.Color.workspaceActiveText : Commons.Color.barForeground
         font.family: Style.fontFamily
         font.pixelSize: Style.smallFontSize
       }
@@ -180,7 +181,7 @@ Item {
     width: root.titleWidth
     text: root.title
     elide: Text.ElideRight
-    color: Color.barForeground
+    color: Commons.Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }
@@ -219,7 +220,7 @@ Item {
         id: tooltipText
         anchors.fill: parent
         text: root.hoveredWindow ? root.appName(root.hoveredWindow) + "\n" + root.hoveredWindow.title : ""
-        color: Color.foreground
+        color: Commons.Color.foreground
         font.family: Style.fontFamily
         font.pixelSize: Style.smallFontSize
         wrapMode: Text.Wrap
@@ -262,7 +263,7 @@ Item {
         width: overflowList.width
         height: Math.max(Style.widgetHeight + Style.space(1.2), overflowText.implicitHeight + Style.space(1.4))
         radius: Style.radius
-        color: modelData.address === root.focusedAddress ? Color.hover : overflowHit.containsMouse ? Color.panelAlt : "transparent"
+        color: modelData.address === root.focusedAddress ? Commons.Color.hover : overflowHit.containsMouse ? Commons.Color.panelAlt : "transparent"
         Image {
           id: overflowIcon
           x: Style.space(0.7)
@@ -279,7 +280,7 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           horizontalAlignment: Text.AlignHCenter
           text: root.appName(overflowRow.modelData).slice(0, 1).toUpperCase()
-          color: Color.foreground
+          color: Commons.Color.foreground
           font.family: Style.fontFamily
           font.pixelSize: Style.fontSize
         }
@@ -289,7 +290,7 @@ Item {
           width: parent.width - x - Style.space(0.7)
           anchors.verticalCenter: parent.verticalCenter
           text: root.appName(overflowRow.modelData) + "\n" + overflowRow.modelData.title
-          color: Color.foreground
+          color: Commons.Color.foreground
           font.family: Style.fontFamily
           font.pixelSize: Style.smallFontSize
           wrapMode: Text.Wrap
@@ -309,7 +310,7 @@ Item {
       width: Style.space(0.3)
       height: Math.max(Style.space(1), overflowList.visibleArea.heightRatio * overflowList.height)
       radius: width / 2
-      color: Color.muted
+      color: Commons.Color.muted
       visible: overflowList.contentHeight > overflowList.height
     }
   }

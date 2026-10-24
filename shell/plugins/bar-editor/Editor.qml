@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Spatial editor: the three columns mirror the actual bar. Every operation is
@@ -89,7 +90,7 @@ PanelFrame {
     width: 240
     height: editor.rowHeight
     radius: Style.radius
-    color: menuHit.containsMouse || dragHit.containsMouse || (editor.menuRow && editor.menuRow.id === widgetId) ? Color.hover : "transparent"
+    color: menuHit.containsMouse || dragHit.containsMouse || (editor.menuRow && editor.menuRow.id === widgetId) ? Commons.Color.hover : "transparent"
     opacity: editor.draggedId === widgetId && dragHit.drag.active ? 0.35 : 1
     readonly property var row: ({ id: widgetId, section: section, index: entryIndex })
     function inspect() {
@@ -103,7 +104,7 @@ PanelFrame {
       x: Style.space(1.3)
       anchors.verticalCenter: parent.verticalCenter
       text: editor.iconFor(card.widgetId)
-      color: Color.muted
+      color: Commons.Color.muted
       font.family: Style.iconFamily
       font.pixelSize: Style.fontSize
     }
@@ -112,7 +113,7 @@ PanelFrame {
       anchors.verticalCenter: parent.verticalCenter
       width: parent.width - x - menuButton.width - Style.space(1)
       text: editor.labelFor(card.widgetId)
-      color: Color.foreground
+      color: Commons.Color.foreground
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
       elide: Text.ElideRight
@@ -148,7 +149,7 @@ PanelFrame {
       Text {
         anchors.centerIn: parent
         text: card.compact ? "\u{F067}" : "\u{F141}"
-        color: menuHit.containsMouse || parent.activeFocus ? Color.accent : Color.muted
+        color: menuHit.containsMouse || parent.activeFocus ? Commons.Color.accent : Commons.Color.muted
         font.family: Style.iconFamily
         font.pixelSize: Style.fontSize
       }
@@ -169,7 +170,7 @@ PanelFrame {
     Text {
       id: heading
       text: I18n.t("bar.editor.title")
-      color: Color.foreground
+      color: Commons.Color.foreground
       font.family: Style.fontFamily
       font.pixelSize: Style.largeFontSize + 2
       font.bold: true
@@ -178,7 +179,7 @@ PanelFrame {
       anchors.right: parent.right
       anchors.verticalCenter: heading.verticalCenter
       text: editor.statusText || I18n.t("bar.editor.autosave")
-      color: editor.statusText ? Color.accent : Color.muted
+      color: editor.statusText ? Commons.Color.accent : Commons.Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
     }
@@ -188,7 +189,7 @@ PanelFrame {
       anchors.topMargin: Style.space(1)
       width: parent.width
       text: I18n.t("bar.editor.hint")
-      color: Color.muted
+      color: Commons.Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
       wrapMode: Text.Wrap
@@ -209,9 +210,9 @@ PanelFrame {
           width: (columns.width - columns.spacing * 2) / 3
           height: columns.height
           radius: Style.radius
-          color: Color.surface
+          color: Commons.Color.surface
           border.width: laneDrop.containsDrag ? 1 : 0
-          border.color: Color.accent
+          border.color: Commons.Color.accent
           readonly property var laneEntries: editor.entries(modelData)
           property int insertion: 0
           function inspect() {
@@ -225,7 +226,7 @@ PanelFrame {
             x: Style.space(1.5)
             y: Style.space(1.8)
             text: I18n.t("bar.editor.section." + lane.modelData)
-            color: Color.foreground
+            color: Commons.Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
             font.bold: true
@@ -235,14 +236,14 @@ PanelFrame {
             anchors.rightMargin: Style.space(1.5)
             y: Style.space(1.8)
             text: lane.laneEntries.length
-            color: Color.muted
+            color: Commons.Color.muted
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
           }
           Rectangle {
             x: Style.space(1.5); y: Style.space(5)
             width: parent.width - x * 2; height: 1
-            color: Color.surfaceBorder
+            color: Commons.Color.surfaceBorder
           }
           Flickable {
             id: laneList
@@ -273,7 +274,7 @@ PanelFrame {
               anchors.centerIn: parent
               visible: lane.laneEntries.length === 0
               text: I18n.t("bar.editor.drop")
-              color: Color.muted
+              color: Commons.Color.muted
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
             }
@@ -300,7 +301,7 @@ PanelFrame {
             y: Math.max(laneList.y, Math.min(laneList.y + laneList.height - 2, laneList.y + lane.insertion * editor.rowHeight - laneList.contentY))
             width: laneList.width
             height: 2
-            color: Color.accent
+            color: Commons.Color.accent
           }
         }
       }
@@ -314,7 +315,7 @@ PanelFrame {
       Text {
         id: hiddenHeading
         text: I18n.t("bar.editor.hidden") + "  ·  " + editor.hiddenWidgets.length
-        color: Color.muted
+        color: Commons.Color.muted
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
       }
@@ -340,7 +341,7 @@ PanelFrame {
               widgetId: modelData.id
               compact: true
               width: Math.min(180, hiddenViewport.width)
-              color: Color.surface
+              color: Commons.Color.surface
             }
           }
         }
@@ -371,7 +372,7 @@ PanelFrame {
             enabled: modelData.enabled
             width: menuColumn.width
             height: editor.rowHeight
-            color: actionHit.containsMouse || activeFocus ? Color.hover : "transparent"
+            color: actionHit.containsMouse || activeFocus ? Commons.Color.hover : "transparent"
             activeFocusOnTab: true
             Keys.onReturnPressed: editor.run(modelData.command)
             Keys.onSpacePressed: editor.run(modelData.command)
@@ -379,7 +380,7 @@ PanelFrame {
               x: Style.space(1.2)
               anchors.verticalCenter: parent.verticalCenter
               text: parent.modelData.glyph
-              color: Color.muted
+              color: Commons.Color.muted
               font.family: Style.iconFamily
               font.pixelSize: Style.fontSize
             }
@@ -387,7 +388,7 @@ PanelFrame {
               x: Style.space(4.5)
               anchors.verticalCenter: parent.verticalCenter
               text: parent.modelData.label
-              color: parent.enabled ? Color.foreground : Color.muted
+              color: parent.enabled ? Commons.Color.foreground : Commons.Color.muted
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
             }
@@ -406,9 +407,9 @@ PanelFrame {
       id: dragProxy
       width: Math.max(120, (canvas.width - Style.space(3)) / 3)
       height: editor.rowHeight
-      color: Color.panel
+      color: Commons.Color.panel
       border.width: 1
-      border.color: Color.accent
+      border.color: Commons.Color.accent
       radius: Style.radius
       visible: Drag.active
       z: 120
@@ -420,7 +421,7 @@ PanelFrame {
       Text {
         anchors.centerIn: parent
         text: editor.labelFor(editor.draggedId)
-        color: Color.foreground
+        color: Commons.Color.foreground
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
       }

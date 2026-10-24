@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 Item {
@@ -16,12 +17,12 @@ Item {
     anchors.fill: parent
     anchors.margins: Math.round(Style.gap * 0.25)
     radius: Style.radius
-    color: hit.containsMouse && root.available ? Color.hover : "transparent"
+    color: hit.containsMouse && root.available ? Commons.Color.hover : "transparent"
   }
   Text {
     anchors.centerIn: parent
     text: "\uf030"
-    color: root.available ? Color.barForeground : Color.muted
+    color: root.available ? Commons.Color.barForeground : Commons.Color.muted
     font.family: Style.iconFamily
     font.pixelSize: Style.fontSize
   }

@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 Surface {
   id: column
@@ -67,7 +68,7 @@ Surface {
         Text {
           anchors.centerIn: parent
           text: "‹ " + I18n.t("common.back")
-          color: Color.muted
+          color: Commons.Color.muted
           font.family: Style.fontFamily
           font.pixelSize: Style.fontSize
         }
@@ -91,21 +92,21 @@ Surface {
             width: parent.width
             height: 1
             visible: row.modelData.isSeparator
-            color: Color.surfaceBorder
+            color: Commons.Color.surfaceBorder
           }
           Rectangle {
             anchors.fill: parent
             radius: Style.radius
             visible: !row.modelData.isSeparator
             color: row.index === column.selection || (column.controller.branch[column.level]
-              && column.controller.branch[column.level].entry === row.modelData) ? Color.hover : "transparent"
+              && column.controller.branch[column.level].entry === row.modelData) ? Commons.Color.hover : "transparent"
           }
           Text {
             anchors.left: parent.left
             anchors.leftMargin: Style.space(0.7)
             anchors.verticalCenter: parent.verticalCenter
             text: row.modelData.checkState === Qt.Checked ? "✓" : row.modelData.checkState === Qt.PartiallyChecked ? "−" : ""
-            color: Color.accent
+            color: Commons.Color.accent
             font.pixelSize: Style.fontSize
           }
           Text {
@@ -114,7 +115,7 @@ Surface {
             anchors.rightMargin: Style.space(2)
             verticalAlignment: Text.AlignVCenter
             text: row.modelData.text
-            color: row.modelData.enabled ? Color.foreground : Color.muted
+            color: row.modelData.enabled ? Commons.Color.foreground : Commons.Color.muted
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
             elide: Text.ElideRight
@@ -125,7 +126,7 @@ Surface {
             anchors.rightMargin: Style.space(0.7)
             anchors.verticalCenter: parent.verticalCenter
             text: column.controller.canOpen(row.modelData) ? "›" : ""
-            color: Color.muted
+            color: Commons.Color.muted
             font.pixelSize: Style.fontSize
           }
           MouseArea {

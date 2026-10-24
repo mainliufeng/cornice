@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Emoji picker.
@@ -325,7 +326,7 @@ PanelFrame {
       text: root.current !== null
         ? root.current.c + "   " + root.current.n + "        Enter: copy   Esc: close"
         : (root.copied !== "" ? root.copied : "no match")
-      color: Color.muted
+      color: Commons.Color.muted
       elide: Text.ElideRight
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize
@@ -349,7 +350,7 @@ PanelFrame {
         width: grid.cellWidth - Style.space(0.5)
         height: grid.cellHeight - Style.space(0.5)
         radius: Style.radius
-        color: index === root.selected ? Color.hover : "transparent"
+        color: index === root.selected ? Commons.Color.hover : "transparent"
 
         Text {
           anchors.centerIn: parent

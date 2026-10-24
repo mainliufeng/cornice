@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Application launcher.
@@ -168,7 +169,7 @@ PanelFrame {
         if (item === undefined) return base
         return terminal ? base + "        " + I18n.t("launcher.runsIn") + " " + root.terminal : base
       }
-      color: Color.muted
+      color: Commons.Color.muted
       elide: Text.ElideRight
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize
@@ -178,7 +179,7 @@ PanelFrame {
       width: parent.width
       visible: root.results.length === 0
       text: I18n.t(root.commandMode() ? "launcher.typeCommand" : "launcher.empty")
-      color: Color.muted
+      color: Commons.Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
     }
@@ -200,7 +201,7 @@ PanelFrame {
         width: list.width
         height: Style.space(8)
         radius: Style.radius
-        color: index === root.selected ? Color.hover : "transparent"
+        color: index === root.selected ? Commons.Color.hover : "transparent"
 
         Row {
           anchors.fill: parent
@@ -226,7 +227,7 @@ PanelFrame {
             Text {
               width: parent.width
               text: modelData.name
-              color: Color.foreground
+              color: Commons.Color.foreground
               elide: Text.ElideRight
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize + 2
@@ -239,7 +240,7 @@ PanelFrame {
                 const terminal = modelData.command !== undefined || root.wantsTerminal(modelData.entry, false)
                 return terminal ? (base === "" ? "runs in " + root.terminal : base + "  ·  runs in " + root.terminal) : base
               }
-              color: Color.muted
+              color: Commons.Color.muted
               elide: Text.ElideRight
               visible: text !== ""
               font.family: Style.fontFamily

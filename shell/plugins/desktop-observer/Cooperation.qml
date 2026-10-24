@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 Item {
   id:root
@@ -26,11 +27,11 @@ Item {
     WlrLayershell.namespace:"cornice-desktop-cooperation"
     WlrLayershell.keyboardFocus:WlrKeyboardFocus.None
     Rectangle {
-      anchors.fill:parent;radius:Style.radius;color:Color.panel;border.color:Color.surfaceBorder
+      anchors.fill:parent;radius:Style.radius;color:Commons.Color.panel;border.color:Commons.Color.surfaceBorder
       Row {
         id:header
         anchors {top:parent.top;left:parent.left;right:parent.right;margins:Style.space(1.5)}
-        Text {width:parent.width-dismissButton.width;text:"桌面协作";color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.fontSize;font.bold:true;anchors.verticalCenter:parent.verticalCenter}
+        Text {width:parent.width-dismissButton.width;text:"桌面协作";color:Commons.Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.fontSize;font.bold:true;anchors.verticalCenter:parent.verticalCenter}
         PanelButton {id:dismissButton;label:"收起";onClicked:root.service.dismissCooperationNotice()}
       }
       Flickable {
@@ -42,8 +43,8 @@ Item {
           Column {
             visible:!!root.service && root.service.cooperationNoticeError !== ""
             width:body.width;spacing:Style.space(.8)
-            Text {width:parent.width;wrapMode:Text.Wrap;text:root.service ? (root.service.actionResult.operation || "桌面服务") + (root.service.actionResult.desktop ? " · " + root.service.desktopLabel(root.service.actionResult.desktop) : "") : "";color:Color.urgent;font.family:Style.fontFamily;font.pixelSize:Style.fontSize;font.bold:true}
-            Text {width:parent.width;wrapMode:Text.Wrap;text:root.service ? root.service.cooperationNoticeError : "";color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
+            Text {width:parent.width;wrapMode:Text.Wrap;text:root.service ? (root.service.actionResult.operation || "桌面服务") + (root.service.actionResult.desktop ? " · " + root.service.desktopLabel(root.service.actionResult.desktop) : "") : "";color:Commons.Color.urgent;font.family:Style.fontFamily;font.pixelSize:Style.fontSize;font.bold:true}
+            Text {width:parent.width;wrapMode:Text.Wrap;text:root.service ? root.service.cooperationNoticeError : "";color:Commons.Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
             Row {
               spacing:Style.space(1)
               PanelButton {label:root.service ? root.service.retryLabel : "重试操作";visible:!!root.service && !!root.service.actionResult.retry;enabled:root.service && !root.service.busy;onClicked:root.service.retryAction()}
@@ -59,9 +60,9 @@ Item {
                 const p=button.mapToItem(window.contentItem,0,0)
                 return {name:modelData.name,requestId:modelData.handoff.id,status:modelData.handoff.status,continuation:root.service.awaitingContinuation(modelData),title:modelData.handoff.title,instructions:modelData.handoff.instructions,x:p.x,y:p.y,width:button.width,height:button.height}
               }
-              Text {width:parent.width;text:root.service.desktopLabel(row.modelData.name)+" · "+root.service.handoffLabel(row.modelData.handoff.status);color:Color.accent;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
-              Text {width:parent.width;text:row.modelData.handoff.title;textFormat:Text.PlainText;wrapMode:Text.Wrap;color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.fontSize;font.bold:true}
-              Text {width:parent.width;text:row.modelData.handoff.instructions;textFormat:Text.PlainText;wrapMode:Text.Wrap;color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
+              Text {width:parent.width;text:root.service.desktopLabel(row.modelData.name)+" · "+root.service.handoffLabel(row.modelData.handoff.status);color:Commons.Color.accent;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
+              Text {width:parent.width;text:row.modelData.handoff.title;textFormat:Text.PlainText;wrapMode:Text.Wrap;color:Commons.Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.fontSize;font.bold:true}
+              Text {width:parent.width;text:row.modelData.handoff.instructions;textFormat:Text.PlainText;wrapMode:Text.Wrap;color:Commons.Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
               Flow {
                 width:parent.width;spacing:Style.space(1)
                 PanelButton {
@@ -72,7 +73,7 @@ Item {
                 }
                 PanelButton {label:"定位桌面";enabled:!root.service.busy;onClicked:root.service.show(row.modelData.name)}
               }
-              Text {width:parent.width;text:"接管后提示会收起，处理说明和完成按钮可在桌面菜单查看。无法操作桌面时，可在原 Agent 对话里让它撤回请求、退出接管。";wrapMode:Text.Wrap;color:Color.muted;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
+              Text {width:parent.width;text:"接管后提示会收起，处理说明和完成按钮可在桌面菜单查看。无法操作桌面时，可在原 Agent 对话里让它撤回请求、退出接管。";wrapMode:Text.Wrap;color:Commons.Color.muted;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize}
             }
           }
         }

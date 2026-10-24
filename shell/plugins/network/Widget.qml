@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Networking
 import qs.Commons
+import qs.Commons as Commons
 
 // Wired/Wi-Fi status. Click opens the network panel.
 Item {
@@ -62,7 +63,7 @@ Item {
     id: text
     anchors.centerIn: parent
     text: root.icon + (root.showName || root.wired ? " " + root.label : "")
-    color: root.online ? Color.barForeground : Color.muted
+    color: root.online ? Commons.Color.barForeground : Commons.Color.muted
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }

@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Networking
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Network panel: connection details, Wi-Fi toggle, network list, connect.
@@ -118,14 +119,14 @@ PanelFrame {
         width: parent.width
         height: Style.space(10)
         radius: Style.radius
-        color: Color.surface
+        color: Commons.Color.surface
         Column {
           anchors.fill: parent
           anchors.margins: Style.space(2)
           spacing: Style.space(0.75)
           Text {
             text: I18n.t(root.device && root.device.connected ? "common.connected" : "network.notConnected")
-            color: root.device && root.device.connected ? Color.accent : Color.foreground
+            color: root.device && root.device.connected ? Commons.Color.accent : Commons.Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize + 2
             font.bold: true
@@ -133,7 +134,7 @@ PanelFrame {
           Text {
             width: parent.width
             text: root.device && root.device.address ? I18n.t("network.deviceAddress") + " " + root.device.address : I18n.t("network.noAddress")
-            color: Color.muted
+            color: Commons.Color.muted
             elide: Text.ElideRight
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
@@ -164,14 +165,14 @@ PanelFrame {
         width: parent.width
         visible: root.message !== ""
         text: root.message
-        color: Color.accent
+        color: Commons.Color.accent
         wrapMode: Text.Wrap
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
       }
       Text {
         text: I18n.t("network.available")
-        color: Color.muted
+        color: Commons.Color.muted
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
       }
@@ -179,7 +180,7 @@ PanelFrame {
         width: parent.width
         visible: root.wifi && Networking.wifiEnabled && root.networks.length <= 1
         text: I18n.t("network.scanning")
-        color: Color.muted
+        color: Commons.Color.muted
         wrapMode: Text.Wrap
         font.family: Style.fontFamily
         font.pixelSize: Style.smallFontSize
@@ -188,7 +189,7 @@ PanelFrame {
         width: parent.width
         visible: root.networks.length === 0
         text: I18n.t(root.wifi ? "network.empty" : "network.noWifi")
-        color: Color.muted
+        color: Commons.Color.muted
         wrapMode: Text.Wrap
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
@@ -209,13 +210,13 @@ PanelFrame {
             width: parent.width
             height: Style.space(8)
             radius: Style.radius
-            color: hover.containsMouse ? Color.hover : Color.surface
+            color: hover.containsMouse ? Commons.Color.hover : Commons.Color.surface
             Text {
               id: signal
               x: Style.space(1.5)
               anchors.verticalCenter: parent.verticalCenter
               text: root.signalIcon(modelData.signalStrength)
-              color: modelData.connected ? Color.accent : Color.muted
+              color: modelData.connected ? Commons.Color.accent : Commons.Color.muted
               font.family: Style.iconFamily
               font.pixelSize: Style.fontSize + 4
             }
@@ -227,7 +228,7 @@ PanelFrame {
               Text {
                 width: parent.width
                 text: modelData.name || I18n.t("network.hidden")
-                color: Color.foreground
+                color: Commons.Color.foreground
                 elide: Text.ElideRight
                 font.family: Style.fontFamily
                 font.pixelSize: Style.fontSize + 2
@@ -235,7 +236,7 @@ PanelFrame {
               Text {
                 width: parent.width
                 text: modelData.connected ? I18n.t("common.connected") : modelData.known ? I18n.t("network.saved") : I18n.t("network.new")
-                color: Color.muted
+                color: Commons.Color.muted
                 font.family: Style.fontFamily
                 font.pixelSize: Style.smallFontSize
               }
@@ -245,7 +246,7 @@ PanelFrame {
               anchors.rightMargin: Style.space(1.5)
               anchors.verticalCenter: parent.verticalCenter
               text: modelData.connected ? "\uf00c" : modelData.security !== undefined && modelData.security !== WifiSecurityType.Open ? "\uf023" : ""
-              color: Color.accent
+              color: Commons.Color.accent
               font.family: Style.iconFamily
               font.pixelSize: Style.fontSize
             }

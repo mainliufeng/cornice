@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 
 // SystemClock is a creatable type (not a global singleton): one instance per
 // widget, ticking at the precision the format needs.
@@ -90,7 +91,7 @@ Item {
       if (zone) return zone.name + " " + root.render(clock.date, fmt)
       return (root.zoneLabel !== "" ? root.zoneLabel + " " : "") + root.render(clock.date, fmt)
     }
-    color: Color.barForeground
+    color: Commons.Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }

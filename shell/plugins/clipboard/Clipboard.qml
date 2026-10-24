@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Clipboard history on top of cliphist.
@@ -162,7 +163,7 @@ PanelFrame {
         id: count
         anchors.verticalCenter: parent.verticalCenter
         text: root.filtered.length + " / " + root.entries.length
-        color: Color.muted
+        color: Commons.Color.muted
         font.family: Style.fontFamily
         font.pixelSize: Style.smallFontSize
       }
@@ -171,7 +172,7 @@ PanelFrame {
     Text {
       width: parent.width
       text: I18n.t("clipboard.hint")
-      color: Color.muted
+      color: Commons.Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize
     }
@@ -189,7 +190,7 @@ PanelFrame {
         Rectangle {
           anchors.fill: parent
           radius: Style.radius
-          color: Color.hover
+          color: Commons.Color.hover
           visible: root.current !== null && root.current.image
         }
 
@@ -207,7 +208,7 @@ PanelFrame {
           width: parent.width - Style.space(2)
           visible: root.current === null || !root.current.image
           text: root.current === null ? I18n.t("clipboard.empty") : root.current.preview
-          color: Color.foreground
+          color: Commons.Color.foreground
           wrapMode: Text.Wrap
           maximumLineCount: 12
           elide: Text.ElideRight
@@ -233,7 +234,7 @@ PanelFrame {
           width: list.width
           height: Style.space(6.5)
           radius: Style.radius
-          color: index === root.selected ? Color.hover : "transparent"
+          color: index === root.selected ? Commons.Color.hover : "transparent"
 
           Row {
             anchors.fill: parent
@@ -244,7 +245,7 @@ PanelFrame {
             Text {
               anchors.verticalCenter: parent.verticalCenter
               text: modelData.image ? "\uf03e" : "\uf0f6"
-              color: modelData.image ? Color.accent : Color.muted
+              color: modelData.image ? Commons.Color.accent : Commons.Color.muted
               font.family: Style.iconFamily
               font.pixelSize: Style.fontSize
             }
@@ -253,7 +254,7 @@ PanelFrame {
               anchors.verticalCenter: parent.verticalCenter
               width: parent.width - Style.space(3)
               text: modelData.preview
-              color: Color.foreground
+              color: Commons.Color.foreground
               elide: Text.ElideRight
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
