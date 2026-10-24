@@ -318,3 +318,12 @@ CDP（含超过管道容量的请求）、human/full 锁、PAM 成功/失败、�
 休眠测试使用私有 system bus 的 logind 测试夹具，真实传递并检查 inhibitor FD，
 核验 full secure 先于 Suspend，模拟唤醒和合盖。**未执行宿主睡眠、合盖或 DRM 热插拔**。
 记录与未验收项见 [验证记录](verification/agent-desktop.md)。
+
+## 2026-10-24 candidate: direct new tasks while human-locked
+
+The existing Agent desktop access model now extends to human-lock task start:
+no new preauthorization interaction or switch. New tasks can acquire an eligible
+idle private desktop or safely create a new one; manual/interrupted control is
+not revived. The original pre-lock `continue` contract remains distinct from the
+new per-task lease. See [direct locked task candidate](locked-agent-task-start.md)
+for creation/epoch/output checks, regression tests and rollback boundaries.

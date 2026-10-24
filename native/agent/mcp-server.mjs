@@ -20,7 +20,7 @@ const makeContext=()=>({controller:randomUUID(),finished:false});
 const legacy = bindingFile ? makeContext() : undefined;
 const context=()=>current.getStore();
 const active = state => state.agentAllowed !== false && !state.paused && !state.agentPaused && state.available && state.controlMode === "agent" &&
-  (!state.humanLocked || (state.lockScope === "human" && state.humanLockPolicy === "continue"));
+  (!state.humanLocked || (state.lockScope === "human" && (state.humanLockPolicy === "continue" || state.lockedTaskActive === true)));
 // Retain credentials only for live tasks and the call currently producing a
 // response. Rotated and completed task credentials do not become global history.
 function rememberSecrets(...values) {
@@ -150,7 +150,7 @@ async function invoke(operation,params={},extra={}) {
   const value=await credential();
   cancelled(extra.signal);
   if(operation==="finish") {
-    try {await rpc(value,"desktop.release",{},extra.requestId,extra);}
+    try {await rpc(value,"desktop.release",{outcome:params.outcome},extra.requestId,extra);}
     catch(error) {if(!/binding revoked|binding revoked or unknown/.test(error.message))throw error;}
     finally {c.finished=true;c.reservation?.destroy();}
     return {outcome:params.outcome,reason:params.reason};

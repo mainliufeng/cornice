@@ -389,7 +389,7 @@ QJsonObject Broker::state(const QString &name) {
     result["harness"] = harness;
     result["occupied"] = occupied;
     const bool locked = result["humanLocked"].toBool() &&
-        !(result["lockScope"].toString() == "human" && result["humanLockPolicy"].toString() == "continue");
+        !(result["lockScope"].toString() == "human" && (result["humanLockPolicy"].toString() == "continue" || result["lockedTaskActive"].toBool()));
     result["activity"] = locked ? "locked" : !result["available"].toBool() ? "unavailable" : human ? "takeover" :
         !occupied ? "idle" : result["agentPaused"].toBool() ? "paused" : "running";
     QJsonArray workspaceSlots;
@@ -542,7 +542,15 @@ void Broker::checkResources(const QString &geometry, const QString &replacing) {
 QJsonObject Broker::definition(const QString &name) {
     const auto &desktop = m_desktops.at(name);
     QJsonObject workspaceMap; for (auto it = desktop.workspaceSlots.begin(); it != desktop.workspaceSlots.end(); ++it) workspaceMap[QString::number(it.key())] = it.value();
-    const auto actual = state(name);
+    QJsonObject actual;
+    try { actual = state(name); }
+    catch (...) {
+        // A retired output must not prevent saving/creating other desktops.
+        // Preserve only its definition, never runtime control credentials.
+        const auto previous = m_definitions.value(name).toObject();
+        actual["workspace"] = previous.value("workspace").toString(desktop.initialWorkspace);
+        actual["humanLockPolicy"] = previous.value("humanLockPolicy").toString("pause");
+    }
     return {{"stableId",desktop.stableId},{"number",desktop.number},{"agentAllowed",desktop.agentAllowed},
         {"workspaceSlots",workspaceMap},{"workspace",actual["workspace"]},{"geometry",desktop.geometry},{"output",desktop.outputName},
         {"humanLockPolicy",actual["humanLockPolicy"]},{"handoffs",desktop.handoffs}};
@@ -680,23 +688,33 @@ void Broker::endTakeover(const QString &reason, bool requeueRequest) {
         '\n');
 }
 
-void Broker::resume(const QString &name) {
+void Broker::resume(const QString &name, bool newTask, const QString &expectedLockEpoch) {
     auto &desktop = managed(name);
     desktop.driver.reset();
     const auto actual = state(name);
+    if (newTask && actual["lockEpoch"].toString() != expectedLockEpoch) fail("Lock changed during desktop allocation");
     if (!desktop.agentAllowed) fail("Agent control is disabled for this desktop");
-    if (actual["humanLocked"].toBool())
+    const bool newLockedTask = newTask && actual["humanLocked"].toBool() && !desktop.primary && actual["taskIdle"].toBool();
+    if (actual["humanLocked"].toBool() && !newLockedTask)
         fail("Unlock session before granting control");
-    if (!actual["available"].toBool()) fail("Desktop output unavailable");
-    json(compositor(
-        "seat control " + name + " " + desktop.id + " " + actual["generation"].toString() + " resume-composed" + (desktop.primary ? " " + QString::number(getpid()) : ""), true));
+    if (newLockedTask) {
+        desktop.captureGrant = uuid() + uuid();
+        json(compositor("seat locked-task-start " + name + " " + desktop.id + " " + actual["generation"].toString() +
+            " " + actual["lockEpoch"].toString() + " " + desktop.captureGrant, true));
+    } else {
+        if (!actual["available"].toBool()) fail("Desktop output unavailable");
+        json(compositor(
+            "seat control " + name + " " + desktop.id + " " + actual["generation"].toString() + " resume-composed" + (desktop.primary ? " " + QString::number(getpid()) : ""), true));
+    }
     const auto resumed = state(name);
     try {
-        desktop.captureGrant.clear();
-        desktop.captureGrant = uuid() + uuid();
-        json(compositor("seat export-grant " + name + " " + desktop.id + " " + resumed["generation"].toString() +
-                            " " + desktop.captureGrant,
-                        true));
+        if (!newLockedTask) {
+            desktop.captureGrant.clear();
+            desktop.captureGrant = uuid() + uuid();
+            json(compositor("seat export-grant " + name + " " + desktop.id + " " + resumed["generation"].toString() +
+                                " " + desktop.captureGrant,
+                            true));
+        }
         desktop.driver =
             std::make_unique<SeatDriver>(resumed["display"].toString(), resumed["seatName"].toString(name), resumed["output"].toString());
     } catch (...) {
@@ -1043,25 +1061,45 @@ void Broker::publishTaskState(const QString &name) {
     }
 }
 
+QJsonObject Broker::bindDesktop(const QString &name, bool newLockedTask) {
+    const auto &desktop = managed(name);
+    const auto actual = state(name);
+    if (!desktop.agentAllowed || actual["paused"].toBool() || !actual["available"].toBool() || !desktop.driver ||
+        (actual["humanLocked"].toBool() && (!newLockedTask || !actual["lockedTaskActive"].toBool())))
+        fail("Resume desktop before binding an agent");
+    revokeBindings(name);
+    const auto token = uuid() + uuid();
+    m_bindings[token] = Binding{name, desktop.id, actual["generation"].toString(), {}};
+    return {{"socket", m_socketPath}, {"instance", m_instance}, {"name", name}, {"seatId", desktop.id},
+            {"generation", actual["generation"]}, {"token", token}};
+}
+
 QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owner) {
     if (m_acquisitions.contains(owner)) return m_acquisitions[owner];
     const auto controller = params["controller"].toString();
     if (!QRegularExpression("^[A-Za-z0-9_-]{1,64}$").match(controller).hasMatch()) fail("Invalid controller identity");
     const auto harness = params["harness"].toString("external");
     if (!QRegularExpression("^[A-Za-z0-9_.-]{1,64}$").match(harness).hasMatch()) fail("Invalid harness identity");
-    if (state("main")["humanLocked"].toBool()) fail("Unlock session before acquiring a desktop");
+    const auto allocationState = state("main");
+    const bool locked = allocationState["humanLocked"].toBool();
+    if (locked && allocationState["lockScope"] != "human") fail("New tasks are unavailable during full or unknown session lock");
     const auto preferred = params["preferredDesktop"].toString();
     if (!preferred.isEmpty()) {
         atom(preferred);
         if (!m_desktops.contains(preferred)) fail("Requested desktop does not exist");
+        if (locked && managed(preferred).primary) fail("Primary desktop is unavailable while locked");
         if (!managed(preferred).agentAllowed) fail("Agent control is disabled for this desktop");
     }
-    const auto free = [this](const QString &name) {
+    const auto free = [this, locked](const QString &name) {
         const auto &desktop = m_desktops.at(name);
         if (!desktop.agentAllowed || (m_humanOwner && m_humanBinding.name == name)) return false;
         for (const auto &lease : m_acquisitions) if (lease["name"].toString() == name) return false;
-        const auto actual = state(name);
-        if (!actual["available"].toBool() || actual["humanLocked"].toBool()) return false;
+        QJsonObject actual;
+        try { actual = state(name); } catch (...) { return false; }
+        if (locked) {
+            if (desktop.primary || desktop.privateOutput.isEmpty() ||
+                actual["lockScope"] != "human" || !actual["taskIdle"].toBool()) return false;
+        } else if (!actual["available"].toBool() || actual["humanLocked"].toBool()) return false;
         // Compositor input state is not ownership. A task-free desktop may
         // still be resumed; allocation renews its native control and binding.
         // Reservations above and valid explicit bindings below remain owners,
@@ -1092,8 +1130,9 @@ QJsonObject Broker::acquireDesktop(const QJsonObject &params, QLocalSocket *owne
         created = true;
     }
     try {
-        resume(name);
-        auto lease = perform("bind", {{"name", name}}, nullptr, owner);
+        resume(name, true, allocationState["lockEpoch"].toString());
+        if (created && locked) configureDesktop(name);
+        auto lease = bindDesktop(name, locked);
         auto &binding = m_bindings[lease["token"].toString()];
         binding.controller = controller;
         binding.harness = harness;
@@ -1422,7 +1461,7 @@ void Broker::deferBrowser(const QJsonObject &request, QLocalSocket *owner, const
                 const auto validated = handle(validation, weakOwner);
                 if (!validated["ok"].toBool()) fail(validated["error"].toString());
                 actual = validated["result"].toObject();
-                const bool blocked = actual["humanLocked"].toBool() && !(actual["lockScope"] == "human" && actual["humanLockPolicy"] == "continue");
+                const bool blocked = actual["humanLocked"].toBool() && !(actual["lockScope"] == "human" && (actual["humanLockPolicy"] == "continue" || actual["lockedTaskActive"].toBool()));
                 if (!actual["agentAllowed"].toBool() || actual["agentPaused"].toBool() || !actual["available"].toBool() || blocked) fail("Browser control interrupted during startup");
             } else {
                 actual = state(name);
@@ -1488,7 +1527,7 @@ void Broker::handleNative(const QJsonObject &request, QLocalSocket *owner) {
     const auto name = binding.name;
     const auto params = request["params"].toObject();
     const bool blocked = actual["humanLocked"].toBool() &&
-        !(actual["lockScope"].toString() == "human" && actual["humanLockPolicy"].toString() == "continue");
+        !(actual["lockScope"].toString() == "human" && (actual["humanLockPolicy"].toString() == "continue" || actual["lockedTaskActive"].toBool()));
     if (!managed(name).agentAllowed || actual["agentPaused"].toBool() || !actual["available"].toBool() || blocked)
         fail("Native accessibility requires active desktop control");
     if (writing && request["controller"].toString().isEmpty() && !binding.controller.isEmpty())
@@ -1542,7 +1581,7 @@ void Broker::handleNative(const QJsonObject &request, QLocalSocket *owner) {
         if (!m_desktops.contains(name) || !managed(name).agentAllowed) return "Native desktop permission revoked";
         const auto fresh = state(name);
         const bool locked = fresh["humanLocked"].toBool() &&
-            !(fresh["lockScope"].toString() == "human" && fresh["humanLockPolicy"].toString() == "continue");
+            !(fresh["lockScope"].toString() == "human" && (fresh["humanLockPolicy"].toString() == "continue" || fresh["lockedTaskActive"].toBool()));
         if (fresh["agentPaused"].toBool() || !fresh["available"].toBool() || locked) return "Native desktop control interrupted";
         for (const QString field : {"seatId", "generation", "workspace", "viewEpoch", "lockEpoch"})
             if (actual[field] != fresh[field]) return "Native desktop identity/view changed";
@@ -1691,6 +1730,12 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
     const auto name = binding ? binding->name : params["name"].toString();
     atom(name);
     if (method == "create") {
+        const auto creationState = state("main");
+        const bool lockedCreation = creationState["humanLocked"].toBool();
+        const auto creationEpoch = lockedCreation ? creationState["lockEpoch"].toString() : QString{};
+        if (lockedCreation && (creationState["lockScope"] != "human" || !m_capabilities["features"].toArray().contains("locked-task-start-v1")))
+            fail("Private desktop creation is unavailable during this lock");
+        const auto epochArgument = lockedCreation ? " " + creationEpoch : QString{};
         if (m_desktops.contains(name))
             fail("Desktop already managed");
         checkResources(params["virtual-output"].toString(params["output"].toString().isEmpty() ? "1920x1080" : ""));
@@ -1707,7 +1752,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             if (dimensions[0].toInt() > 8192 || dimensions[1].toInt() > 8192)
                 fail("Virtual output dimensions exceed 8192");
             output = "cornice-agent-" + name + "-" + uuid();
-            const auto createdOutput = compositor("seat create-private-output " + output);
+            const auto createdOutput = compositor("seat create-private-output " + output + epochArgument);
             if (createdOutput != "ok")
                 fail(QString::fromUtf8(createdOutput));
             const auto configured = compositor("eval hl.monitor({output='" + output + "',mode='" + geometry +
@@ -1718,7 +1763,8 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             }
         }
         atom(output);
-        const auto created = compositor("seat create " + name + " " + output);
+        if (lockedCreation && !privateOutput) fail("Locked desktop creation requires a new private output");
+        const auto created = compositor("seat create " + name + " " + output + epochArgument);
         if (created != "ok") {
             if (privateOutput)
                 compositor("output remove " + output);
@@ -1734,10 +1780,14 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
             desktop.geometry=privateOutput ? geometry : QString{};desktop.outputName=privateOutput ? QString{} : output;
             desktop.initialWorkspace=workspace;desktop.agentAllowed=spec["agentAllowed"].toBool(true);
             initializeSlots(name,spec["workspaceSlots"].toObject());
-            const auto switched = compositor("seat workspace " + name + " " + workspace);
-            if (switched != "ok")
-                fail(QString::fromUtf8(switched));
-            pause(name);
+            if (privateOutput && m_capabilities["features"].toArray().contains("locked-task-start-v1")) {
+                json(compositor("seat task-initialize " + name + " " + desktop.id + " " + actual["generation"].toString() +
+                    " " + (lockedCreation ? creationEpoch : creationState["lockEpoch"].toString()) + " " + workspace, true));
+            } else {
+                const auto switched = compositor("seat workspace " + name + " " + workspace);
+                if (switched != "ok") fail(QString::fromUtf8(switched));
+                pause(name);
+            }
             configureDesktop(name);
             if (params.contains("human-lock-policy")) {
                 const auto paused = state(name);
@@ -2065,22 +2115,7 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         save();
         return {{"removed", name}, {"sharedWindowsPreserved",!params["closeApps"].toBool()},{"profilesPreserved",true}};
     }
-    if (method == "bind") {
-        if (!desktop.agentAllowed) fail("Agent control is disabled for this desktop");
-        const auto actual = state(name);
-        if (actual["humanLocked"].toBool() || actual["paused"].toBool() || !actual["available"].toBool() ||
-            !desktop.driver)
-            fail("Resume desktop before binding an agent");
-        revokeBindings(name);
-        const auto token = uuid() + uuid();
-        m_bindings[token] = Binding{name, desktop.id, actual["generation"].toString(), {}};
-        return {{"socket", m_socketPath},
-                {"instance", m_instance},
-                {"name", name},
-                {"seatId", desktop.id},
-                {"generation", actual["generation"]},
-                {"token", token}};
-    }
+    if (method == "bind") return bindDesktop(name);
     if (method == "frame" || method == "capture" || method == "desktop.capture") {
         const auto workspace = method == "frame" ? params["workspace"].toString("current") : QString("current");
         auto result = capture(name, desktop.id, workspace, owner, method == "frame" ? "argb" : params["encoding"].toString("png"),
@@ -2179,7 +2214,19 @@ QJsonObject Broker::perform(const QString &method, const QJsonObject &params, Bi
         QString token;
         for (auto it = m_bindings.cbegin(); it != m_bindings.cend(); ++it)
             if (&it.value() == binding) { token = it.key(); break; }
-        pause(name);
+        const auto actual = state(name);
+        const bool completed = params["outcome"] == "completed" && !desktop.primary &&
+            m_capabilities["features"].toArray().contains("locked-task-start-v1") &&
+            !actual["paused"].toBool() && actual["available"].toBool();
+        if (completed) {
+            if (desktop.browser) desktop.browser->revoke();
+            // Rotate authority before withdrawing devices: disconnecting the
+            // current driver first is an interruption and rotates generation.
+            try {
+                json(compositor("seat task-idle " + name + " " + desktop.id + " " + actual["generation"].toString(), true));
+            } catch (...) { desktop.driver.reset(); throw; }
+            desktop.driver.reset();
+        } else pause(name);
         QLocalSocket *reservation = nullptr;
         for (auto it = m_acquisitions.cbegin(); it != m_acquisitions.cend(); ++it)
             if (it.value()["token"].toString() == token) { reservation = it.key(); break; }
@@ -2269,7 +2316,7 @@ void Broker::configureDesktop(const QString &name) {
     auto &desktop = m_desktops.at(name);
     const auto actual = state(name);
     if (actual["seatId"].toString() != desktop.id) fail("Stale configuration target");
-    if (actual["humanLocked"].toBool()) {
+    if (actual["humanLocked"].toBool() && (!actual["lockedTaskActive"].toBool() || !desktop.lastConfiguration.isEmpty())) {
         if (!desktop.lastConfiguration.isEmpty()) m_compositor.renew(desktop.configurationOwner);
         return;
     }

@@ -209,7 +209,7 @@ def verify_full_lock(broker, target):
         save()
         assert time.monotonic() < lock_deadline, ("proof write consumed cancellation budget", lock_deadline)
         provider_started = time.monotonic()
-        provider = subprocess.Popen([str(PRODUCT / "native/bin/cornice-human-lock"), "--scope", "session",
+        provider = subprocess.Popen([str(PRODUCT / "bin/cornice-human-lock"), "--scope", "session",
             "--pam-service", "permit", "--pam-directory", str(pam), "--allow-emergency"], env=ENV,
             stdin=subprocess.PIPE, stdout=open(events, "w"), stderr=open(BASE / "clipboard-provider.log", "w"),
             start_new_session=True)

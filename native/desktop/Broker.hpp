@@ -102,7 +102,8 @@ class Broker : public QObject {
     void startShell(const QString &name);
     void pause(const QString &name);
     void endTakeover(const QString &reason, bool requeueRequest = true);
-    void resume(const QString &name);
+    void resume(const QString &name, bool newTask = false, const QString &expectedLockEpoch = {});
+    QJsonObject bindDesktop(const QString &name, bool newLockedTask = false);
     void validateFrame(const Binding &, const QString &frame, const QJsonObject &actual);
     int m_nextDesktopNumber = 2;
     QString m_instance, m_socketPath, m_directory, m_statePath;

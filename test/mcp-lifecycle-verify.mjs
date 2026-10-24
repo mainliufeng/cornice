@@ -13,7 +13,7 @@ const directory=await mkdtemp(join(tmpdir(),'cornice-mcp-lifecycle-'));
 const runtime=join(directory,'runtime');
 const socketPath=desktopSocketPath(runtime,'test');
 await mkdir(dirname(socketPath),{recursive:true});
-const peers=new Set(),leases=new Map();let serial=0,failedRelease=false;
+const peers=new Set(),leases=new Map();let serial=0,failedRelease=false;const releaseOutcomes=[];
 const state={name:'fixture',seatId:'fixture-seat',generation:'1',primary:false,number:2,available:true,paused:false,agentPaused:false,controlMode:'agent',agentAllowed:true};
 const fixture=createServer(socket=>{
  peers.add(socket);socket.on('close',()=>peers.delete(socket));let input='';
@@ -21,6 +21,7 @@ const fixture=createServer(socket=>{
   input+=data;let end;
   while((end=input.indexOf('\n'))>=0){
    const request=JSON.parse(input.slice(0,end));input=input.slice(end+1);
+   if(request.method==='desktop.release')releaseOutcomes.push(request.params.outcome);
    const reply=(result,keep=false)=>socket[keep?'write':'end'](JSON.stringify({id:request.id,ok:true,result})+'\n');
    if(request.method==='acquire-desktop'){
     const lease={...state,socket:socketPath,instance:'test',token:'credential-'+(++serial),taskToken:'reservation-'+serial,controller:request.params.controller};
@@ -55,6 +56,7 @@ try{
  assert.ok(!finished.isError,JSON.stringify(finished));assert.equal(finished.structuredContent.reason,'verified [REDACTED] [REDACTED]');
  const obsolete=await call('desktop_state',{desktop:rotating});assert.ok(obsolete.isError && obsolete.content[0].text.includes('finished, expired or unknown'));
  assert.ok(!(await call('desktop_state',{desktop:survivor})).isError);
+ assert.equal(releaseOutcomes.at(-1),'completed');
  console.log('PASS finishing retires the reference including live state reads, preserves final-result redaction and leaves other tasks active');
  for(let index=0;index<64;index++){
   const desktop=await acquire();assert.ok(!(await call('desktop_finish',{desktop,outcome:'completed',reason:'fixture verified'})).isError);
