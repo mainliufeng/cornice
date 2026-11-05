@@ -245,6 +245,7 @@ public:
   }
   SessionGuard() {
     clock.start();
+    emitEvent("guard-started", {{"sleepPolicyVersion", 1}});
     auto query = QDBusMessage::createMethodCall(
         "org.freedesktop.login1", "/org/freedesktop/login1",
         "org.freedesktop.login1.Manager", "GetSessionByPID");

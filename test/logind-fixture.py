@@ -3,6 +3,7 @@
 The address is required to be a test-owned bus. No system sleep is performed.
 """
 import json
+import time
 import os
 import pathlib
 import socket
@@ -16,6 +17,7 @@ assert os.getenv('CORNICE_TEST_SANDBOX') == '1'
 assert pathlib.Path(os.environ['XDG_RUNTIME_DIR']).resolve().is_relative_to(pathlib.Path(os.environ['TMPDIR']).resolve())
 assert not pathlib.Path('/run/dbus/system_bus_socket').exists()
 path = pathlib.Path(destination)
+behavior = {'case': '', 'failures': 0, 'error': '', 'prepare': True}
 properties = {'LidClosed': False, 'Docked': False, 'OnExternalPower': False,
               'HandleLidSwitch': 'suspend', 'HandleLidSwitchDocked': 'ignore', 'HandleLidSwitchExternalPower': ''}
 xml = '''<node><interface name="org.freedesktop.login1.Manager">
@@ -29,7 +31,7 @@ bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
 bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'RequestName', GLib.Variant('(su)', ('org.freedesktop.login1', 0)), None, Gio.DBusCallFlags.NONE, 2000, None)
 
 def record(event, **values):
-    with path.open('a') as out: out.write(json.dumps({'event': event, **values}) + '\n')
+    with path.open('a') as out: out.write(json.dumps({'event': event, 'case': behavior['case'], 'monotonic': time.monotonic(), **values}) + '\n')
 
 def lock_state():
     address = pathlib.Path(os.environ['XDG_RUNTIME_DIR']) / 'hypr' / os.environ['HYPRLAND_INSTANCE_SIGNATURE'] / '.socket.sock'
@@ -57,8 +59,13 @@ def method(connection, sender, object_path, interface, name, args, invocation):
                         GLib.Variant('(sa{sv}as)', (interface, {'LockedHint': GLib.Variant('b', values[0])}, [])))
     elif name == 'Suspend':
         state = lock_state(); record('suspend', state=state)
-        invocation.return_value(None)
-        bus.emit_signal(None, '/org/freedesktop/login1', interface, 'PrepareForSleep', GLib.Variant('(b)', (True,)))
+        if behavior['failures'] > 0 or behavior['error']:
+            if behavior['failures'] > 0: behavior['failures'] -= 1
+            invocation.return_dbus_error(behavior['error'] or 'org.freedesktop.login1.OperationInProgress', 'isolated fixture rejection')
+        else:
+            invocation.return_value(None)
+            if behavior['prepare']:
+                bus.emit_signal(None, '/org/freedesktop/login1', interface, 'PrepareForSleep', GLib.Variant('(b)', (True,)))
     else: invocation.return_dbus_error('org.freedesktop.DBus.Error.UnknownMethod', name)
 
 node = Gio.DBusNodeInfo.new_for_xml(xml)
@@ -70,6 +77,7 @@ def control(fd, condition):
     line = sys.stdin.readline()
     if not line: loop.quit(); return False
     request = json.loads(line)
+    behavior.update(request.get('test', {}))
     if request.get('event') == 'resume':
         bus.emit_signal(None, manager, 'org.freedesktop.login1.Manager', 'PrepareForSleep', GLib.Variant('(b)', (False,)))
     else:
@@ -81,6 +89,7 @@ def control(fd, condition):
         if changed:
             bus.emit_signal(None, manager, 'org.freedesktop.DBus.Properties', 'PropertiesChanged',
                             GLib.Variant('(sa{sv}as)', ('org.freedesktop.login1.Manager', changed, [])))
+    record('control', id=request.get('id'))
     return True
 GLib.io_add_watch(sys.stdin.fileno(), GLib.IO_IN | GLib.IO_HUP, control)
 record('ready')
