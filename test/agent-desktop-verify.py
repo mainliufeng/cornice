@@ -83,6 +83,11 @@ try:
     assert human_state() == baseline
     record("application activation between capture and input cannot redirect text to a different Client")
 
+    # The compositor client list updates before the broker's retained-window
+    # counters. Wait for the deliberately terminated extra client to disappear
+    # from both, so its asynchronous teardown is not blamed on read-only browse.
+    wait(lambda: all(cli("state", "agent1")[key] == 1
+                     for key in ("windowCount", "retainedWindowCount")))
     before = cli("state", "agent1")
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(5); connection.connect(str(broker_socket()))
