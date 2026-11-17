@@ -1,21 +1,8 @@
-# PKGBUILD for cornice — a general-purpose Hyprland shell on Quickshell.
-#
-# Builds from this working tree, so it works today (the repo has no public
-# remote yet):
-#
-#     cd ~/Code/self/cornice
-#     makepkg -si          # or: make pkg
-#
-# When a remote exists, replace `source=()` with the usual
-#     source=("$pkgname::git+https://…/cornice.git")
-# and the package() body can keep using "$srcdir"/cornice.
-#
-# Layout note: the CLI resolves its own prefix by following its symlink, so the
-# tree must live in /usr/share/cornice with /usr/bin entries pointing into it.
-#
-# The `source=()` below packages this working tree, which is what a local
-# `makepkg -si` in a clone needs. For an AUR upload the source has to be
-# fetchable instead — see `docs/aur.md`.
+# Full Cornice desktop package, built from this checkout with makepkg.
+# Native code and locked browser/MCP dependencies are rebuilt under $srcdir;
+# source-tree build directories and node_modules are never packaged.
+# The CLI resolves its tree through /usr/bin symlinks into /usr/share/cornice.
+# AUR publication needs a fetchable source declaration; see docs/aur.md.
 
 pkgname=cornice-git
 pkgver=r$(git -C "$startdir" rev-list --count HEAD 2>/dev/null || echo 1).$(git -C "$startdir" rev-parse --short HEAD 2>/dev/null || echo local)
@@ -28,12 +15,9 @@ license=('MIT')
 # what the weather plugin fetches with — both are used by default plugins, so
 # they are hard dependencies, not optional ones. Python publishes the atomic
 # primary-session endpoint used by native shortcuts and secondary shells.
-depends=('quickshell' 'hyprland' 'jq' 'python' 'glib2' 'curl' 'util-linux' 'qt6-base' 'qt6-declarative' 'socat' 'wf-recorder' 'ffmpeg')
-makedepends=('cmake' 'ninja')
+depends=('quickshell' 'hyprland' 'jq' 'python' 'glib2' 'curl' 'util-linux' 'qt6-base' 'qt6-declarative' 'qt6-websockets' 'wayland' 'libxkbcommon' 'pam' 'at-spi2-core' 'nodejs>=20' 'socat' 'wf-recorder' 'ffmpeg')
+makedepends=('cmake' 'ninja' 'pkgconf' 'npm')
 optdepends=(
-  'at-spi2-core: native application accessibility trees'
-  'nodejs: external harness MCP and structured browser tools'
-  'npm: install locked optional desktop browser dependencies'
   'grim: screenshots for `cornice verify`'
   'wireplumber: volume/microphone panels'
   'bluez: bluetooth panel'
@@ -46,15 +30,15 @@ optdepends=(
 provides=('cornice')
 conflicts=('cornice')
 
-# The package is built from the tree you are standing in. `makepkg` complains
-# about an empty source array only when it has to fetch something — it does not
-# here, because package() copies from $startdir.
+# Local checkout build. package() installs only build()'s complete runtime.
 source=()
 options=('!strip')
 
 build() {
-  cmake -S "$startdir/native/platform" -B "$srcdir/platform-build" -G Ninja -DCMAKE_BUILD_TYPE=Release
-  cmake --build "$srcdir/platform-build" -j4
+  local runtime_build
+  runtime_build=$(mktemp -d "$srcdir/runtime-build.XXXXXX")
+  rm -rf -- "$srcdir/runtime"
+  "$startdir/packaging/build-runtime.sh" "$startdir" "$runtime_build" "$srcdir/runtime"
 }
 
 package() {
@@ -66,8 +50,7 @@ package() {
   find "$pkgdir/usr/share/cornice" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
   find "$pkgdir/usr/share/cornice" -name '*.qmlc' -delete 2>/dev/null || true
 
-  install -dm755 "$pkgdir/usr/share/cornice/native"
-  cp -r "$startdir/native/agent" "$pkgdir/usr/share/cornice/native/"
+  cp -r "$srcdir/runtime/native" "$pkgdir/usr/share/cornice/"
   cp -r "$startdir/plugins" "$pkgdir/usr/share/cornice/"
   install -dm755 "$pkgdir/usr/bin"
   local f name
@@ -78,7 +61,6 @@ package() {
     ln -s "/usr/share/cornice/bin/$name" "$pkgdir/usr/bin/$name"
   done
 
-  cmake --install "$srcdir/platform-build" --prefix "$pkgdir/usr/share/cornice"
 
   # Documentation and the licence (once the repo has one).
   install -Dm644 "$startdir/README.md" "$pkgdir/usr/share/doc/cornice/README.md"
