@@ -331,6 +331,9 @@ headless 套件还需要 `pipewire`、`wpctl` 和 `pw-metadata`。它会启动�
 [执行器对接](docs/desktop-harness.md)说明已实现的桌面与协作工具。
 真实登录切换及回退步骤见[源码配套安装](docs/source-install.md)与
 [会话选择和恢复](docs/session-trial.md)，真实重登与物理设备的未测边界见上文。
+系统升级会改动快照校验的基线并可能移走所选合成器依赖的库；`bin/cornice-session-repair`
+保留原有配套合成器、配置与自启，另建一个**未被选中**的新快照，不注销、不重启服务、不改当前桌面，
+也不等于物理登录验收。步骤见[系统升级后的会话恢复](docs/session-upgrade-repair.md)。
 
 ## 许可
 

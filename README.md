@@ -397,6 +397,13 @@ cornice logs          # the shell logs the exact command when it calls a helper
 [DESIGN.md](DESIGN.md) (Chinese) records the architecture decisions, the
 comparison against omarchy/Caelestia, and what was deliberately left out.
 
+A system upgrade can move the baseline the paired session checks and remove
+libraries the selected Hyprland needs. `bin/cornice-session-repair` keeps the
+previous paired compositor, configuration and autostart and prepares a new,
+**unselected** snapshot; it never logs out, restarts services or changes the
+running desktop, and its checks are not physical login acceptance. See
+[recovering a paired session after a system upgrade](docs/session-upgrade-repair.md).
+
 ## License
 
 MIT — see [LICENSE](LICENSE). The wallpaper shipped in `wallpapers/` is generated
