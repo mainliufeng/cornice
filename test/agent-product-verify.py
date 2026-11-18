@@ -10,7 +10,7 @@ try:
     def agent_shell(name, *args):
         environment = dict(ENV, CORNICE_SHELL_SOCKET=str(RT/('cs-'+hashlib.sha256(ENV['HYPRLAND_INSTANCE_SIGNATURE'].encode()).hexdigest()[:8]+'-'+name+'.sock')))
         return subprocess.check_output([str(PRODUCT/'bin/cornice'), *args], env=environment,text=True,stderr=subprocess.PIPE,timeout=8).strip()
-    wait(lambda: agent_shell('agent1','ping') == 'pong 0.2.5')
+    wait(lambda: agent_shell('agent1','ping') == 'pong 0.2.6')
     wait(lambda: len(json.loads(agent_shell('agent1','ipc','bar','geometry'))) > 3)
     for name in ('agent1','agent2'):
         value = cli('state',name)
@@ -74,7 +74,7 @@ try:
     broker.kill(); broker.wait(timeout=5)
     restarted = start([str(PRODUCT/'bin/cornice-desktopd')],'desktopd-restart')
     wait(desktop_ready)
-    wait(lambda: agent_shell('agent1','ping') == 'pong 0.2.5')
+    wait(lambda: agent_shell('agent1','ping') == 'pong 0.2.6')
     wait(lambda: len(json.loads(agent_shell('agent1','ipc','bar','geometry'))) > 3)
     for name in ('agent1','agent2'):
         state = cli('state',name)
