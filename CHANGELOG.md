@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.2.6 — 2026-11-18
+
+### Added
+
+- Independent desktops for a person and their agents. A task takes a secondary
+  desktop; agent clicks and typing stay there while the human desktop keeps
+  working. The observer is read-only. Explicit takeover routes human input to
+  that desktop and pauses the agent. The agent can ask for a step with a title
+  and concrete instructions; leaving takeover does not resume the task until it
+  is authorized again.
+- Two lock modes. A previously authorized task set to continue can keep working
+  while only the human desktop is locked. A full-session lock revokes agent
+  control.
+- One-shot login trials. `cornice session-trial` prepares an immutable snapshot
+  of the paired Hyprland and Cornice, arms only the next Hyprland login, and
+  falls back if that login does not become ready. Keeping a snapshot for later
+  logins is a separate `select`.
+- Paired source installation for the Cornice Hyprland fork and the native
+  desktop service (`docs/source-install.md`). The default installer builds the
+  native desktop and the locked MCP and browser dependencies.
+- Screenshots stay inside Cornice. The bar camera button, `cornice screenshot`
+  and `cornice screenshot screen` capture a region or the current monitor, save
+  a PNG under Pictures/Screenshots and copy it. Escape or right-click cancels;
+  no editor opens.
+- Screen recording from the bar. The button records that screen to
+  `~/Videos/Cornice` as a silent MP4 and shows the saved path. Locking the
+  session or removing the output stops the recording.
+- Per-desktop launch rules and existing application profiles, so each desktop
+  can keep its own browser and application setup.
+- Shared desktop tools for Pi and Codex: task-owned desktops, a native window
+  tree, and the same MCP.
+- `cornice-session-repair` recovers a paired session after a system upgrade. It
+  keeps the previous compositor, Cornice, configuration and autostart, and
+  prepares a new **unselected** snapshot with a fresh baseline and the libraries
+  that snapshot needs. It does not log out, restart services, install packages
+  or change the desktop in use, and its checks are not a physical login. See
+  `docs/session-upgrade-repair.md`.
+
+### Changed
+
+- The lock screen uses the Cornice prompt (wallpaper, clock, theme) on the
+  native surface, drawn at the output scale. Unlock is auth-only PAM, matching
+  the Quickshell lock, so an auth-only stack is not rejected by an account
+  rule. The shell reports unlock only after Wayland confirms it.
+- Bar menus keep their parent open through a cascade. Pointer hits stay on the
+  surface that was clicked, and a held activation key does not fall through
+  into the next control.
+- Native desktop views keep the full bar, including workspace dots and hover
+  access to the menu. Application tray icons stay inactive while a desktop is
+  only being observed; a verified human takeover can still use them.
+- Composed Chinese input works for task text, and the native input method stays
+  available while observing.
+
+### Fixed
+
+- A stale logind lock signal is no longer replayed as a new lock. Lid-close
+  sleep retries are bounded and can be cancelled.
+- Clipboard transfers are dropped when the session locks. Named Wayland
+  connections stay on the seat that selected them. Fullscreen focus cycles stay
+  in order. A daily lock no longer drops a running task.
+- An application already open on another desktop is explained instead of failing
+  quietly, and an action failure names the desktop it came from. Tray activation
+  without a binding is refused before it is dispatched.
+- A runtime command error no longer ends the desktop. Recovery of a ready trial
+  stays inside the session, with a bounded number of attempts, and applications
+  survive a broker restart. After the broker exits, each desktop comes back with
+  one bar and agent input stays paused until an explicit resume.
+- The launcher follows the native input seat. Cooperation notices stay out of
+  manual control and hide during takeover.
+
 ## 0.2.5
 
 - The network panel now turns the Wi-Fi scanner on while it is open. Quickshell
