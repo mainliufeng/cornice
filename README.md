@@ -9,6 +9,9 @@ authentication into one interface. An external harness such as Codex or Pi owns
 the task, model and conversation; Cornice supplies the assigned desktop and its
 observation and control tools.
 
+The project site — source preview, install documents and known limits — is
+<https://cornice.liufeng.me>.
+
 [![Pi researching Cornice through its own Chrome desktop](docs/media/cornice-pi-real-browser-v4.png)](docs/media/cornice-pi-real-browser-v4.mp4)
 
 [Watch Pi research Cornice in a real browser](docs/media/cornice-pi-real-browser-v4.mp4). The launcher submits the prompt automatically; Pi 1.1.0's model performs the searches, clicks, page reading and source-linked answer. Google returns a verification/429 page; Pi makes one normal DuckDuckGo search and reads the GitHub repository and README. No verification is bypassed.

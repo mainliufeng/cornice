@@ -7,6 +7,8 @@
 polkit 认证收进统一界面。任务、模型和对话由 Codex、Pi 等外部执行器管理；
 Cornice 提供分配给它的桌面及观察、控制工具。
 
+项目站（源码预览、安装文档与已知边界）：<https://cornice.liufeng.me>。
+
 [![Pi 在自己的 Chrome 桌面中真实调研 Cornice](docs/media/cornice-pi-real-browser-v4.png)](docs/media/cornice-pi-real-browser-v4.mp4)
 
 [观看 Pi 真实浏览器调研](docs/media/cornice-pi-real-browser-v4.mp4)。启动脚本自动提交提示词，搜索、点击、页面阅读和带来源的原始答复均由 Pi 1.1.0 的模型实际执行。Google 返回验证/429 页面后，Pi 正常使用 DuckDuckGo 搜索一次，再阅读真实 GitHub 仓库与 README；没有绕过验证。
