@@ -4,17 +4,25 @@
 
 ## 来源与版本
 
-- Cornice：`https://github.com/mainliufeng/cornice.git`，默认 ref `main`；本次已验收固定提交 `6ca3a3620fd6ae6d5ddb24daa1b691a64ac7881a`。
+- Cornice：`https://github.com/mainliufeng/cornice.git`，默认 ref `main`。
 - Hyprland：`https://github.com/mainliufeng/Hyprland.git`，精确提交 `b18a6b98136420efc3838bab6bd4a7f7de02fff7`，所在 ref `codex/cornice-agent-desktop`；tree `cf2b0f15c32f1d168563f7c611da36af625c9c1e`。
 
-Cornice ref 会继续前进。安装前记录解析出的完整提交；重现时 checkout 记录的 SHA，而不是重新解析分支。本次验收清单已记录产物 SHA256、完整安装的 Cornice commit/tree 与编译选项；未有通过记录的组合不能写成已验证。
+**验收记录和当前标签不是同一个提交。** 现有配套安装验收记录固定在 Cornice `6ca3a3620fd6ae6d5ddb24daa1b691a64ac7881a`（2026-10-14）加上面的 Hyprland 提交：干净默认复制安装与七组隔离运行套件（63 项断言）通过。当前源码标签 `v0.2.6`（`bb15459ab820bdb69f4af319b0bcb218b6fe900f`，2026-11-18）在这之后，新增 `bin/cornice-session-repair`、`docs/session-upgrade-repair.md`、`docs/lid-sleep-recovery.md`、`docs/window-routing-compatibility.md` 以及窗口路由与托盘动作修复；`v0.2.6` 的配对安装没有重做验收。
+
+- 只重现验收记录：checkout `6ca3a3620fd6ae6d5ddb24daa1b691a64ac7881a`。该提交没有 `cornice-session-repair`，也没有后加的会话恢复、合盖睡眠和窗口路由文档。
+- 需要使用 `bin/cornice-session-repair`，或要按本文后面的恢复步骤以及站上的会话恢复说明操作：checkout `v0.2.6`，并把这次配对安装当作未重测。
+
+Cornice ref 会继续前进。安装前记录解析出的完整提交；重现时 checkout 记录的 SHA 或标签，而不是重新解析分支。验收清单记录了产物 SHA256、完整安装的 Cornice commit/tree 与编译选项；未有通过记录的组合不能写成已验证。
 
 ```sh
 # 选择空的源码目录；已有 checkout 先检查分支和未提交修改，不覆盖它。
 git clone --branch main https://github.com/mainliufeng/cornice.git cornice
 cornice_src=$(realpath cornice)
+# 重现验收记录（2026-10-14，不含会话恢复工具）：
 cornice_commit=6ca3a3620fd6ae6d5ddb24daa1b691a64ac7881a
 git -C "$cornice_src" checkout --detach "$cornice_commit"
+# 或改用含 bin/cornice-session-repair 的当前标签（配对安装未重测）：
+# git -C "$cornice_src" checkout --detach v0.2.6
 
 git clone --branch codex/cornice-agent-desktop https://github.com/mainliufeng/Hyprland.git Hyprland
 hyprland_src=$(realpath Hyprland)
