@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 
 assert os.environ.get("CORNICE_TEST_SANDBOX") == "1"
 for name in ("WAYLAND_DISPLAY", "WAYLAND_SOCKET", "DISPLAY", "DBUS_SESSION_BUS_ADDRESS",
@@ -30,6 +31,15 @@ source = Path(__file__).resolve().parent.parent
 assert os.statvfs(source).f_flag & os.ST_RDONLY
 product = Path(os.environ["CORNICE_TEST_PRODUCT"])
 assert os.statvfs(product).f_flag & os.ST_RDONLY
+if "TESSDATA_PREFIX" in os.environ:
+    fixture = Path(os.environ["TESSDATA_PREFIX"])
+    assert fixture == Path("/tmp/tessdata")
+    assert list(fixture.iterdir()) == [fixture / "eng.traineddata"]
+    assert os.statvfs(fixture / "eng.traineddata").f_flag & os.ST_RDONLY
+    langs = subprocess.check_output(["tesseract", "--list-langs"], text=True, timeout=5)
+    assert "eng" in langs.splitlines(), langs
+    print("PASS the sandbox exposes one read-only English OCR fixture", flush=True)
+
 probe = Path("/tmp/t/allowed-write-probe")
 probe.write_text("synthetic fixture only"); probe.unlink()
 print("PASS actual sandbox: private HOME/run/tmp/dev, no inherited FD or ambient client environment; source/product read-only", flush=True)

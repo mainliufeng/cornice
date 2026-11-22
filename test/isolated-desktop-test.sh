@@ -66,6 +66,17 @@ if [[ -n ${CORNICE_TEST_CLIPBOARD_PROBE:-} ]]; then
   [[ -f $CORNICE_TEST_CLIPBOARD_PROBE && -x $CORNICE_TEST_CLIPBOARD_PROBE ]] || { echo 'Controlled clipboard client missing' >&2; exit 2; }
   clipboard_probe_mount=(--ro-bind "$CORNICE_TEST_CLIPBOARD_PROBE" /tmp/clipboard-transfer-probe --setenv CORNICE_TEST_CLIPBOARD_PROBE /tmp/clipboard-transfer-probe)
 fi
+ocr_mount=()
+if [[ -n ${TESSDATA_PREFIX:-} && ( $suite == desktop-product-ui-verify.py || $suite == isolation-boundary-verify.py ) ]]; then
+  english_data=$TESSDATA_PREFIX/eng.traineddata
+  [[ -f $english_data && ! -L $english_data && -r $english_data ]] || {
+    echo 'TESSDATA_PREFIX must supply a readable, regular eng.traineddata file' >&2; exit 2;
+  }
+  english_data=$(realpath -e -- "$english_data")
+  # Expose the one OCR fixture, never the caller's containing directory.
+  ocr_mount=(--dir /tmp/tessdata --ro-bind "$english_data" /tmp/tessdata/eng.traineddata
+    --setenv TESSDATA_PREFIX /tmp/tessdata)
+fi
 voice_mount=()
 if [[ $suite == voice-seat-verify.py ]]; then
   : "${CORNICE_TEST_VOICE_PROBE:?Set the built Hyprvoice seat_input_probe}"
@@ -122,7 +133,7 @@ exec /usr/bin/python3 "$prefix/test/sandbox-exec.py" /usr/bin/nice -n 15 \
   --chdir "$prefix" --clearenv --setenv PATH /usr/bin:/bin --setenv LANG C.UTF-8 \
   --setenv USER "$(id -un)" --setenv LOGNAME "$(id -un)" \
   --setenv CORNICE_TEST_RESOURCE_SCOPE 1 "${test_environment[@]}" \
-  --bind "$artifacts" /tmp/t "${product_mount[@]}" "${hyprland_mount[@]}" "${hyprland_prefix_mount[@]}" "${voice_mount[@]}" "${clipboard_probe_mount[@]}" \
+  --bind "$artifacts" /tmp/t "${product_mount[@]}" "${hyprland_mount[@]}" "${hyprland_prefix_mount[@]}" "${voice_mount[@]}" "${clipboard_probe_mount[@]}" "${ocr_mount[@]}" \
   --setenv HOME /tmp/t/home --setenv TMPDIR /tmp/t \
   --setenv XDG_CONFIG_HOME /tmp/t/home/.config \
   --setenv XDG_DATA_HOME /tmp/t/home/.local/share \
