@@ -198,11 +198,24 @@ async function connectBrowser(extra) {
   const client=new Client({name:"cornice-browser-adapter",version:"0.1.0"});
   const transport=new StdioClientTransport({command:join(root,"bin/cornice-desktop-mcp"),args:["--browser"],env:{PATH:process.env.PATH || "/usr/bin:/bin",PLAYWRIGHT_MCP_CDP_ENDPOINT:connection.cdpUrl,CORNICE_MCP_BROWSER_HOME:c.browserHome},cwd:c.browserHome,stderr:"pipe"});
   transport.stderr?.on("data",()=>{});
-  try {
-    await client.connect(transport);const available=await client.listTools();
-    for(const tool of browserTools)if(!available.tools.some(item=>item.name===tool.name))throw new Error("Pinned browser tool missing: "+tool.name);
+  const checkControl=async()=> {
     const fresh=await invoke("state",{},extra);
     if(!active(fresh) || fresh.seatId!==state.seatId || fresh.generation!==state.generation)throw new Error("Control changed during browser connection; reconnect after restoration");
+  };
+  try {
+    try {
+      const options={signal:extra.signal,timeout:5000};
+      await client.connect(transport,options);const available=await client.listTools(undefined,options);
+      for(const tool of browserTools)if(!available.tools.some(item=>item.name===tool.name))throw new Error("Pinned browser tool missing: "+tool.name);
+    } catch(error) { throw new Error("Browser MCP adapter startup failed: "+error.message); }
+    await checkControl();
+    try {
+      // Initialization and tool discovery do not attach CDP in Playwright MCP.
+      // Its tab listing forces attachment to the already-authorized browser.
+      const ready=await client.callTool({name:"browser_tabs",arguments:{action:"list"}},undefined,{signal:extra.signal,timeout:12000});
+      if(ready.isError)throw new Error(ready.content?.find(item=>item.type==="text")?.text || "Tab listing did not succeed");
+    } catch(error) { throw new Error("Browser CDP readiness check failed: "+error.message); }
+    await checkControl();
     c.browser=client;c.browserIdentity={seatId:state.seatId,generation:state.generation};c.browserSecrets=[connection.cdpUrl,endpoint.pathname.slice(1)];
     return {connected:true,seatId:state.seatId,generation:state.generation,observation:"accessibility-tree"};
   } catch(error) {await client.close().catch(()=>{});throw error;}
@@ -220,7 +233,7 @@ const nativeTools=[
   {name:"desktop_workspace",description:"Switch this desktop's own workspace. Give a workspace identifier or slot 1–10; observe again afterwards.",inputSchema:{...object({workspace:{type:"string",minLength:1,maxLength:128},slot:{type:"integer",minimum:1,maximum:10}}),oneOf:[{required:["workspace"]},{required:["slot"]}]}},
   {name:"desktop_focus",description:"Focus an exact windowId in this desktop's current workspace, then observe again.",inputSchema:object({windowId:string},["windowId"])},
   {name:"desktop_launch",description:"Launch an application on this desktop. Browser tasks use desktop_browser_connect. This is application launch, not an OS sandbox.",inputSchema:object({argv:{type:"array",items:string,minItems:1,maxItems:128}},["argv"])},
-  {name:"desktop_browser_connect",description:"Open or reconnect this desktop's managed browser. Then use browser_tabs and browser_snapshot. Uses only the Broker's authorized CDP grant.",inputSchema:object()},
+  {name:"desktop_browser_connect",description:"Open or reconnect this desktop's managed browser and verify CDP by listing its tabs (a blank tab may open if there are none). Then use browser_tabs and browser_snapshot. Uses only the Broker's authorized CDP grant.",inputSchema:object()},
   {name:"desktop_restore",description:"Receive a fresh task binding after explicit operator restoration. Does not resume a paused desktop, undo independent human control, or bypass a later lock/permission change. Reconnect browser and observe after success.",inputSchema:object()},
   {name:"desktop_wait",description:"Wait for explicit input restoration or completion/cancellation of the current human cooperation request. Does not resume or obtain control.",inputSchema:object({seconds:{type:"integer",minimum:1,maximum:30},reason:string},["seconds","reason"])},
   {name:"desktop_finish",description:"Release task control after verified completion, cancellation or an explained blocker. Retire the desktop reference; further actions and live state reads require a new task.",inputSchema:object({outcome:{enum:["completed","cancelled","blocked"]},reason:string},["outcome","reason"])}

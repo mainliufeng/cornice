@@ -4,6 +4,8 @@ import {mkdtemp,writeFile,readFile,chmod,mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve,dirname} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {createServer as createHttpServer} from 'node:http';
+import {once} from 'node:events';
 const root=resolve(process.env.CORNICE_TEST_PRODUCT || '.');
 const {desktopSocketPath}=await import(pathToFileURL(join(root,'native/agent/desktop-endpoint.mjs')).href);
 const {Client}=await import(pathToFileURL(join(root,'native/agent/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js')).href);
@@ -12,7 +14,16 @@ const dir=await mkdtemp(join(tmpdir(),'cornice-mcp-transport-'));
 // A test-only Unix Broker fixture exercises the actual stdio transport without
 // retaining the deleted embedded-executor job bridge in production.
 const {createServer}=await import('node:net');
-let mode='state';
+let mode='state', discoveryRequests=0;
+const browser=createHttpServer((request,response)=>{
+ assert.match(request.url,/^\/fixture-cdp\/json\/version\/?$/);
+ discoveryRequests++;
+ response.writeHead(503);
+ response.end('Fixture browser is not ready');
+});
+browser.listen(0,'127.0.0.1');
+await once(browser,'listening');
+const endpoint='http://127.0.0.1:'+browser.address().port+'/fixture-cdp';
 const runtime=join(dir,'runtime');
 const socketPath=desktopSocketPath(runtime,'test');
 await mkdir(dirname(socketPath),{recursive:true});
@@ -24,6 +35,7 @@ const fixture=createServer(socket=>{
   if(mode==='malformed'){socket.end('invalid json\n');return;}
   let result={name:'fixture',seatId:'fixture-id',generation:'1',primary:false,number:2,available:true,paused:false,agentPaused:false,controlMode:'agent',agentAllowed:true};
   if(request.method==='acquire-desktop') {socket.write(JSON.stringify({ok:true,result:{...result,socket:socketPath,instance:'test',token:'test-old-broker-token'}})+'\n');return;}
+  if(request.method==='desktop.browser')result={cdpUrl:endpoint};
   if(mode==='array')result=[];
   if(mode==='interrupted')result={interrupted:true,control:{paused:true}};
   socket.end(JSON.stringify({ok:true,result})+'\n');
@@ -42,6 +54,16 @@ try{
  await client.connect(transport);
  const tools=await client.listTools();assert.equal(tools.tools.length,28);
  assert.ok(tools.tools.some(tool=>tool.name==='desktop_snapshot'));
+ // An adapter responding to listTools is not a usable browser. Verify that
+ // connect actually reaches discovery and returns no successful grant here.
+ const unavailable=await client.callTool({name:'desktop_browser_connect',arguments:{}});
+ assert.ok(unavailable.isError,JSON.stringify(unavailable));
+ assert.match(unavailable.content[0].text,/Browser CDP readiness check failed/);
+ assert.ok(discoveryRequests>0);
+ assert.doesNotMatch(unavailable.content[0].text,/fixture-cdp/);
+ const noAdapter=await client.callTool({name:'browser_tabs',arguments:{action:'list'}});
+ assert.ok(noAdapter.isError);
+ console.log('PASS MCP connect reports unavailable CDP before declaring the browser connected');
  const call=async(name,args={},error=false)=>{const value=await client.callTool({name,arguments:args});assert.equal(!!value.isError,error,JSON.stringify(value));return value;};
  assert.equal((await call('desktop_state')).structuredContent.name,'fixture');
  assert.equal(await readFile(marker,'utf8').catch(()=>undefined),undefined);
@@ -70,7 +92,7 @@ try {
  const unsupported=await automatic.callTool({name:'desktop_handoff',arguments:{desktop,action:'status'}});
  assert.ok(unsupported.isError && unsupported.content[0].text.includes('Updated Cornice Broker'));
  console.log('PASS updated MCP keeps ordinary automatic desktop operations compatible with the previous Broker and explicitly rejects unavailable cooperation');
-}finally{await automatic.close();await new Promise(resolve=>fixture.close(resolve));}
+}finally{await automatic.close();await new Promise(resolve=>fixture.close(resolve));await new Promise(resolve=>browser.close(resolve));}
 
 const catalog=new Client({name:'cornice-browser-catalog-test',version:'1'});
 try{
