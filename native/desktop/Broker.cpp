@@ -656,7 +656,7 @@ void Broker::closeDesktopApps(const QString &name) {
         if (!client["mapped"].toBool() || !workspaceInSlots(desktop.workspaceSlots, ws)) continue;
         const auto address=client["address"].toString();
         if (!QRegularExpression("^0x[0-9a-fA-F]+$").match(address).hasMatch()) fail("Invalid retained window address");
-        const auto reply=compositor("dispatch hl.dsp.window.close('address:"+address+"')");
+        const auto reply=compositor("dispatch hl.dsp.window.close({window='address:"+address+"'})");
         if (reply != "ok") fail(QString::fromUtf8(reply));
     }
 }

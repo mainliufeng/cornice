@@ -216,6 +216,7 @@ try:
     settings['agentDesktop']['desktops']=[];configure();shell('ipc','shell','reloadConfig')
     cli('remove','bootstrap-ui','--close-apps')
     wait(lambda:not any(item['title']=='ui-target-window' for item in ctl('clients',True)))
+    assert any(item['title']=='human-window' for item in ctl('clients',True))
     cli('create','bootstrap-ui','--virtual-output','1280x800')
     task=Task('bootstrap-ui')
     assert task.binding['name']=='bootstrap-ui',task.binding['name']
