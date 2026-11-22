@@ -430,10 +430,13 @@ if ((ready)); then
   cornice theme mono >/dev/null
   expect_eq "switching back restores the sandbox default" "mono" "$(cornice theme)"
 
-  plugin_count=$(cornice plugins | jq 'length')
-  on_disk=$(find "$install_prefix/shell/plugins" -name manifest.json | wc -l)
-  if ((plugin_count == on_disk)); then pass "every plugin loaded: $plugin_count/$on_disk"
-  else fail "loaded $plugin_count of $on_disk plugins on disk"; fi
+  has_desktop_module=false
+  for modules in "$install_prefix/native/qml" "$install_prefix/native/build/qml" "$install_prefix/native/platform-build/qml"; do
+    [[ ! -f $modules/Cornice/Desktop/qmldir ]] || has_desktop_module=true
+  done
+  on_disk=$(find "$install_prefix/shell/plugins" -name manifest.json -exec cat {} + | \
+    jq -sc --argjson desktop "$has_desktop_module" '[.[] | select($desktop or .requiresDesktopModule != true) | .id] | sort')
+  expect_eq "shell discovers each plugin available in this build" "$on_disk" "$(cornice plugins | jq -c '[.[].id] | sort')"
 
   targets=$(cornice targets)
   for target in shell notifications osd idle lock weather media background; do

@@ -84,6 +84,8 @@ Cornice 提供分配给它的桌面及观察、控制工具。
 
 ## 安装
 
+Arch Linux 上已有原版 Hyprland 时，从[本地包和首次启动指南](docs/install-arch.md)开始。包提供状态栏、启动器和通知等日常 Shell，由 pacman 安装和卸载，启用需手动操作。
+
 多桌面现已在默认 `main` 分支，配合我们的 Hyprland fork 使用。按[源码配套安装](docs/source-install.md)获取准确 ref、依赖、启用和回退步骤，不以上游合并或 AUR 包为前置；默认安装会构建完整 native 桌面及锁定 MCP/browser 依赖。
 
 ```bash
@@ -106,8 +108,7 @@ cd ~/Code/self/cornice
 make install                     # 等价于 ./install.sh
 ```
 
-已验证的安装入口是上面的配套源码文档。本次多桌面配对未验收 Arch 整包构建或
-AUR 发布；历史打包说明保留在 [docs/aur.md](docs/aur.md)。
+Agent 独立桌面、只读观察与人工接管需要配套源码和 fork 的 seat 协议。[Arch 指南](docs/install-arch.md#隔离试用-fork)提供隔离试用方案。
 
 在兼容的 Hyprland 会话中运行日常 Shell 时，systemd 用户服务会在它退出后自动恢复：
 

@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "author": "cornice",
   "description": "External harness desktops, read-only previews and native takeover",
+  "requiresDesktopModule": true,
   "kinds": [
     "service",
     "bar-widget",

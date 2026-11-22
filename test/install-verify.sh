@@ -8,7 +8,7 @@
 #
 #   ./test/install-verify.sh            # install.sh --copy into a temp prefix
 #   ./test/install-verify.sh --package  # also build the PKGBUILD and test that
-# Both paths always include native desktop helpers, QML modules and locked MCP/browser dependencies.
+# The copy path builds the full desktop; the stock package builds the core module.
 #
 # Exit code is the suite's, so it works as a release gate.
 set -uo pipefail
@@ -79,6 +79,7 @@ fi
 
 run_against() {
   local label="$1" root="$2"
+  shift 2
   echo
   echo "──────────────────────────────────────────────────────────────"
   echo "installed tree: $label"
@@ -109,7 +110,11 @@ run_against() {
       failures=$((failures + 1)); return 1
     fi
   done
-  if ! "$tmp/source/packaging/check-runtime.sh" "$root"; then
+  if ! "$tmp/source/packaging/check-runtime.sh" "$root" "$@"; then
+    failures=$((failures + 1)); return 1
+  fi
+  if [[ ${1:-} == --no-desktop && ( -e $root/native/qml/Cornice/Desktop || -e $root/native/agent/node_modules ) ]]; then
+    echo "  FAIL: stock package includes optional desktop runtime files"
     failures=$((failures + 1)); return 1
   fi
   echo "  installed files match the committed source, including session metadata and shared UI"
@@ -165,7 +170,7 @@ if ((with_package)); then
         failures=$((failures + 1))
       }
     done < <(find "$tmp/source/bin" -maxdepth 1 -name 'cornice*' ! -name '*.sh' -printf '%f\n' | sort)
-    run_against "$(basename "$package")" "$tmp/root/usr/share/cornice"
+    run_against "$(basename "$package")" "$tmp/root/usr/share/cornice" --no-desktop
   fi
 fi
 

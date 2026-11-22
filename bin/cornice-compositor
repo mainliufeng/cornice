@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Human-seat commands, adapting the existing compositor and the Lua fork.
+# Human-seat commands for the running Hyprland config provider.
 # Agent tools never call this helper.
 set -euo pipefail
 action=${1:?workspace|dpms|focus-window|exec}
 shift
 lua=0
-if hyprctl -j seat capabilities 2>/dev/null | jq -e '.dialect == "lua"' >/dev/null 2>&1; then lua=1; fi
+if hyprctl -j status 2>/dev/null | jq -e '.configProvider == "lua"' >/dev/null 2>&1 ||
+    hyprctl -j seat capabilities 2>/dev/null | jq -e '.dialect == "lua"' >/dev/null 2>&1; then
+  lua=1
+fi
 case "$action" in
   workspace)
     [[ $# == 1 && $1 =~ ^[1-9][0-9]*$ ]] || exit 2
@@ -14,8 +17,7 @@ case "$action" in
     ;;
   dpms)
     [[ $# == 1 && ( $1 == on || $1 == off ) ]] || exit 2
-    if ((lua)) && hyprctl -j seat private-outputs >/dev/null 2>&1; then
-      private=$(hyprctl -j seat private-outputs)
+    if ((lua)) && private=$(hyprctl -j seat private-outputs 2>/dev/null | jq -ce 'select(type == "array")' 2>/dev/null); then
       monitors=$(hyprctl -j monitors)
       result=ok
       while IFS= read -r output; do
