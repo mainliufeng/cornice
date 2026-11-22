@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Backlight control, shaped like the audio widget: one glyph that carries the
@@ -39,7 +40,7 @@ Item {
     id: label
     anchors.centerIn: parent
     text: root.glyph
-    color: Color.barForeground
+    color: Commons.Color.barForeground
     opacity: root.glyphOpacity
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize

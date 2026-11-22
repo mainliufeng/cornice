@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 import qs.Ui
 import "." as Notifications
@@ -38,14 +39,14 @@ PanelFrame {
     Rectangle {
       width: parent.width
       height: 1
-      color: Color.surfaceBorder
+      color: Commons.Color.surfaceBorder
     }
 
     Text {
       width: parent.width
       visible: !root.available || root.service.operationError !== ""
       text: root.service.error || root.service.operationError
-      color: Color.urgent
+      color: Commons.Color.urgent
       wrapMode: Text.Wrap
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
@@ -55,7 +56,7 @@ PanelFrame {
       width: parent.width
       visible: root.available && root.entries.length === 0
       text: I18n.t("notifications.empty")
-      color: Color.muted
+      color: Commons.Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
     }
@@ -76,7 +77,7 @@ PanelFrame {
         width: list.width
         height: card.implicitHeight + Style.space(3)
         radius: Style.radius
-        color: Color.surface
+        color: Commons.Color.surface
 
         function inspect() { return card.inspect(root.window.contentItem) }
 

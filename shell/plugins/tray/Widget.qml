@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Services.SystemTray
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // StatusNotifier tray. Icons come from the icon theme; a click activates the
@@ -112,7 +113,7 @@ Item {
           anchors.centerIn: parent
           visible: entry.iconUrl === "" || entry.iconFailed
           text: root.fallbackGlyph(entry.modelData)
-          color: Color.barForeground
+          color: Commons.Color.barForeground
           font.family: Style.iconFamily
           font.pixelSize: Style.fontSize
         }

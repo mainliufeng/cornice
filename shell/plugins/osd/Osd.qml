@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Pipewire
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // On-screen display for volume and brightness.
@@ -134,7 +135,7 @@ PanelFrame {
         anchors.verticalCenter: parent.verticalCenter
         id: osdIcon
         text: root.icon
-        color: root.muted ? Color.muted : Color.foreground
+        color: root.muted ? Commons.Color.muted : Commons.Color.foreground
         font.family: Style.iconFamily
         font.pixelSize: Style.fontSize + 12
       }
@@ -143,7 +144,7 @@ PanelFrame {
         anchors.verticalCenter: parent.verticalCenter
         width: parent.width - osdIcon.width - Style.space(1.6) - level.width
         text: root.label
-        color: Color.foreground
+        color: Commons.Color.foreground
         horizontalAlignment: Text.AlignRight
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize + 8
@@ -153,7 +154,7 @@ PanelFrame {
         id: level
         anchors.verticalCenter: parent.verticalCenter
         text: I18n.t("osd." + root.kind)
-        color: Color.muted
+        color: Commons.Color.muted
         font.family: Style.fontFamily
         font.pixelSize: Style.smallFontSize
       }
@@ -163,7 +164,7 @@ PanelFrame {
       width: parent.width
       height: Style.space(0.7)
       radius: Style.radius
-      color: Color.hover
+      color: Commons.Color.hover
 
       Rectangle {
         anchors.left: parent.left
@@ -171,7 +172,7 @@ PanelFrame {
         anchors.bottom: parent.bottom
         width: parent.width * root.value
         radius: Style.radius
-        color: root.muted ? Color.muted : Color.accent
+        color: root.muted ? Commons.Color.muted : Commons.Color.accent
 
         Behavior on width {
           NumberAnimation { duration: 90 }

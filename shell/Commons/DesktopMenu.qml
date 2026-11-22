@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 Item {
   id: root
   property string icon: "󰍹"
@@ -38,10 +39,10 @@ Item {
   }
   Rectangle {
     anchors.fill: parent; radius: Style.radius
-    color: mouse.containsMouse || root.opened ? Color.hover : "transparent"
-    Text { anchors.centerIn: parent; text: root.icon; color: Color.foreground; font.family: Style.iconFamily; font.pixelSize: Style.fontSize + 3 }
-    Text {anchors.right:parent.right;anchors.bottom:parent.bottom;visible:root.badge > 0;text:root.badge;font.pixelSize:Style.smallFontSize;color:Color.foreground}
-    Rectangle {anchors.right:parent.right;anchors.top:parent.top;width:7;height:7;radius:3.5;visible:root.alert;color:Color.urgent}
+    color: mouse.containsMouse || root.opened ? Commons.Color.hover : "transparent"
+    Text { anchors.centerIn: parent; text: root.icon; color: Commons.Color.foreground; font.family: Style.iconFamily; font.pixelSize: Style.fontSize + 3 }
+    Text {anchors.right:parent.right;anchors.bottom:parent.bottom;visible:root.badge > 0;text:root.badge;font.pixelSize:Style.smallFontSize;color:Commons.Color.foreground}
+    Rectangle {anchors.right:parent.right;anchors.top:parent.top;width:7;height:7;radius:3.5;visible:root.alert;color:Commons.Color.urgent}
     MouseArea {
       id: mouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
       onEntered: { closeDelay.stop(); root.opened = true }
@@ -66,7 +67,7 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "cornice-desktop-menu"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    Rectangle {y:root.bridgeHeight;width:parent.width;height:parent.height-root.bridgeHeight;color:Color.panel;radius:Style.radius + Style.space(0.5);border.width:1;border.color:Color.surfaceBorder}
+    Rectangle {y:root.bridgeHeight;width:parent.width;height:parent.height-root.bridgeHeight;color:Commons.Color.panel;radius:Style.radius + Style.space(0.5);border.width:1;border.color:Commons.Color.surfaceBorder}
     // Track the whole popup independently of its periodically rebuilt rows.
     // A sibling MouseArea loses hover to the clickable row MouseAreas.
     HoverHandler {
@@ -96,31 +97,31 @@ Item {
           width: column.width; height: section ? (modelData.detail ? labelText.implicitHeight + detailHeight + Style.space(3) : Style.space(4.5)) : modelData.detail ? labelText.implicitHeight + detailHeight + Style.space(2) : Style.space(5)
           enabled: !section && modelData.enabled !== false
           radius:Style.radius
-          color: modelData.selected ? Color.panelAlt : !section && rowMouse.containsMouse ? Color.hover : "transparent"
-          Rectangle { visible: parent.section && index > 0; anchors.top:parent.top; width:parent.width; height:1; color:Color.hover }
+          color: modelData.selected ? Commons.Color.panelAlt : !section && rowMouse.containsMouse ? Commons.Color.hover : "transparent"
+          Rectangle { visible: parent.section && index > 0; anchors.top:parent.top; width:parent.width; height:1; color:Commons.Color.hover }
           Text {
             anchors {left:parent.left;leftMargin:Style.space(1.5);verticalCenter:parent.verticalCenter}
             visible:!parent.section && !!modelData.icon
-            text:modelData.icon || "";color:parent.enabled ? Color.foreground : Color.muted
+            text:modelData.icon || "";color:parent.enabled ? Commons.Color.foreground : Commons.Color.muted
             font.family:Style.iconFamily;font.pixelSize:Style.fontSize + 1
           }
           Text {
             anchors {right:parent.right;rightMargin:Style.space(1.5);verticalCenter:parent.verticalCenter}
             visible:modelData.selected === true
-            text:"✓";color:Color.accent;font.pixelSize:Style.fontSize
+            text:"✓";color:Commons.Color.accent;font.pixelSize:Style.fontSize
           }
           Rectangle {
             anchors {right:parent.right;rightMargin:Style.space(1.5);verticalCenter:parent.verticalCenter}
             visible:modelData.checked !== undefined
             width:Style.space(3.5);height:Style.space(2);radius:height/2
-            color:modelData.checked ? Color.accent : Color.surfaceBorder
-            Rectangle {width:parent.height-4;height:width;radius:width/2;y:2;x:modelData.checked ? parent.width-width-2 : 2;color:modelData.checked ? Color.background : Color.foreground}
+            color:modelData.checked ? Commons.Color.accent : Commons.Color.surfaceBorder
+            Rectangle {width:parent.height-4;height:width;radius:width/2;y:2;x:modelData.checked ? parent.width-width-2 : 2;color:modelData.checked ? Commons.Color.background : Commons.Color.foreground}
           }
           Text {
             id:labelText
             anchors { left: parent.left; right:parent.right; leftMargin: Style.space(modelData.icon && !section ? 4.5 : 1.5); rightMargin:Style.space(modelData.selected || modelData.checked !== undefined ? 5 : 1.5) }
             y: modelData.detail ? (section ? Style.space(1.5) : Style.space(1)) : (parent.height - implicitHeight) / 2
-            text: modelData.label; color: modelData.alert ? Color.urgent : parent.enabled ? Color.foreground : Color.muted
+            text: modelData.label; color: modelData.alert ? Commons.Color.urgent : parent.enabled ? Commons.Color.foreground : Commons.Color.muted
             elide:Text.ElideRight
             font.family: Style.fontFamily; font.pixelSize: section ? Style.smallFontSize : Style.fontSize
           }
@@ -133,7 +134,7 @@ Item {
             // scroll viewport. Ordinary menu descriptions remain compact.
             maximumLineCount:modelData.fullDetail === true ? 2147483647 : 8
             elide:modelData.fullDetail === true ? Text.ElideNone : Text.ElideRight
-            color:modelData.alert ? Color.urgent : section ? Color.foreground : Color.muted
+            color:modelData.alert ? Commons.Color.urgent : section ? Commons.Color.foreground : Commons.Color.muted
             font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize
           }
           MouseArea {

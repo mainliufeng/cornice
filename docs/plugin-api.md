@@ -192,6 +192,17 @@ document the keys in the README's configuration table.
 | `qs.Commons` | `Style` (sizes, fonts, icon font), `Color` (theme palette), `Theme`, `Util` (`option`, `clamp`, `list`, `exec`, `deepMerge`), `ShellIpc`, `IpcRegistry` |
 | `qs.Ui` | `PanelFrame`, `Slider`, `TextField`, `Surface`, `BarSection` |
 
+Use a qualified import for the theme palette. Qt Quick 6.12 also exports a `Color` type.
+
+```qml
+import QtQuick
+import qs.Commons as Commons
+
+Rectangle {
+  color: Commons.Color.panel
+}
+```
+
 Two traps that have already cost this codebase a debugging session each:
 
 - **Never name a property (or an item id) `text` in a file that parses a
@@ -206,7 +217,7 @@ Two traps that have already cost this codebase a debugging session each:
 
 Other rules that are easy to get wrong:
 
-- **Theme through `Color`/`Style` only.** Hard-coded hex values break the light
+- **Theme through `Commons.Color` and `Style`.** Hard-coded hex values break the light
   theme, which is generated from the same `theme.json` files.
 - **Glyphs: always brace five-digit code points** — `"\u{F0925}"`, never
   `"\uf0925"`. The unbraced form is parsed as `\uf092` + `5` and renders as a

@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 
 // Weather in the bar: glyph + temperature, click for the panel, middle click to
 // refresh, scroll to cycle through the next days in the tooltip-less way this
@@ -53,7 +54,7 @@ Item {
     Text {
       y: Style.barTextBaseline - baselineOffset
       text: root.glyph
-      color: root.ready ? Color.barForeground : Color.muted
+      color: root.ready ? Commons.Color.barForeground : Commons.Color.muted
       font.family: Style.iconFamily
       font.pixelSize: Style.fontSize
     }
@@ -61,7 +62,7 @@ Item {
     Text {
       y: Style.barTextBaseline - baselineOffset
       text: root.temperature
-      color: root.ready ? Color.barForeground : Color.muted
+      color: root.ready ? Commons.Color.barForeground : Commons.Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.fontSize
     }
@@ -70,7 +71,7 @@ Item {
       y: Style.barTextBaseline - baselineOffset
       visible: root.showPlace && root.place !== ""
       text: root.place
-      color: Color.muted
+      color: Commons.Color.muted
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize
     }

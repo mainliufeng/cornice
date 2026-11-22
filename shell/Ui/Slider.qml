@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Themed slider used by volume and brightness panels.
 Item {
@@ -24,7 +25,7 @@ Item {
     width: parent.width
     height: Math.max(4, Style.space(0.55))
     radius: Style.radius
-    color: Color.hover
+    color: Commons.Color.hover
   }
 
   Rectangle {
@@ -32,7 +33,7 @@ Item {
     width: track.width * Util.clamp(root.value, 0, 1)
     height: track.height
     radius: Style.radius
-    color: root.enabled ? Color.accent : Color.muted
+    color: root.enabled ? Commons.Color.accent : Commons.Color.muted
 
     Behavior on width {
       NumberAnimation { duration: 80 }
@@ -45,7 +46,7 @@ Item {
     width: Style.space(2)
     height: width
     radius: width / 2
-    color: Color.foreground
+    color: Commons.Color.foreground
   }
 
   MouseArea {

@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Media control panel: cover, title/artist/album, progress (click to seek),
@@ -67,7 +68,7 @@ PanelFrame {
           width: height
           height: parent.height
           radius: Style.radius
-          color: Color.hover
+          color: Commons.Color.hover
           clip: true
 
           Image {
@@ -82,7 +83,7 @@ PanelFrame {
             anchors.centerIn: parent
             visible: root.artUrl === ""
             text: "\uf001"
-            color: Color.muted
+            color: Commons.Color.muted
             font.family: Style.iconFamily
             font.pixelSize: Style.fontSize * 2.4
           }
@@ -96,7 +97,7 @@ PanelFrame {
           Text {
             width: parent.width
             text: root.title !== "" ? root.title : I18n.t("media.empty")
-            color: Color.foreground
+            color: Commons.Color.foreground
             elide: Text.ElideRight
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize + 6
@@ -107,7 +108,7 @@ PanelFrame {
             width: parent.width
             visible: root.artist !== ""
             text: root.artist
-            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.75)
+            color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.75)
             elide: Text.ElideRight
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
@@ -117,7 +118,7 @@ PanelFrame {
             width: parent.width
             visible: root.album !== ""
             text: root.album
-            color: Color.muted
+            color: Commons.Color.muted
             elide: Text.ElideRight
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
@@ -140,7 +141,7 @@ PanelFrame {
             width: parent.width
             height: Math.max(3, Style.space(0.5))
             radius: Style.radius
-            color: Color.hover
+            color: Commons.Color.hover
           }
 
           Rectangle {
@@ -148,7 +149,7 @@ PanelFrame {
             width: Math.round(parent.width * root.progress)
             height: Math.max(3, Style.space(0.5))
             radius: Style.radius
-            color: Color.accent
+            color: Commons.Color.accent
           }
 
           MouseArea {
@@ -167,7 +168,7 @@ PanelFrame {
           Text {
             width: parent.width / 2
             text: root.positionLabel
-            color: Color.muted
+            color: Commons.Color.muted
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
           }
@@ -175,7 +176,7 @@ PanelFrame {
           Text {
             width: parent.width / 2
             text: root.lengthLabel
-            color: Color.muted
+            color: Commons.Color.muted
             horizontalAlignment: Text.AlignRight
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
@@ -220,13 +221,13 @@ PanelFrame {
             width: Math.round(Style.space(6.5))
             height: Math.round(Style.space(6.5))
             radius: Style.radius
-            color: modelData.action === "playPause" ? Color.workspaceActive : Color.hover
+            color: modelData.action === "playPause" ? Commons.Color.workspaceActive : Commons.Color.hover
             opacity: modelData.enabled ? 1 : 0.4
 
             Text {
               anchors.centerIn: parent
               text: modelData.glyph
-              color: modelData.action === "playPause" ? Color.workspaceActiveText : Color.foreground
+              color: modelData.action === "playPause" ? Commons.Color.workspaceActiveText : Commons.Color.foreground
               font.family: Style.iconFamily
               font.pixelSize: Style.fontSize * 1.2
             }
@@ -259,7 +260,7 @@ PanelFrame {
         Text {
           anchors.verticalCenter: parent.verticalCenter
           text: "\uf028"
-          color: Color.muted
+          color: Commons.Color.muted
           font.family: Style.iconFamily
           font.pixelSize: Style.fontSize
         }
@@ -290,7 +291,7 @@ PanelFrame {
             width: Math.min(body.width, playerLabel.implicitWidth + Style.space(3))
             height: Style.space(5.5)
             radius: Style.radius
-            color: modelData === root.player ? Color.hover : "transparent"
+            color: modelData === root.player ? Commons.Color.hover : "transparent"
 
             Text {
               id: playerLabel
@@ -298,7 +299,7 @@ PanelFrame {
               width: Math.min(implicitWidth, parent.width - Style.space(3))
               elide: Text.ElideRight
               text: String(modelData.identity || modelData.dbusName || "player")
-              color: modelData === root.player ? Color.foreground : Color.muted
+              color: modelData === root.player ? Commons.Color.foreground : Commons.Color.muted
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
             }

@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Wayland
 import Cornice.Desktop
 import qs.Commons
+import qs.Commons as Commons
 Item {
   id:root
   property var service:null
@@ -93,8 +94,8 @@ Item {
             width:stack.width
             height:root.cardHeight
             radius:Style.radius
-            color:Color.panel
-            border.color:Color.muted
+            color:Commons.Color.panel
+            border.color:Commons.Color.muted
             Rectangle {
               id:header
               width:parent.width;height:40
@@ -125,15 +126,15 @@ Item {
                 anchors.verticalCenter:parent.verticalCenter
                 text:root.service.desktopLabel(card.modelData) + " · " + root.service.stateLabel(card.desktopState)
                 elide:Text.ElideRight
-                color:Color.foreground
+                color:Commons.Color.foreground
                 font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize
               }
               Rectangle {
                 id:hide
                 anchors {right:parent.right;rightMargin:Style.space(0.5);verticalCenter:parent.verticalCenter}
                 width:32;height:32;radius:Style.radius
-                color:hideMouse.containsMouse ? Color.hover : "transparent"
-                Text {anchors.centerIn:parent;text:"×";color:Color.muted;font.pixelSize:20}
+                color:hideMouse.containsMouse ? Commons.Color.hover : "transparent"
+                Text {anchors.centerIn:parent;text:"×";color:Commons.Color.muted;font.pixelSize:20}
                 MouseArea {id:hideMouse;anchors.fill:parent;hoverEnabled:true;cursorShape:Qt.PointingHandCursor;onClicked:root.service.hidePreview(card.modelData)}
               }
             }
@@ -149,7 +150,7 @@ Item {
               anchors.centerIn:frame
               visible:frame.error !== ""
               text:"预览暂不可用"
-              color:Color.muted;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize
+              color:Commons.Color.muted;font.family:Style.fontFamily;font.pixelSize:Style.smallFontSize
             }
             MouseArea {
               anchors.fill:frame
@@ -165,8 +166,8 @@ Item {
       Rectangle {
         anchors {right:parent.right;bottom:parent.bottom}
         width:24;height:24;radius:Style.radius
-        color:resizeMouse.containsMouse || root.resizing ? Color.hover : "transparent"
-        Text {anchors.centerIn:parent;text:"◢";color:Color.muted;font.pixelSize:14}
+        color:resizeMouse.containsMouse || root.resizing ? Commons.Color.hover : "transparent"
+        Text {anchors.centerIn:parent;text:"◢";color:Commons.Color.muted;font.pixelSize:14}
         MouseArea {
           id:resizeMouse;anchors.fill:parent;hoverEnabled:true;preventStealing:true
           cursorShape:Qt.SizeFDiagCursor

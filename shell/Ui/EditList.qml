@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Inline list editor: turns a small list of records into editable rows.
 //
@@ -118,7 +119,7 @@ Item {
           Text {
             anchors.centerIn: parent
             text: actionButton.adding ? "\u{F0415}" : "\u{F0156}" // add / delete
-            color: actionArea.containsMouse ? Color.accent : Color.muted
+            color: actionArea.containsMouse ? Commons.Color.accent : Commons.Color.muted
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
           }
@@ -140,7 +141,7 @@ Item {
       width: parent.width
       visible: root.error !== ""
       text: root.error
-      color: Color.accent
+      color: Commons.Color.accent
       wrapMode: Text.Wrap
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize

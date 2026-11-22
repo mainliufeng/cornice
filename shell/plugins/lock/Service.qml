@@ -5,6 +5,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Services.Pam
 import qs.Commons
+import qs.Commons as Commons
 
 // Lock screen.
 //
@@ -164,7 +165,7 @@ Item {
 
         // width/height are read-only: Quickshell sizes a lock surface to its
         // screen. Everything below therefore anchors to plain Items.
-        color: Color.background
+        color: Commons.Color.background
 
         Component.onCompleted: console.log("CORNICE-LOCK surface "
           + (lockSurface.screen ? lockSurface.screen.name : "?") + " "
@@ -221,7 +222,7 @@ Item {
         Rectangle {
           anchors.fill: parent
           visible: root.backgroundSource === ""
-          color: Color.background
+          color: Commons.Color.background
         }
 
         LockContent {
@@ -381,8 +382,8 @@ Item {
 
   function lockAppearance() {
     return {
-      background: String(Color.background), foreground: String(Color.foreground),
-      accent: String(Color.accent), urgent: String(Color.urgent), muted: String(Color.muted),
+      background: String(Commons.Color.background), foreground: String(Commons.Color.foreground),
+      accent: String(Commons.Color.accent), urgent: String(Commons.Color.urgent), muted: String(Commons.Color.muted),
       fontFamily: Style.fontFamily, iconFamily: Style.iconFamily,
       fontSize: Style.fontSize, gap: Style.gap, radius: Style.radius,
       language: I18n.language, backgroundSource: backgroundSource,

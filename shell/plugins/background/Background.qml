@@ -4,6 +4,7 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 
 // Wallpaper layer.
 //
@@ -182,7 +183,7 @@ Item {
 
       screen: modelData
       visible: root.active && root.pathFor(root.workspaceFor(modelData.name)) !== ""
-      color: Color.background
+      color: Commons.Color.background
       exclusiveZone: 0
       aboveWindows: false
       focusable: false

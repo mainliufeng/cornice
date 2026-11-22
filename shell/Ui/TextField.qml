@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Focused text input for panels and the launcher. Emits accepted()/canceled()
 // so callers do not have to know about Qt's key handling.
@@ -30,9 +31,9 @@ FocusScope {
   Rectangle {
     anchors.fill: parent
     radius: Style.radius
-    color: Color.hover
+    color: Commons.Color.hover
     border.width: input.activeFocus ? 1 : 0
-    border.color: Color.accent
+    border.color: Commons.Color.accent
   }
 
   Text {
@@ -41,7 +42,7 @@ FocusScope {
     anchors.rightMargin: Style.space(1.2)
     visible: input.text === ""
     text: root.placeholder
-    color: Color.muted
+    color: Commons.Color.muted
     verticalAlignment: Text.AlignVCenter
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
@@ -54,9 +55,9 @@ FocusScope {
     anchors.leftMargin: Style.space(1.2)
     anchors.rightMargin: Style.space(1.2)
     verticalAlignment: TextInput.AlignVCenter
-    color: Color.foreground
-    selectionColor: Color.accent
-    selectedTextColor: Color.background
+    color: Commons.Color.foreground
+    selectionColor: Commons.Color.accent
+    selectedTextColor: Commons.Color.background
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
     clip: true

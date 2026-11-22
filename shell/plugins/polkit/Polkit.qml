@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Services.Polkit
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // PolicyKit authentication agent.
@@ -92,7 +93,7 @@ Item {
           Text {
             width: parent.width
             text: I18n.t("lock.authRequired")
-            color: Color.foreground
+            color: Commons.Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize + 6
             font.bold: true
@@ -101,7 +102,7 @@ Item {
           Text {
             width: parent.width
             text: root.flow ? root.flow.message : ""
-            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.75)
+            color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.75)
             wrapMode: Text.Wrap
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
@@ -112,7 +113,7 @@ Item {
       Rectangle {
         width: parent.width
         height: 1
-        color: Color.surfaceBorder
+        color: Commons.Color.surfaceBorder
       }
 
       // Identity picker, when polkit offers a choice (several sessions/users).
@@ -131,14 +132,14 @@ Item {
             width: content.width
             height: Style.space(5.5)
             radius: Style.radius
-            color: index === root.identityIndex ? Color.hover : "transparent"
+            color: index === root.identityIndex ? Commons.Color.hover : "transparent"
 
             Text {
               anchors.left: parent.left
               anchors.leftMargin: Style.space(0.8)
               anchors.verticalCenter: parent.verticalCenter
               text: String(modelData)
-              color: Color.foreground
+              color: Commons.Color.foreground
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize
             }
@@ -163,7 +164,7 @@ Item {
         Text {
           width: parent.width
           text: root.flow ? root.flow.inputPrompt : "Password"
-          color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.6)
+          color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.6)
           font.family: Style.fontFamily
           font.pixelSize: Style.fontSize
         }
@@ -190,7 +191,7 @@ Item {
         width: parent.width
         visible: root.flow !== null && root.flow.supplementaryMessage !== ""
         text: root.flow ? root.flow.supplementaryMessage : ""
-        color: (root.flow && root.flow.supplementaryIsError) ? Color.urgent : Color.muted
+        color: (root.flow && root.flow.supplementaryIsError) ? Commons.Color.urgent : Commons.Color.muted
         wrapMode: Text.Wrap
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
@@ -205,13 +206,13 @@ Item {
           width: authorizeText.implicitWidth + Style.space(2)
           height: Style.space(5.5)
           radius: Style.radius
-          color: Color.workspaceActive
+          color: Commons.Color.workspaceActive
 
           Text {
             id: authorizeText
             anchors.centerIn: parent
             text: I18n.t("lock.authenticate")
-            color: Color.workspaceActiveText
+            color: Commons.Color.workspaceActiveText
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
           }
@@ -227,13 +228,13 @@ Item {
           width: cancelText.implicitWidth + Style.space(2)
           height: Style.space(5.5)
           radius: Style.radius
-          color: Color.hover
+          color: Commons.Color.hover
 
           Text {
             id: cancelText
             anchors.centerIn: parent
             text: I18n.t("common.cancel")
-            color: Color.foreground
+            color: Commons.Color.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
           }

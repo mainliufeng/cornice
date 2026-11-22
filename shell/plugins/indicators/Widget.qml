@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import "../notifications" as Notifications
 
 // Notification count and do-not-disturb.
@@ -33,7 +34,7 @@ Item {
       if (unread === 0) return "\uf0f3"
       return "\uf0f3 " + unread
     }
-    color: !root.notifications.available ? Color.urgent : dnd ? Color.muted : (unread > 0 ? Color.accent : Color.barForeground)
+    color: !root.notifications.available ? Commons.Color.urgent : dnd ? Commons.Color.muted : (unread > 0 ? Commons.Color.accent : Commons.Color.barForeground)
     font.family: Style.iconFamily
     font.pixelSize: Style.fontSize
   }

@@ -4,6 +4,7 @@ import Quickshell.Wayland
 import Quickshell.Hyprland
 import Cornice.Platform
 import qs.Commons
+import qs.Commons as Commons
 
 // One capture transaction per shell/desktop. Coordinates UI, native persistence
 // and generic popup holds; contains no shell commands or image manipulation.
@@ -104,8 +105,8 @@ Item {
     Rectangle {
       anchors.horizontalCenter:parent.horizontalCenter
       width:Math.min(parent.width - Style.space(4), label.implicitWidth + Style.space(4));height:parent.height
-      radius:Style.radius;color:Color.panel;border.width:1;border.color:Color.surfaceBorder
-      Text {id:label;anchors.centerIn:parent;text:root.message;color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.fontSize}
+      radius:Style.radius;color:Commons.Color.panel;border.width:1;border.color:Commons.Color.surfaceBorder
+      Text {id:label;anchors.centerIn:parent;text:root.message;color:Commons.Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.fontSize}
     }
   }
   Variants {

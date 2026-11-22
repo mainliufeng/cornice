@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 
 PanelWindow {
   id: root
@@ -48,8 +49,8 @@ PanelWindow {
     Rectangle {x:root.selection.x;y:root.selection.y;width:root.selection.width;height:root.selection.height;color:"transparent";border.width:1;border.color:"#ffffff"}
     Rectangle {
       anchors.horizontalCenter:parent.horizontalCenter;y:Style.barHeight+Style.space(3)
-      width:hint.implicitWidth+Style.space(4);height:hint.implicitHeight+Style.space(2);radius:Style.radius;color:Color.panel
-      Text {id:hint;anchors.centerIn:parent;text:"拖动选择截图区域 · Esc / 右键取消";color:Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.fontSize}
+      width:hint.implicitWidth+Style.space(4);height:hint.implicitHeight+Style.space(2);radius:Style.radius;color:Commons.Color.panel
+      Text {id:hint;anchors.centerIn:parent;text:"拖动选择截图区域 · Esc / 右键取消";color:Commons.Color.foreground;font.family:Style.fontFamily;font.pixelSize:Style.fontSize}
     }
     MouseArea {
       anchors.fill:parent;hoverEnabled:true;acceptedButtons:Qt.LeftButton|Qt.RightButton;cursorShape:Qt.CrossCursor;focus:root.interactive

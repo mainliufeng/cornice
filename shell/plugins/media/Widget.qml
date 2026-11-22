@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Services.Mpris
 import qs.Commons
+import qs.Commons as Commons
 
 // Now-playing in the bar. Left click opens the control panel, middle click
 // plays/pauses, scroll skips — the panel is where the detail lives.
@@ -49,7 +50,7 @@ Item {
     width: Math.min(implicitWidth, root.maxWidth)
     text: root.text()
     elide: Text.ElideRight
-    color: Color.barForeground
+    color: Commons.Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }

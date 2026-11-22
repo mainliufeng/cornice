@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Bluetooth
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Bluetooth panel: adapter power, scan, paired and discovered devices.
@@ -78,7 +79,7 @@ PanelFrame {
       }
       Text {
         text: I18n.t("bluetooth.devices")
-        color: Color.muted
+        color: Commons.Color.muted
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
       }
@@ -86,7 +87,7 @@ PanelFrame {
         width: parent.width
         visible: root.devices.length === 0
         text: I18n.t("bluetooth.empty")
-        color: Color.muted
+        color: Commons.Color.muted
         wrapMode: Text.Wrap
         font.family: Style.fontFamily
         font.pixelSize: Style.fontSize
@@ -103,13 +104,13 @@ PanelFrame {
           width: list.width
           height: Style.space(10)
           radius: Style.radius
-          color: Color.surface
+          color: Commons.Color.surface
           Text {
             id: icon
             x: Style.space(1.5)
             anchors.verticalCenter: parent.verticalCenter
             text: "\uf293"
-            color: modelData.connected ? Color.accent : Color.muted
+            color: modelData.connected ? Commons.Color.accent : Commons.Color.muted
             font.family: Style.iconFamily
             font.pixelSize: Style.fontSize + 6
           }
@@ -121,7 +122,7 @@ PanelFrame {
             Text {
               width: parent.width
               text: modelData.name || modelData.address || I18n.t("common.unknown")
-              color: Color.foreground
+              color: Commons.Color.foreground
               elide: Text.ElideRight
               font.family: Style.fontFamily
               font.pixelSize: Style.fontSize + 2
@@ -129,7 +130,7 @@ PanelFrame {
             Text {
               width: parent.width
               text: root.deviceSubtitle(modelData)
-              color: Color.muted
+              color: Commons.Color.muted
               elide: Text.ElideRight
               font.family: Style.fontFamily
               font.pixelSize: Style.smallFontSize

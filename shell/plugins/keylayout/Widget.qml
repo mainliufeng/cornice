@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 
 // Current keyboard layout, straight from the compositor.
 //
@@ -189,7 +190,7 @@ Item {
     id: labelText
     anchors.centerIn: parent
     text: root.label
-    color: Color.barForeground
+    color: Commons.Color.barForeground
     font.family: Style.fontFamily
     font.pixelSize: Style.fontSize
   }

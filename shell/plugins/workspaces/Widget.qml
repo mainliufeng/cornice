@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Workspace pills.
 //
@@ -76,8 +77,8 @@ Item {
           anchors.fill: parent
           anchors.margins: Math.round(Style.gap * 0.25)
           radius: Style.radius
-          color: slot.modelData.active ? Color.workspaceActive
-               : slot.hovered ? Color.hover
+          color: slot.modelData.active ? Commons.Color.workspaceActive
+               : slot.hovered ? Commons.Color.hover
                : "transparent"
 
           Behavior on color {
@@ -91,9 +92,9 @@ Item {
           anchors.centerIn: parent
           anchors.verticalCenterOffset: root.showDot && slot.modelData.occupied && !slot.modelData.active ? -1 : 0
           text: slot.modelData.label
-          color: slot.modelData.active ? Color.workspaceActiveText
-               : slot.modelData.occupied ? Color.barForeground
-               : Color.muted
+          color: slot.modelData.active ? Commons.Color.workspaceActiveText
+               : slot.modelData.occupied ? Commons.Color.barForeground
+               : Commons.Color.muted
           font.family: Style.fontFamily
           font.pixelSize: Style.fontSize
           font.bold: slot.modelData.active
@@ -109,7 +110,7 @@ Item {
           height: Math.max(2, Math.round(Style.gap * 0.25))
           radius: height / 2
           visible: root.showDot && slot.modelData.occupied && !slot.modelData.active
-          color: Color.accent
+          color: Commons.Color.accent
           opacity: 0.9
         }
 

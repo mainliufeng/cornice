@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Menu button for the right end of the bar.
 //
@@ -24,14 +25,14 @@ Item {
     anchors.fill: parent
     anchors.margins: Math.round(Style.gap * 0.25)
     radius: Style.radius
-    color: root.hovered ? Color.hover : "transparent"
+    color: root.hovered ? Commons.Color.hover : "transparent"
   }
 
   Text {
     id: label
     anchors.centerIn: parent
     text: root.icon
-    color: Color.barForeground
+    color: Commons.Color.barForeground
     font.family: Style.iconFamily
     font.pixelSize: Style.fontSize
   }

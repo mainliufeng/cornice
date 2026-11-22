@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 Rectangle {
   id: root
@@ -14,7 +15,7 @@ Rectangle {
   property var rightEntries: entries("right")
   readonly property var sections: [left, center, right]
   height: Style.barHeight
-  color: Color.barBackground
+  color: Commons.Color.barBackground
   ActionNotice { host: root.host }
   BarSection {
     id: left

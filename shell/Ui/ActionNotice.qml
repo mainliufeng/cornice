@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 
 // Passive, source-output feedback survives the Launcher closing. No focus,
 // input grab or shared notification service is needed to explain a refusal.
@@ -43,7 +44,7 @@ Item {
           width: parent.width
           text: I18n.t("actions.failed")
           textFormat: Text.PlainText
-          color: Color.urgent
+          color: Commons.Color.urgent
           font.family: Style.fontFamily
           font.pixelSize: Style.fontSize
           font.bold: true
@@ -55,7 +56,7 @@ Item {
           wrapMode: Text.Wrap
           maximumLineCount: 8
           elide: Text.ElideRight
-          color: Color.foreground
+          color: Commons.Color.foreground
           font.family: Style.fontFamily
           font.pixelSize: Style.smallFontSize
         }

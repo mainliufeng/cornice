@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Calendar panel behind the clock.
@@ -93,17 +94,17 @@ PanelFrame {
       Column {
         width: parent.width
         spacing: Style.space(0.7)
-        Text { text: I18n.t("clock.sameTime"); color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
+        Text { text: I18n.t("clock.sameTime"); color: Commons.Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.fontSize }
         Text {
           text: I18n.dateTime(clock.date, "HH:mm")
-          color: Color.foreground
+          color: Commons.Color.foreground
           font.family: Style.fontFamily
           font.pixelSize: Style.fontSize * 3.6
         }
         Text {
           width: parent.width
           text: I18n.dateTime(clock.date, I18n.t("clock.dateFormat"))
-          color: Color.muted
+          color: Commons.Color.muted
           font.family: Style.fontFamily
           font.pixelSize: root.bodySize
           elide: Text.ElideRight
@@ -118,7 +119,7 @@ PanelFrame {
           anchors.verticalCenter: parent.verticalCenter
           width: parent.width - monthActions.width - Style.space(1)
           text: root.monthLabel
-          color: Color.foreground
+          color: Commons.Color.foreground
           font.family: Style.fontFamily
           font.pixelSize: root.bodySize
           font.bold: true
@@ -146,7 +147,7 @@ PanelFrame {
             width: (grid.width - grid.spacing * 6) / 7
             height: Style.space(3.5)
             text: modelData
-            color: Color.muted
+            color: Commons.Color.muted
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             font.family: Style.fontFamily
@@ -159,12 +160,12 @@ PanelFrame {
             required property var modelData
             width: (grid.width - grid.spacing * 6) / 7
             height: Style.space(5.2)
-            color: modelData.today ? Color.workspaceActive : "transparent"
+            color: modelData.today ? Commons.Color.workspaceActive : "transparent"
             radius: Style.radius
             Text {
               anchors.centerIn: parent
               text: modelData.label
-              color: modelData.today ? Color.workspaceActiveText : Color.foreground
+              color: modelData.today ? Commons.Color.workspaceActiveText : Commons.Color.foreground
               font.family: Style.fontFamily
               font.pixelSize: root.bodySize
               font.bold: modelData.today
@@ -183,7 +184,7 @@ PanelFrame {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             text: I18n.t("clock.world")
-            color: Color.muted
+            color: Commons.Color.muted
             font.family: Style.fontFamily
             font.pixelSize: Style.fontSize
           }
@@ -206,7 +207,7 @@ PanelFrame {
               const rows = root.service ? root.service.rows : []
               return rows.length > 0 ? rows[0].name + " · " + rows[0].zone : I18n.t("clock.noZones")
             }
-            color: Color.foreground
+            color: Commons.Color.foreground
             elide: Text.ElideRight
             font.family: Style.fontFamily
             font.pixelSize: root.bodySize
@@ -249,7 +250,7 @@ PanelFrame {
               required property var modelData
               width: body.width
               height: Style.space(9)
-              color: Color.surface
+              color: Commons.Color.surface
               radius: Style.radius
               Column {
                 anchors.left: parent.left
@@ -260,7 +261,7 @@ PanelFrame {
                 Text {
                   width: parent.width
                   text: modelData.name
-                  color: Color.foreground
+                  color: Commons.Color.foreground
                   elide: Text.ElideRight
                   font.family: Style.fontFamily
                   font.pixelSize: root.bodySize
@@ -268,7 +269,7 @@ PanelFrame {
                 Text {
                   width: parent.width
                   text: root.service.zoneTime(modelData.zone, "ddd d MMM") + " · " + root.service.zoneDiff(modelData.zone)
-                  color: Color.muted
+                  color: Commons.Color.muted
                   elide: Text.ElideRight
                   font.family: Style.fontFamily
                   font.pixelSize: Style.smallFontSize
@@ -280,7 +281,7 @@ PanelFrame {
                 anchors.rightMargin: Style.space(1.5)
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.service.zoneTime(modelData.zone, "HH:mm")
-                color: Color.foreground
+                color: Commons.Color.foreground
                 font.family: Style.fontFamily
                 font.pixelSize: Style.largeFontSize + 4
               }

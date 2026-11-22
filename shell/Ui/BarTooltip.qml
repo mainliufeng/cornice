@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 
 // Passive status outside the bar: no layout changes, focus or input region.
 Item {
@@ -74,7 +75,7 @@ Item {
           id: titleLabel
           width: parent.width
           text: root.title
-          color: Color.foreground
+          color: Commons.Color.foreground
           font.family: Style.fontFamily
           font.pixelSize: Style.fontSize
           font.bold: true
@@ -85,7 +86,7 @@ Item {
           width: parent.width
           visible: root.detail !== ""
           text: root.detail
-          color: Color.muted
+          color: Commons.Color.muted
           font.family: Style.fontFamily
           font.pixelSize: Style.smallFontSize
           elide: Text.ElideRight

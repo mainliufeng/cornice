@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 PanelFrame {
@@ -30,7 +31,7 @@ PanelFrame {
       width: parent.width
       text: root.service ? root.service.error : ""
       visible: text !== ""
-      color: Color.accent
+      color: Commons.Color.accent
       font.family: Style.fontFamily
       font.pixelSize: Style.smallFontSize
       wrapMode: Text.WordWrap
