@@ -153,23 +153,20 @@ try:
         assert status()['humanControl']
         record('high-resolution grouped permission action targets the intended desktop and preserves takeover')
         raise SystemExit(0)
-    # Real external-harness reservation automatically appears on the primary
-    # desktop; the preview is only a read-only entry into native presentation.
+    # The test operator assigns these already-populated desktops explicitly.
+    # Live bound harnesses appear in the same read-only preview as task leases.
     import threading
     preview_owner=socket.socket(socket.AF_UNIX);preview_owner.settimeout(5)
     preview_owner.connect(str(broker_socket()))
-    cli('pause','agent3')
-    lease=rpc(preview_owner,'acquire-desktop',{'controller':'preview-ui-codex','harness':'codex','preferredDesktop':'agent3'})
+    codex_binding=json.loads(bind('agent3').read_text())
     preview_stop=threading.Event()
     preview_errors=[]
-    def heartbeat(connection,binding,controller):
+    def heartbeat(connection,binding,controller,harness):
         data=b''
         while not preview_stop.wait(.5):
             try:
                 identity=str(time.monotonic_ns())
-                connection.sendall((json.dumps({'id':identity,'method':'desktop.handoff','params':{'action':'status'},'controller':controller,'token':binding['taskToken']})+'\n').encode())
-                # A reservation carries unsolicited state notifications alongside
-                # RPC replies. Preserve partial/coalesced lines and match IDs.
+                connection.sendall((json.dumps({'id':identity,'method':'desktop.state','params':{},'controller':controller,'harness':harness,'token':binding['token']})+'\n').encode())
                 while True:
                     while b'\n' not in data:
                         chunk=connection.recv(65536)
@@ -182,12 +179,11 @@ try:
                     break
             except Exception as error:
                 preview_errors.append(str(error));return
-    preview_thread=threading.Thread(target=heartbeat,args=(preview_owner,lease,'preview-ui-codex'),daemon=True);preview_thread.start()
+    preview_thread=threading.Thread(target=heartbeat,args=(preview_owner,codex_binding,'preview-ui-codex','codex'),daemon=True);preview_thread.start()
     pi_owner=socket.socket(socket.AF_UNIX);pi_owner.settimeout(5)
     pi_owner.connect(str(broker_socket()))
-    cli('pause','agent2')
-    pi_lease=rpc(pi_owner,'acquire-desktop',{'controller':'preview-ui-pi','harness':'pi','preferredDesktop':'agent2'})
-    pi_thread=threading.Thread(target=heartbeat,args=(pi_owner,pi_lease,'preview-ui-pi'),daemon=True);pi_thread.start()
+    pi_binding=json.loads(bind('agent2').read_text())
+    pi_thread=threading.Thread(target=heartbeat,args=(pi_owner,pi_binding,'preview-ui-pi','pi'),daemon=True);pi_thread.start()
     def previews():return json.loads(shell('ipc','desktopPreviews','status'))
     try:
         card=wait(lambda:next((item for item in previews()['cards'] if item['name']=='agent3' and item['frames']>=3),None))

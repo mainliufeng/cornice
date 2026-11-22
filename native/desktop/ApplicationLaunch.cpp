@@ -258,7 +258,8 @@ QString expand(QString value, const QString &profile, const QString &desktop) {
     value.replace("{profile}", profile).replace("{desktop}", desktop);
     return value;
 }
-ApplicationLaunchPlan build(const QStringList &argv, const QString &desktop, const QString &id, const QJsonObject &rule) {
+ApplicationLaunchPlan build(const QStringList &argv, const QString &desktop, const QString &id, const QJsonObject &rule,
+                            const QString &taskRoot) {
     ApplicationLaunchPlan plan;
     plan.program = argv.first();
     plan.arguments = argv.mid(1);
@@ -276,11 +277,22 @@ ApplicationLaunchPlan build(const QStringList &argv, const QString &desktop, con
             if (arg.startsWith(prefix)) invalid(id + ": caller cannot override reserved option " + prefix);
     }
     if (rule.contains("profile")) {
-        plan.profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/cornice/desktops/" + desktop + "/" + rule["profile"].toString();
-        const auto configured = rule["profilePaths"].toObject()[desktop].toString();
-        if (!configured.isEmpty()) {
-            plan.profile = configured.startsWith("~/") ? QDir::homePath() + configured.mid(1) : configured;
-            plan.profile = QDir::cleanPath(plan.profile);
+        const auto profileName = rule["profile"].toString();
+        if (!taskRoot.isEmpty()) {
+            const QFileInfo scope(taskRoot);
+            const auto otherPermissions = QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup |
+                QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther;
+            if (!scope.isAbsolute() || !scope.isDir() || scope.isSymLink() || scope.ownerId() != getuid() ||
+                (scope.permissions() & otherPermissions)) invalid("private task directory required for managed profile");
+            plan.profile = QDir(taskRoot).filePath("profile-" + profileName);
+            if (QFileInfo(plan.profile).isSymLink()) invalid("managed task profile must be a local directory");
+        } else {
+            plan.profile = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/cornice/desktops/" + desktop + "/" + profileName;
+            const auto configured = rule["profilePaths"].toObject()[desktop].toString();
+            if (!configured.isEmpty()) {
+                plan.profile = configured.startsWith("~/") ? QDir::homePath() + configured.mid(1) : configured;
+                plan.profile = QDir::cleanPath(plan.profile);
+            }
         }
         if (!QDir().mkpath(plan.profile)) invalid("cannot create profile directory");
     }
@@ -314,7 +326,8 @@ QString singletonConflict(const QJsonObject &config, const QStringList &command,
     }
     return {};
 }
-ApplicationLaunchPlan prepare(const QJsonObject &config, const QStringList &requested, const QString &desktop, bool primary) {
+ApplicationLaunchPlan prepare(const QJsonObject &config, const QStringList &requested, const QString &desktop, bool primary,
+                              const QString &taskRoot) {
     QJsonObject requestedEnvironment;
     QStringList warnings;
     const auto argv = normalizeCommand(config, requested, primary, requestedEnvironment, warnings);
@@ -332,7 +345,7 @@ ApplicationLaunchPlan prepare(const QJsonObject &config, const QStringList &requ
     }
     const auto conflict = singletonConflict(config, argv, requestedEnvironment, desktop, primary);
     if (!conflict.isEmpty()) throw std::runtime_error(conflict.toStdString());
-    auto plan = build(argv, desktop, id, selected);
+    auto plan = build(argv, desktop, id, selected, taskRoot);
     plan.warnings = warnings; plan.basePolicy = plan.policy; plan.requestedEnvironment = requestedEnvironment;
     for (auto it = requestedEnvironment.begin(); it != requestedEnvironment.end(); ++it) {
         if (plan.environment.contains(it.key())) invalid("application environment conflicts with configured policy: " + it.key());
@@ -382,13 +395,14 @@ QString ApplicationLaunch::singletonConflict(const QStringList &argv, const QStr
     const auto command = normalizeCommand(config, argv, primary, environment, warnings);
     return ::singletonConflict(config, command, environment, desktop, primary);
 }
-ApplicationLaunchPlan ApplicationLaunch::prepare(const QStringList &argv, const QString &desktop, bool primary) {
-    return ::prepare(settings(), argv, desktop, primary);
+ApplicationLaunchPlan ApplicationLaunch::prepare(const QStringList &argv, const QString &desktop, bool primary, const QString &taskRoot) {
+    return ::prepare(settings(), argv, desktop, primary, taskRoot);
 }
-ApplicationLaunchPlan ApplicationLaunch::browser(const QString &desktop, bool primary, const QString &program, const QStringList &arguments) {
+ApplicationLaunchPlan ApplicationLaunch::browser(const QString &desktop, bool primary, const QString &program,
+                                                  const QStringList &arguments, const QString &taskRoot) {
     const auto config = settings();
     if (!program.isEmpty()) {
-        auto plan = ::prepare(config, QStringList{program} + arguments, desktop, primary);
+        auto plan = ::prepare(config, QStringList{program} + arguments, desktop, primary, taskRoot);
         if (plan.backend != "chromium") invalid("requested executable has no managed chromium rule");
         return plan;
     }
@@ -399,7 +413,7 @@ ApplicationLaunchPlan ApplicationLaunch::browser(const QString &desktop, bool pr
     const auto paths = (QDir::homePath() + "/.local/bin:" + qEnvironmentVariable("PATH")).split(':', Qt::SkipEmptyParts);
     for (const auto &name : strings(rule["executables"], id + ".executables")) {
         const auto executable = QStandardPaths::findExecutable(name, paths);
-        if (!executable.isEmpty()) return ::prepare(config, QStringList{executable} + arguments, desktop, primary);
+        if (!executable.isEmpty()) return ::prepare(config, QStringList{executable} + arguments, desktop, primary, taskRoot);
     }
     invalid("no executable installed for browser rule " + id);
 }

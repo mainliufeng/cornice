@@ -211,7 +211,16 @@ try:
     assert any(item['title']=='ui-target-window' for item in ctl('clients',True))
     shell('ipc','shell','hide','cn.agent-desktop')
     record('actual reset confirmation supports cancellation and preserves the running app by default')
+    # The launch above belongs to the human. Supply a fresh fixture app for
+    # the task's cooperation exercise after verifying the separate reset path.
+    settings['agentDesktop']['desktops']=[];configure();shell('ipc','shell','reloadConfig')
+    cli('remove','bootstrap-ui','--close-apps')
+    wait(lambda:not any(item['title']=='ui-target-window' for item in ctl('clients',True)))
+    cli('create','bootstrap-ui','--virtual-output','1280x800')
     task=Task('bootstrap-ui')
+    assert task.binding['name']=='bootstrap-ui',task.binding['name']
+    task.request('desktop.launch',{'argv':list(map(str,app_argv))})
+    wait(lambda:any(item['title']=='ui-target-window' for item in ctl('clients',True)))
     tail_marker='<b>COOPERATION TAIL MARKER</b>'
     instructions='在输入框键入 human，然后点击已完成，退出接管。\n'+'\n'.join(f'详细步骤 {index:02d}：请保留当前页面并按顺序完成。' for index in range(1,36))+'\n'+tail_marker
     request=task.handoff(action='request',title='<b>请完成人工步骤</b>',instructions=instructions)['handoff']

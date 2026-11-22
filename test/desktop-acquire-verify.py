@@ -1,5 +1,6 @@
 """Real automatic desktop allocation, shared MCP tasks and browser isolation."""
 from desktop_harness import *
+from cdp_client import Cdp
 from mcp_client import MCP
 from native_viewer import NativeViewer
 from urllib.parse import quote
@@ -7,7 +8,70 @@ import re
 ENV.pop("NO_AT_BRIDGE",None)
 
 
+def finish(client, task, reason):
+ client.call('desktop_finish', {'desktop': task['desktop'], 'outcome': 'completed', 'reason': reason})
+
+
+def lease_request(lease, method, params=None, success=True):
+ with socket.socket(socket.AF_UNIX) as connection:
+  connection.settimeout(16)
+  connection.connect(str(broker_socket()))
+  connection.sendall((json.dumps({'id': str(time.monotonic_ns()), 'method': method, 'params': params or {},
+                                  'controller': lease['controller'], 'token': lease['token']}) + '\n').encode())
+  with connection.makefile() as replies:
+   reply = json.loads(replies.readline())
+ assert reply['ok'] == success, reply.get('error')
+ return reply.get('result')
+
+
+def browser_only_reuse():
+ url = 'data:text/html,' + quote('<title>First task only</title><p>First task only</p>')
+ cookie = {'name': 'task-marker', 'value': 'first', 'url': 'https://cornice-isolated.invalid/'}
+ with socket.socket(socket.AF_UNIX) as owner:
+  owner.settimeout(8); owner.connect(str(broker_socket()))
+  first = rpc(owner, 'acquire-desktop', {'controller': 'browser-task-one', 'harness': 'grok-bot'})
+  assert first['name'] == 'desktop2' and not first['created']
+  lease_request(first, 'desktop.workspace', {'slot': 2})
+  browser = Cdp(lease_request(first, 'desktop.browser')['cdpUrl'])
+  try:
+   target = browser.call('Target.createTarget', {'url': url})['targetId']
+   browser.call('Target.activateTarget', {'targetId': target})
+   assert target in [tab['targetId'] for tab in browser.call('Target.getTargets')['targetInfos']]
+   browser.call('Storage.setCookies', {'cookies': [cookie]})
+   assert any(entry['name'] == cookie['name'] and entry['value'] == cookie['value']
+              for entry in browser.call('Storage.getCookies')['cookies'])
+  finally:
+   browser.close()
+  lease_request(first, 'desktop.release')
+ lease_request(first, 'desktop.windows', success=False)
+
+ with socket.socket(socket.AF_UNIX) as owner:
+  owner.settimeout(8); owner.connect(str(broker_socket()))
+  following = rpc(owner, 'acquire-desktop', {'controller': 'browser-task-two', 'harness': 'codex'})
+  assert not following['created'] and following['name'] == first['name'], following['name']
+  assert following['generation'] != first['generation'] and following['taskToken'] != first['taskToken']
+  state = lease_request(following, 'desktop.state')
+  assert state['workspace'].endswith('-ws-1') and not state['retainedApps'], state
+  browser = Cdp(lease_request(following, 'desktop.browser')['cdpUrl'])
+  try:
+   tabs = browser.call('Target.getTargets')['targetInfos']
+   assert [tab['url'] for tab in tabs if tab['type'] == 'page'] == ['about:blank']
+   assert not any(entry['name'] == cookie['name'] for entry in browser.call('Storage.getCookies')['cookies'])
+  finally:
+   browser.close()
+  lease_request(following, 'desktop.release')
+ wait(lambda: not cli('state',following['name'])['retainedApps'])
+ record('serial independent harnesses reuse one browser-only desktop with a fresh generation, workspace, tabs and cookie jar')
+
+
 try:
+ # The private test bus intentionally has no desktop keyring or Secret
+ # portal. Keep Chrome's fixture cookies local to its isolated profile.
+ settings=pathlib.Path(ENV['XDG_CONFIG_HOME'])/'cornice/config.json'
+ settings.parent.mkdir(parents=True,exist_ok=True)
+ chrome=json.loads((PRODUCT/'config/default.json').read_text())['desktopApplications']['rules']['chrome']
+ settings.write_text(json.dumps({'desktopApplications':{'rules':{'chrome':{
+  'arguments':chrome['arguments']+['--password-store=basic']}}}}))
  broker=initialize()
  defaults=cli('list')['desktops']
  assert len(defaults)==2 and {d['number'] for d in defaults}=={1,2},defaults
@@ -25,6 +89,7 @@ try:
  assert 'disabled' in str(a.call('desktop_acquire',{'preferredDesktop':'main'},False))
  assert 'does not exist' in str(a.call('desktop_acquire',{'preferredDesktop':'missing'},False))
  record('plugin connection alone grants no desktop; primary remains disabled and missing explicit target fails')
+ browser_only_reuse()
  # A resumed compositor seat without a task or explicit binding is still idle.
  # No operator pause should be required before the first task can acquire it.
  idle=cli('resume','desktop2')
@@ -36,13 +101,17 @@ try:
  first=a.receive(ia);second=b.receive(ib)
  assert not first.get('isError') and not second.get('isError'),(first,second)
  first=first['structuredContent'];second=second['structuredContent']
+ # Either client can win the race. Keep the rest of this fixture on the winner.
+ if second['name']=='desktop2':
+  a,b=b,a
+  first,second=second,first
  assert first['name']=='desktop2' and not first['created']
  assert first['generation']!=idle_generation,first
  assert second['name']!='desktop2' and second['created'] and not second['primary']
  assert first['pixelSize']==second['pixelSize']==[1280,800]
- assert first['harness']=='codex' and second['harness']=='pi'
+ assert {first['harness'],second['harness']}=={'codex','pi'}
  assert first['occupied'] and second['occupied'] and first['activity']==second['activity']=='running'
- assert next(d for d in cli('list')['desktops'] if d['name']==first['name'])['harness']=='codex'
+ assert next(d for d in cli('list')['desktops'] if d['name']==first['name'])['harness']==first['harness']
  assert human_state()==baseline and cli('state','disabled')['paused']
  # The disabled empty fixture has served its purpose; do not keep its native
  # shell consuming the bounded task budget during concurrent browser checks.
@@ -64,6 +133,9 @@ try:
  cli('resume',first['name'])
  a.call('desktop_restore',{'desktop':first['desktop']})
  assert a.details('desktop_state',{'desktop':first['desktop']})['name']==first['name']
+ workspace=a.details('desktop_state',{'desktop':first['desktop']})['workspace']
+ assert a.call('desktop_workspace',{'desktop':first['desktop'],'workspace':'1'},False)['isError']
+ assert a.details('desktop_state',{'desktop':first['desktop']})['workspace']==workspace
  record('a paused active task remains reserved; another task gets a distinct desktop and only explicit operator restoration renews the original task')
  # Legacy explicit grants are ownership even before a harness heartbeat starts.
  cli('create','explicit-binding','--virtual-output','1280x800')
@@ -103,6 +175,11 @@ try:
   assert 'does not own human control' in str(error),error
  assert cli('state',first['name'])['controlMode']=='human'
  assert not b.details('desktop_state',{'desktop':second['desktop']})['paused']
+ during_takeover=b.details('desktop_acquire',{'preferredDesktop':first['name']})
+ assert during_takeover['name']!=first['name'],during_takeover
+ assert cli('state',first['name'])['controlMode']=='human'
+ finish(b,during_takeover,'Independent acquisition respected human control')
+ cli('remove',during_takeover['name'])
  assert a.call('desktop_capture',{'desktop':first['desktop']},False)['isError']
  assert a.call('desktop_restore',{'desktop':first['desktop']},False)['isError']
  # Permission changes must not steal live human control.
@@ -257,17 +334,11 @@ try:
  assert b.details('desktop_windows',{'desktop':blank['desktop']})['windows']==[]
  b.call('desktop_finish',{'desktop':blank['desktop'],'outcome':'completed','reason':'fresh desktop verified'})
  record('explicit createNew allocates a genuinely empty desktop even while an unoccupied desktop is available')
- fourth=b.details('desktop_acquire')
- assert not fourth['created'] and fourth['name']==first['name']
+ fourth=b.details('desktop_acquire',{'preferredDesktop':first['name']})
+ assert not fourth['created'] and fourth['name']==blank['name'],fourth
  assert any(w['title']==first['name']+'-window' for w in ctl('clients',True))
- b.call('desktop_workspace',{'desktop':fourth['desktop'],'slot':1})
- b.call('desktop_browser_connect',{'desktop':fourth['desktop']})
- tabs=str(b.call('browser_tabs',{'desktop':fourth['desktop'],'action':'list'}))
- tab=re.search(r'- (\d+):[^\n]*\[Task A\]',tabs)
- assert tab,tabs
- b.call('browser_tabs',{'desktop':fourth['desktop'],'action':'select','index':int(tab.group(1))})
- assert 'Task A 中文' in str(b.call('browser_snapshot',{'desktop':fourth['desktop']}))
- record('finish releases one task without interrupting another; released desktops are reused with native applications and browser content preserved across workspaces')
+ assert b.details('desktop_windows',{'desktop':fourth['desktop']})['windows']==[]
+ record('finish releases one task without interrupting another; acquisition skips a desktop with a retained native window on another workspace and reuses the clean desktop')
  cli('allow-agent',third['name'],'off')
  assert a.call('desktop_capture',{'desktop':third['desktop']},False)['isError']
  a.call('desktop_finish',{'desktop':third['desktop'],'outcome':'blocked','reason':'operator revoked permission'})

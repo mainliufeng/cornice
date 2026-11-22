@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QFile>
 #include <QJsonArray>
 #include <QThread>
 #include <QHostAddress>
@@ -15,17 +16,24 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stdexcept>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static void failure(const QString &text) {
   throw std::runtime_error(text.toStdString());
 }
+static QString runtimePath(const QString &log) {
+  const auto hash = QCryptographicHash::hash(log.toUtf8(), QCryptographicHash::Sha256).toHex();
+  return qEnvironmentVariable("XDG_RUNTIME_DIR") + "/cb-" + QString::fromLatin1(hash.left(32)) + ".sock";
+}
 BrowserSession::BrowserSession(QString program, QStringList args,
                                QProcessEnvironment env, QString log,
-                               std::function<bool(const QString &)> allowed)
-    : m_allowed(std::move(allowed)) {
+                               std::function<bool(const QString &)> allowed, bool taskScoped)
+    : m_taskScoped(taskScoped), m_allowed(std::move(allowed)) {
   m_log = log;
   m_startupNonce = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  if (taskScoped) env.insert("CORNICE_BROWSER_TASK_SCOPED", "1");
+  else env.remove("CORNICE_BROWSER_TASK_SCOPED");
   try {
     QJsonObject requestedEnvironment;
     const auto requestedBytes = env.value("CORNICE_BROWSER_REQUESTED_ENV").toUtf8();
@@ -41,7 +49,7 @@ BrowserSession::BrowserSession(QString program, QStringList args,
           failure("Invalid managed browser launch environment metadata");
     }
     m_runtime = std::make_unique<QLocalSocket>();
-    const auto path = qEnvironmentVariable("XDG_RUNTIME_DIR") + "/cb-" + QString::fromLatin1(QCryptographicHash::hash(log.toUtf8(), QCryptographicHash::Sha256).toHex().left(32)) + ".sock";
+    const auto path = runtimePath(log);
     CorniceEndpoint::validateSocketPath(path);
     m_startupRetry.setInterval(100);
     connect(&m_startupRetry, &QTimer::timeout, this, [this, path] {
@@ -294,13 +302,51 @@ void BrowserSession::finishStartup(QString error) {
 }
 bool BrowserSession::close(const QString &log) {
   QLocalSocket socket;
-  const auto path = qEnvironmentVariable("XDG_RUNTIME_DIR") + "/cb-" + QString::fromLatin1(QCryptographicHash::hash(log.toUtf8(), QCryptographicHash::Sha256).toHex().left(32)) + ".sock";
+  const auto path = runtimePath(log);
   socket.connectToServer(path);
   if (!socket.waitForConnected(500)) return true; // No live runtime to close.
   QByteArray message("{\"op\":\"shutdown\"}"); message.append('\0');
   socket.write(message); socket.flush();
   if (!socket.waitForReadyRead(3000)) return false;
   return QJsonDocument::fromJson(socket.readAll().split('\0').first()).object()["ok"].toBool();
+}
+bool BrowserSession::closeForReuse() {
+  if (!m_taskScoped) return false;
+  revoke();
+  if (!launchSubmitted() && m_runtimeNonce.isEmpty()) return true;
+
+  // A missing endpoint may belong to a submitted helper still starting. Use
+  // an acknowledgement or a recorded clean exit from this exact runtime.
+  const auto nonce = m_runtimeNonce.isEmpty() ? m_startupNonce : m_runtimeNonce;
+  const auto proofPath = QFile::encodeName(m_log + ".stopped");
+  const auto proof = ::open(proofPath.constData(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+  if (proof >= 0) {
+    struct stat metadata{};
+    char bytes[128];
+    const bool regular = !::fstat(proof, &metadata) && S_ISREG(metadata.st_mode) && metadata.st_uid == getuid();
+    const auto length = regular ? ::read(proof, bytes, sizeof(bytes)) : -1;
+    ::close(proof);
+    if (length > 0 && QByteArray(bytes, length) == nonce.toUtf8()) return true;
+  }
+  QLocalSocket socket;
+  socket.connectToServer(runtimePath(m_log));
+  if (!socket.waitForConnected(150)) return false;
+  auto message = QJsonDocument(QJsonObject{{"op", "shutdown-confirmed"}, {"nonce", nonce}}).toJson(QJsonDocument::Compact);
+  message.append('\0');
+  if (socket.write(message) != message.size()) return false;
+  socket.flush();
+  QElapsedTimer deadline;
+  deadline.start();
+  auto response = socket.readAll();
+  while (!response.contains('\0') && response.size() < 1024 && deadline.elapsed() < 2300) {
+    const auto ready = socket.waitForReadyRead(qMax(1, 2300 - static_cast<int>(deadline.elapsed())));
+    response += socket.readAll();
+    if (!ready) break;
+  }
+  const auto end = response.indexOf('\0');
+  if (end < 0 || end >= 1024) return false;
+  const auto reply = QJsonDocument::fromJson(response.left(end)).object();
+  return reply["stopped"].toBool() && reply["nonce"] == nonce;
 }
 bool BrowserSession::authorized(const QString &token) const {
   try {
@@ -414,7 +460,12 @@ void BrowserSession::receive() {
       }
     // Private runtime metadata remains in memory and is never included in the
     // public HTTP discovery object or forwarded as a CDP event.
-    m_initialArgumentsSubmitted = greeting["startupNonce"].toString() == m_startupNonce;
+    m_runtimeNonce = greeting["startupNonce"].toString();
+    if (m_taskScoped && m_runtimeNonce.isEmpty()) {
+      finishStartup("Task browser runtime did not provide its lifecycle identity");
+      return;
+    }
+    m_initialArgumentsSubmitted = m_runtimeNonce == m_startupNonce;
     m_launchEnvironment = launchEnvironment;
     m_pid = greeting["pid"].toInteger();
     m_version = greeting["version"].toObject();

@@ -135,11 +135,15 @@ try:
     cli('pause',name)
     assert a.call('desktop_handoff',target|{'action':'resume','requestId':rid},False)['isError']
     a.call('desktop_finish',target|{'outcome':'blocked','reason':'operator paused after cooperation restoration'})
-    replacement=a.details('desktop_acquire',{'preferredDesktop':name})
-    assert replacement['name']==name
+    previous=name
+    replacement=a.details('desktop_acquire',{'preferredDesktop':previous})
+    name=replacement['name']
+    assert name!=previous and not replacement['handoffs'],replacement
+    assert cli('state',previous)['handoffs'][-1]['status']=='completed'
     target={'desktop':replacement['desktop']}
     request=a.details('desktop_handoff',target|{'action':'request','title':'请扫码' ,'instructions':'扫描二维码登录；无法在本机操作时，可在对话里撤回。'})['request'];rid=request['id']
     visible_cooperation(banner,name,'cooperation-new-request',lambda row:row['requestId']==rid)
+    shell('ipc','desktop','observe',name);wait(lambda:observer()['open'] and observer()['name']==name)
     shell('ipc','desktopObserver','takeover','true');wait(lambda:observer()['humanControl'])
     cancelled=a.details('desktop_handoff',target|{'action':'resolve','requestId':rid,'outcome':'cancelled','note':'用户远程要求退出接管'})
     assert cancelled['request']['status']=='cancelled'
@@ -153,10 +157,10 @@ try:
     shell('ipc','desktopObserver','takeover','false');wait(lambda:not observer()['humanControl'])
     assert a.call('desktop_handoff',target|{'action':'resume','requestId':rid},False)['isError']
     assert not b.details('desktop_state',{'desktop':other['desktop']})['paused']
-    assert len(cli('state',name)['handoffs'])==2
+    assert len(cli('state',name)['handoffs'])==1
     saved=json.loads((RT/'cornice'/ENV['HYPRLAND_INSTANCE_SIGNATURE']/'desktops.json').read_text())
-    assert len(saved[name]['handoffs'])==2
-    record('remote chat resolution releases only its request takeover; history persists and later manual control or pause blocks resume both before and after initial restoration')
+    assert len(saved[name]['handoffs'])==len(saved[previous]['handoffs'])==1
+    record('remote resolution releases only its request takeover; later manual control or pause blocks resume, and a replacement task cannot read the previous desktop history')
     # Primary uses the same cooperation contract after explicit enabled acquisition.
     shell('ipc','desktop','observe','main');wait(lambda:not observer()['open'])
     wait(lambda:cli('state','main')['available'])
@@ -184,11 +188,12 @@ try:
     a.close();b.close()
     assert all(item['status'] in ['completed','cancelled'] for item in cli('state',name)['handoffs'])
     waiting=MCP('recovery');pending=waiting.details('desktop_acquire',{'preferredDesktop':name})
+    assert pending['name']!=name and not pending['handoffs'],pending
     waiting.details('desktop_handoff',{'desktop':pending['desktop'],'action':'request','title':'恢复记录测试','instructions':'等待人工处理，不应在服务重启后恢复输入。'})
     broker.kill();broker.wait(timeout=5)
     broker=start([str(PRODUCT/'bin/cornice-desktopd')],'recovered-broker')
     wait(desktop_ready)
-    recovered=cli('state',name)
+    recovered=cli('state',pending['name'])
     assert recovered['paused'] and recovered['handoff']['status']=='cancelled'
     assert recovered['handoff']['events'][-1]['status']=='cancelled'
     assert cli('state','main')['handoff']['status']=='completed'

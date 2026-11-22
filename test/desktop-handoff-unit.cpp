@@ -22,6 +22,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <thread>
+#include <utility>
 #include <unistd.h>
 
 static void require(bool condition, const char *message) {
@@ -46,6 +47,8 @@ class CompositorFixture {
     std::atomic<bool> stopping{false};
     std::mutex mutex;
     QMap<QString, QJsonObject> states;
+    QMap<QString, int> privateOutputs;
+    bool rejectOutputConfiguration = false;
     QJsonArray clients;
     QList<int> eventPeers;
     QStringList commands;
@@ -77,6 +80,12 @@ class CompositorFixture {
             return array(windows);
         }
         if (command == "clients") return array(clients);
+        if (command == "monitors") {
+            QJsonArray monitors{QJsonObject{{"name", "fixture-output"}, {"id", 0}}};
+            for (auto it = privateOutputs.cbegin(); it != privateOutputs.cend(); ++it)
+                monitors.append(QJsonObject{{"name", it.key()}, {"id", it.value()}});
+            return array(monitors);
+        }
         if (command == "layers") return object({});
         if (command.startsWith("seat ensure-workspace ") || command.startsWith("seat configuration-remove ") ||
             command.startsWith("seat configuration-renew ")) return "ok";
@@ -96,14 +105,31 @@ class CompositorFixture {
         }
         if (command.startsWith("seat presentation "))
             return object({{"active", true}, {"name", "desktop2"}, {"humanControl", false}});
-        if (command.startsWith("seat create-private-output ") || command.startsWith("eval hl.monitor(")) return "ok";
-        if (command.startsWith("seat create ")) {
-            const auto pieces = command.split(' '); states[pieces.at(2)]["output"] = pieces.at(3); return "ok";
+        if (command.startsWith("seat create-private-output ")) {
+            privateOutputs[command.section(' ', -1)] = privateOutputs.size() + 1;
+            return "ok";
         }
-        if (command.startsWith("seat workspace ")) {
+        if (command.startsWith("eval hl.monitor(")) {
+            if (std::exchange(rejectOutputConfiguration, false)) return "test-only output configuration refused";
+            return "ok";
+        }
+        if (command.startsWith("seat create ")) {
+            const auto pieces = command.split(' ');
+            const auto name = pieces.at(2);
+            if (!states.contains(name)) {
+                auto state = states["desktop2"];
+                state["name"] = name;
+                state["seatId"] = "seat-" + name;
+                states[name] = state;
+            }
+            states[name]["output"] = pieces.at(3);
+            return "ok";
+        }
+        if (command.startsWith("seat workspace ") || command.startsWith("seat view-workspace ")) {
             const auto pieces = command.split(' '); states[pieces.at(2)]["workspace"] = pieces.at(3); return "ok";
         }
         if (command.startsWith("seat remove ")) { states.remove(command.mid(12)); return "ok"; }
+        if (command.startsWith("output remove ")) { privateOutputs.remove(command.section(' ', -1)); return "ok"; }
         if (command.startsWith("dispatch hl.dsp.window.close(")) return "ok";
         throw std::runtime_error(("Unexpected private compositor request: " + command).toStdString());
     }
@@ -156,6 +182,8 @@ class CompositorFixture {
     void setWorkspace(const QString &name, const QString &workspace) { std::lock_guard lock(mutex); states[name]["workspace"] = workspace; }
     void setClients(const QJsonArray &value) { std::lock_guard lock(mutex); clients = value; }
     bool saw(const QString &prefix) { std::lock_guard lock(mutex); return std::any_of(commands.cbegin(), commands.cend(), [&prefix](const QString &value) { return value.startsWith(prefix); }); }
+    void rejectNextOutputConfiguration() { std::lock_guard lock(mutex); rejectOutputConfiguration = true; }
+    int privateOutputCount() { std::lock_guard lock(mutex); return privateOutputs.size(); }
     int commandCount() { std::lock_guard lock(mutex); return commands.size(); }
     void verify() { std::lock_guard lock(mutex); require(error.isEmpty(), qPrintable(error)); }
 };
@@ -275,9 +303,12 @@ class BrokerHandoffFixture {
         const auto reply = harness->waitReply("wait-rpc");
         require(!reply["ok"].toBool() && reply["error"] == "Task reservation released", "disconnected task waiter was not retired");
         const auto actual = broker->state(target); const auto events = actual["handoff"].toObject()["events"].toArray();
-        require(actual["paused"].toBool() && !actual["presentation"].toObject()["humanControl"].toBool(), "owner cleanup left native input active");
+        require(actual["controlMode"] == "human" && actual["presentation"].toObject()["humanControl"].toBool(),
+                "ending the task interrupted active human control");
         require(events.size() == 3 && events.last().toObject()["status"] == "cancelled", "owner cleanup published intermediate requested state");
-        std::puts("PASS task owner release cancels assistance without transient requeue and retires actual waiter");
+        broker->perform("release", {{"name", target}}, nullptr, human->owner.get());
+        require(broker->state(target)["paused"].toBool() && !compositor->resumed(), "releasing overdue human control resumed an ended task");
+        std::puts("PASS task owner release cancels its request and waiter while preserving human input, and human release cannot resume that task");
     }
     void runningTask() {
         auto &desktop = broker->m_desktops.at(target);
@@ -289,6 +320,20 @@ class BrokerHandoffFixture {
         broker->m_bindings["input-secret"] = Broker::Binding{target, desktop.id, "1", {}};
         auto &binding = broker->m_bindings["input-secret"];
         binding.controller = "unit-controller"; binding.harness = "unit"; binding.heartbeat.start();
+    }
+    void waitEndsWithReservation() {
+        runningTask();
+        compositor->setState(target, {{"paused", true}});
+        TaskSocket waiter(qEnvironmentVariable("XDG_RUNTIME_DIR") + "/separate-wait.sock");
+        auto wait = request("wait");
+        wait["params"] = QJsonObject{{"seconds", 30}};
+        broker->waitTask(wait, waiter.owner.get());
+        require(broker->m_taskWaiters.contains(waiter.owner.get()), "separate event waiter did not subscribe");
+        broker->releaseAcquisition(harness->owner.get());
+        const auto reply = waiter.waitReply("task-rpc");
+        require(!reply["ok"].toBool() && !reply.contains("result") && !broker->m_taskWaiters.contains(waiter.owner.get()),
+                "old waiter can still read state after its task reservation ends");
+        std::puts("PASS ending a task with no handoff retires its separate event waiter immediately");
     }
     void requireRestoreRejected() {
         bool refused = false;
@@ -474,6 +519,42 @@ class BrokerHandoffFixture {
         require(broker->state("desktop2")["paused"].toBool() && broker->state("desktop2")["humanLockPolicy"] == "pause", "fresh desktop changed the default paused lock policy");
         std::puts("PASS genuine first installation seeds exactly one paused default secondary desktop");
     }
+    void failedAcquisitionRollsBack(bool duringOutputConfiguration) {
+        const auto registeredBefore = broker->m_desktops.size();
+        const auto persistentBefore = broker->m_definitions;
+        const int outputsBefore = compositor->privateOutputCount();
+        const auto readRegistry = [](const QString &path) {
+            QFile file(path);
+            require(file.open(QIODevice::ReadOnly), "allocation fixture registry could not be read");
+            return file.readAll();
+        };
+        const auto stateBefore = readRegistry(broker->m_statePath);
+        const auto runtimePath = broker->m_directory + "/desktops.json";
+        const auto runtimeBefore = readRegistry(runtimePath);
+        const auto request = QJsonObject{
+            {"id", "failed-allocation"}, {"method", "acquire-desktop"},
+            {"params", QJsonObject{{"controller", "rollback-controller"}, {"createNew", true}}}};
+        const auto failurePoint = duringOutputConfiguration ? "test-only output configuration refused" : "test-only resume refused";
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            if (duringOutputConfiguration) compositor->rejectNextOutputConfiguration();
+            bool refused = false;
+            try { broker->handle(request, harness->owner.get()); }
+            catch (const std::exception &failure) {
+                refused = QString::fromUtf8(failure.what()).contains(failurePoint);
+            }
+            require(refused && compositor->resumed() != duringOutputConfiguration, "allocation failed before the intended fixture fault");
+            require(compositor->saw("seat remove desktop-") != duringOutputConfiguration && compositor->saw("output remove cornice-agent-desktop-"),
+                    "rollback did not match the topology created before the fault");
+            require(compositor->privateOutputCount() == outputsBefore, "failed acquisition leaked a private compositor output");
+            require(broker->m_desktops.size() == registeredBefore && broker->m_definitions == persistentBefore &&
+                    broker->m_acquisitions.isEmpty() && broker->m_bindings.isEmpty(),
+                    "failed acquisition retained a registered desktop, binding or lease");
+            require(readRegistry(broker->m_statePath) == stateBefore && readRegistry(runtimePath) == runtimeBefore,
+                    "failed acquisition persisted a phantom desktop");
+        }
+        std::printf("PASS repeated allocation failure during %s rolls back output, registry, binding and any created seat\n",
+                    duringOutputConfiguration ? "output configuration" : "input grant");
+    }
     void invalidDefinitions() {
         const auto statePath = broker->m_statePath;
         broker.reset(); compositor.reset(); instance += "-invalid-definitions";
@@ -564,6 +645,7 @@ int main(int argc, char **argv) {
         run([](auto &fixture) { fixture.resolve("cancelled"); });
         run([](auto &fixture) { fixture.interrupted(); });
         run([](auto &fixture) { fixture.disconnected(); });
+        run([](auto &fixture) { fixture.waitEndsWithReservation(); });
         run([](auto &fixture) { fixture.dailyLockContinuity(); });
         run([](auto &fixture) { fixture.dailyLockRelease(); });
         for (const auto &reason : {"full", "full-unlocked", "full-resumed", "pause", "native-paused", "unavailable", "permission", "decision", "binding-name", "binding-id", "binding-generation", "missing-binding", "lease-generation", "lease-seat", "viewer-loss", "human-control"})
@@ -581,6 +663,8 @@ int main(int argc, char **argv) {
         run([](auto &fixture) { fixture.mainOnlyLogin(false); });
         run([](auto &fixture) { fixture.mainOnlyLogin(true); });
         run([](auto &fixture) { fixture.firstInstallation(); });
+        run([](auto &fixture) { fixture.failedAcquisitionRollsBack(true); });
+        run([](auto &fixture) { fixture.failedAcquisitionRollsBack(false); });
         run([](auto &fixture) { fixture.invalidDefinitions(); });
         { BrokerHandoffFixture fixture("handoff-unit", true); fixture.staleEndpoint(); fixture.verify(); }
         { BrokerHandoffFixture fixture(QString(73, 'a')); fixture.longSignature(); fixture.verify(); }

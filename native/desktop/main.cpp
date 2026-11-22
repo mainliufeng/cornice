@@ -50,6 +50,7 @@ int main(int argc, char **argv) {
         if (command == "plan-launch" || command == "check-singleton") {
             const auto desktop = take(args), primary = take(args);
             const auto array = QJsonDocument::fromJson(take(args).toUtf8()).array();
+            const auto taskRoot = command == "plan-launch" && !args.isEmpty() ? take(args) : QString{};
             if (!args.isEmpty() || (primary != "true" && primary != "false") || array.isEmpty() || array.size() > 128)
                 throw std::runtime_error("Invalid launch planning arguments");
             QStringList requested;
@@ -63,7 +64,7 @@ int main(int argc, char **argv) {
                 if (!conflict.isEmpty()) throw std::runtime_error(conflict.toStdString());
                 return 0;
             }
-            QTextStream(stdout) << QJsonDocument(ApplicationLaunch::prepare(requested, desktop, primary == "true").toJson()).toJson(QJsonDocument::Compact) << '\n';
+            QTextStream(stdout) << QJsonDocument(ApplicationLaunch::prepare(requested, desktop, primary == "true", taskRoot).toJson()).toJson(QJsonDocument::Compact) << '\n';
             return 0;
         }
         if (command == "ensure") {

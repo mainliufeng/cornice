@@ -50,6 +50,8 @@ class Broker : public QObject {
         QByteArray browserPolicy, browserConfiguration;
         QString stableId, geometry, outputName, initialWorkspace, lockPolicy = "pause";
         quint64 revision = 1;
+        bool poolDesktop = false, reusable = false;
+        QString taskRoot;
 
     };
     struct Binding {
@@ -94,6 +96,11 @@ class Broker : public QObject {
 
     QJsonObject acquireDesktop(const QJsonObject &, QLocalSocket *);
     void releaseAcquisition(QLocalSocket *);
+    bool hasActiveView(const QString &name) const;
+    bool cleanPrivateView(const QString &name, const QJsonObject &actual, qint64 browserPid = 0);
+    void cleanReleasedDesktop(const QString &name, const QJsonObject &lease);
+    QJsonObject createDesktop(const QString &name, const QJsonObject &params, bool persist);
+    void rollbackCreatedDesktop(const QString &name, const QString &privateOutput, bool seatCreated = true);
     QJsonObject handoff(const QJsonObject &);
     void transitionHandoff(const QString &name, const QString &id, const QString &status, const QString &note);
     void resolveHandoff(const QString &name, const QString &id, const QString &status, const QString &note, const QString &reason);

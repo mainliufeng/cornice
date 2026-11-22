@@ -11,9 +11,12 @@
 #include <QPointer>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QSaveFile>
 #include <QSet>
 #include <QSocketNotifier>
 #include <QTimer>
+#include <sys/prctl.h>
+#include <sys/wait.h>
 #include <cerrno>
 #include <csignal>
 #include <memory>
@@ -37,7 +40,7 @@ class Runtime : public QObject {
     QMap<qint64, Request> requests;
     QSet<QString> sessions, cleanupSessions;
     QJsonObject version, launchEnvironment;
-    QString startupNonce;
+    QString startupNonce, stopProof;
     QString policy;
     QByteArray input;
     std::deque<Write> outgoing;
@@ -45,7 +48,7 @@ class Runtime : public QObject {
     qint64 sequence = 0, versionId = 0;
     int readFd = -1, writeFd = -1;
     std::unique_ptr<QSocketNotifier> reader, writer;
-    bool stopping = false, controlUnavailable = false, cleanupAutoAttach = false;
+    bool stopping = false, controlUnavailable = false, cleanupAutoAttach = false, taskScoped = false;
 
     static void fail(const QString &message) { throw std::runtime_error(message.toStdString()); }
     void queueCleanup() {
@@ -161,13 +164,38 @@ class Runtime : public QObject {
         // here can revoke control, but cannot implicitly terminate the browser.
         try { flush(); } catch (...) { disableControl(); }
     }
-    void shutdown() {
-        if (stopping) return;
+    bool descendantsExited() const {
+        // A scoped runtime adopts Chromium's orphaned helpers. A successful
+        // wait on Chrome's main process alone cannot prove its seat is clear.
+        QElapsedTimer deadline;
+        deadline.start();
+        do {
+            const auto child = waitpid(-1, nullptr, WNOHANG);
+            if (child < 0 && errno == ECHILD) return true;
+            if (child < 0 && errno != EINTR) return false;
+            if (child == 0) poll(nullptr, 0, 20);
+        } while (deadline.elapsed() < 400);
+        return false;
+    }
+    bool shutdown() {
+        if (stopping) return false;
         stopping = true;
         if (owner) owner->abort();
-        browser.terminate();
-        if (!browser.waitForFinished(2000)) { browser.kill(); browser.waitForFinished(1000); }
+        if (browser.state() != QProcess::NotRunning) {
+            browser.terminate();
+            if (!browser.waitForFinished(taskScoped ? 1000 : 2000)) {
+                browser.kill();
+                browser.waitForFinished(taskScoped ? 500 : 1000);
+            }
+        }
+        const bool stopped = browser.state() == QProcess::NotRunning && (!taskScoped || descendantsExited());
+        if (stopped && taskScoped) {
+            QSaveFile proof(stopProof);
+            const auto nonce = startupNonce.toUtf8();
+            if (proof.open(QIODevice::WriteOnly) && proof.write(nonce) == nonce.size()) proof.commit();
+        }
         QCoreApplication::quit();
+        return stopped;
     }
     void attach(QLocalSocket *socket, QByteArray &pending) {
         while (pending.contains('\0')) {
@@ -179,6 +207,13 @@ class Runtime : public QObject {
                 socket->abort(); return;
             }
             if (message["op"] == "shutdown") { deliver(socket, {{"ok", true}}); socket->flush(); shutdown(); return; }
+            if (message["op"] == "shutdown-confirmed") {
+                if (!taskScoped || startupNonce.isEmpty() || message["nonce"] != startupNonce) { socket->abort(); return; }
+                const auto stopped = shutdown();
+                deliver(socket, {{"stopped", stopped}, {"nonce", startupNonce}});
+                socket->flush();
+                return;
+            }
             if (message["op"] == "detach" && owner == socket) {
                 detach();
                 if (!stopping && !controlUnavailable) owner = socket;
@@ -238,7 +273,7 @@ class Runtime : public QObject {
     }
 public:
     Runtime(const QString &path, const QString &program, QStringList arguments, const QString &log, QString configuration)
-        : policy(std::move(configuration)) {
+        : stopProof(log + ".stopped"), policy(std::move(configuration)) {
         int commands[2], responses[2];
         if (pipe2(commands, O_CLOEXEC) || pipe2(responses, O_CLOEXEC)) fail("Cannot create browser pipe");
         int childRead = fcntl(commands[0], F_DUPFD_CLOEXEC, 10), childWrite = fcntl(responses[1], F_DUPFD_CLOEXEC, 10);
@@ -246,6 +281,10 @@ public:
         if (childRead < 0 || childWrite < 0) fail("Cannot map browser pipe");
         auto environment = QProcessEnvironment::systemEnvironment();
         startupNonce = environment.value("CORNICE_BROWSER_STARTUP_NONCE");
+        taskScoped = environment.value("CORNICE_BROWSER_TASK_SCOPED") == "1";
+        if (taskScoped && (startupNonce.isEmpty() || prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0))
+            fail("Cannot track task browser process lifetime");
+        environment.remove("CORNICE_BROWSER_TASK_SCOPED");
         environment.remove("CORNICE_BROWSER_STARTUP_NONCE");
         environment.remove("CORNICE_BROWSER_REQUESTED_ENV");
         environment.remove("CORNICE_BROWSER_POLICY");

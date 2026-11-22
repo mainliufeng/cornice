@@ -21,7 +21,7 @@ class ApplicationScope;
 class BrowserSession : public QObject {
 public:
   BrowserSession(QString program, QStringList args, QProcessEnvironment env,
-                 QString log, std::function<bool(const QString &)> allowed);
+                 QString log, std::function<bool(const QString &)> allowed, bool taskScoped = false);
   ~BrowserSession() override;
   QString endpoint(const QString &token) const;
   void revoke();
@@ -36,6 +36,7 @@ public:
   bool matchesLaunchEnvironment(const QJsonObject &requested) const;
   qint64 pid() const { return m_pid; }
   static bool close(const QString &log);
+  bool closeForReuse();
 
 private:
   void receive();
@@ -54,7 +55,8 @@ private:
     QString token;
   };
   std::unique_ptr<QLocalSocket> m_runtime;
-  QString m_log, m_startupNonce;
+  QString m_log, m_startupNonce, m_runtimeNonce;
+  bool m_taskScoped = false;
   qint64 m_pid = 0;
   QTcpServer m_http;
   QWebSocketServer m_ws{"Cornice seat CDP", QWebSocketServer::NonSecureMode};

@@ -18,7 +18,8 @@ struct ApplicationLaunchPlan {
 class ApplicationLaunch {
   public:
     static QString singletonConflict(const QStringList &argv, const QString &desktop, bool primary);
-    static ApplicationLaunchPlan prepare(const QStringList &argv, const QString &desktop, bool primary);
+    static ApplicationLaunchPlan prepare(const QStringList &argv, const QString &desktop, bool primary,
+                                         const QString &taskRoot = {});
     static ApplicationLaunchPlan browser(const QString &desktop, bool primary, const QString &program = {},
-                                         const QStringList &arguments = {});
+                                         const QStringList &arguments = {}, const QString &taskRoot = {});
 };

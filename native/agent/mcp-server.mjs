@@ -150,8 +150,14 @@ async function invoke(operation,params={},extra={}) {
   const value=await credential();
   cancelled(extra.signal);
   if(operation==="finish") {
-    try {await rpc(value,"desktop.release",{},extra.requestId,extra);}
-    catch(error) {if(!/binding revoked|binding revoked or unknown/.test(error.message))throw error;}
+    try {
+      if (c.automatic && value.taskRelease && value.taskToken) {
+        await rpc({...value,token:value.taskToken},"desktop.task",{action:"release"},extra.requestId,extra);
+      } else {
+        await rpc(value,"desktop.release",{},extra.requestId,extra);
+      }
+    }
+    catch(error) {if(!/binding revoked|Unknown or foreign task reservation/.test(error.message))throw error;}
     finally {c.finished=true;c.reservation?.destroy();}
     return {outcome:params.outcome,reason:params.reason};
   }
@@ -236,13 +242,13 @@ const nativeTools=[
   {name:"desktop_browser_connect",description:"Open or reconnect this desktop's managed browser and verify CDP by listing its tabs (a blank tab may open if there are none). Then use browser_tabs and browser_snapshot. Uses only the Broker's authorized CDP grant.",inputSchema:object()},
   {name:"desktop_restore",description:"Receive a fresh task binding after explicit operator restoration. Does not resume a paused desktop, undo independent human control, or bypass a later lock/permission change. Reconnect browser and observe after success.",inputSchema:object()},
   {name:"desktop_wait",description:"Wait for explicit input restoration or completion/cancellation of the current human cooperation request. Does not resume or obtain control.",inputSchema:object({seconds:{type:"integer",minimum:1,maximum:30},reason:string},["seconds","reason"])},
-  {name:"desktop_finish",description:"Release task control after verified completion, cancellation or an explained blocker. Retire the desktop reference; further actions and live state reads require a new task.",inputSchema:object({outcome:{enum:["completed","cancelled","blocked"]},reason:string},["outcome","reason"])}
+  {name:"desktop_finish",description:"Release task control after verified completion, cancellation or an explained blocker. A reusable desktop's task browser can close and its session data can be cleared. The desktop reference expires.",inputSchema:object({outcome:{enum:["completed","cancelled","blocked"]},reason:string},["outcome","reason"])}
 ];
 const browserSpec=JSON.parse(await readFile(join(root,"native/agent/browser-schema.json"),"utf8"));
 const installedBrowser=JSON.parse(await readFile(join(root,"native/agent/node_modules/@playwright/mcp/package.json"),"utf8"));
 if(installedBrowser.version!==browserSpec.version) throw new Error("Pinned browser dependency and tool schema differ");
 const browserTools=browserSpec.tools;
-const acquireTool={name:"desktop_acquire",description:"Acquire an allowed, idle desktop for this task. Reuse an unoccupied secondary desktop, preserving its applications, or create a new one if none is free. Use createNew for an empty desktop. An occupied preferredDesktop creates a new desktop; primary is never chosen implicitly. Keep the returned desktop reference and include it in every following tool call.",inputSchema:object({preferredDesktop:{type:"string",minLength:1,maxLength:64},createNew:{type:"boolean"}})};
+const acquireTool={name:"desktop_acquire",description:"Acquire a desktop for this task. The Broker reserves a clean, unoccupied private desktop or creates one. A named desktop is preferred when eligible, and createNew explicitly provisions a fresh desktop. Primary desktop requires explicit selection and operator permission. Include the returned desktop reference in every following tool call.",inputSchema:object({preferredDesktop:{type:"string",minLength:1,maxLength:64},createNew:{type:"boolean"}})};
 const allTools=[acquireTool,...nativeTools,...browserTools].map(tool=>({...tool,inputSchema:{...tool.inputSchema,properties:{...tool.inputSchema.properties,...(tool.name==="desktop_acquire"?{}:{desktop:{type:"string",minLength:1,maxLength:128}})}}}));
 const validator=new AjvJsonSchemaValidator();
 const validators=new Map(allTools.map(tool=>[tool.name,validator.getValidator(tool.inputSchema)]));

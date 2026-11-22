@@ -50,7 +50,7 @@ try:
     print("Primary-display task continuity; management endpoint present:","management-display-v1" in capabilities["features"],flush=True)
     cli("create","continuing","--workspace","10","--virtual-output","1280x800","--human-lock-policy","continue")
     cli("create","pausing","--workspace","11","--virtual-output","1280x800")
-    cli("create","task-continuing","--workspace","12","--virtual-output","1280x800","--human-lock-policy","continue")
+    cli("create","task-continuing","--virtual-output","1280x800","--human-lock-policy","continue")
     mcp=MCP("daily-lock-task")
     task=mcp.details("desktop_acquire",{"preferredDesktop":"task-continuing"})
     task_target={"desktop":task["desktop"]}
