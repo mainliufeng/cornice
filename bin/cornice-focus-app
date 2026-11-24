@@ -85,8 +85,8 @@ warps=$(hyprctl -j getoption cursor:no_warps | jq -er 'if has("bool") then (if .
 under=$(hyprctl -j getoption misc:on_focus_under_fullscreen | jq -er '.int')
 [[ $warps =~ ^[01]$ && $under =~ ^[012]$ ]] || exit 1
 
-if hyprctl -j seat capabilities 2>/dev/null | jq -e '.dialect == "lua"' >/dev/null 2>&1; then
-  bin_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+if hyprctl -j status 2>/dev/null | jq -e '.configProvider == "lua"' >/dev/null 2>&1 ||
+    hyprctl -j seat capabilities 2>/dev/null | jq -e '.dialect == "lua"' >/dev/null 2>&1; then
   exec "$bin_dir/cornice-compositor" focus-window "$address" "$warps" "$under" "$workspace"
 fi
 
