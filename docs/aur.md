@@ -1,5 +1,7 @@
 # Publishing to the AUR
 
+For a local package on stock Hyprland, use [the Arch install guide](install-arch.md). The AUR recipe example below predates the stock-shell package revision and needs to be synchronized and verified in a clean chroot before publication.
+
 The in-repo `PKGBUILD` packages the working tree, which is what `makepkg -si`
 inside a clone needs. The AUR is different: it builds in a **clean chroot**, so
 everything must be fetched from a URL and nothing may be copied from

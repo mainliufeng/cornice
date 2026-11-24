@@ -134,6 +134,7 @@ Item {
     const seen = ({})
     for (const plugin of pending) {
       if (!plugin.id || seen[plugin.id]) continue
+      if (plugin.requiresDesktopModule === true && !host.hasDesktopModule) continue
       seen[plugin.id] = true
       unique.push(plugin)
     }

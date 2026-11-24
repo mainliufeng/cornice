@@ -16,6 +16,7 @@ ShellRoot {
   readonly property string prefix: Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
   readonly property string home: Quickshell.env("HOME")
   readonly property string version: "0.2.6"
+  readonly property bool hasDesktopModule: Quickshell.env("CORNICE_HAS_DESKTOP_MODULE") !== "0"
 
   readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"
   readonly property string userName: Quickshell.env("USER") || "user"
@@ -78,7 +79,8 @@ ShellRoot {
 
   function applyConfig() {
     const merged = Util.deepMerge(defaults, userConfig || ({}))
-    config = merged
+    // The base shell can be installed without the optional native desktop QML module.
+    config = hasDesktopModule ? merged : Util.deepMerge(merged, { agentDesktop: { enabled: false } })
     Theme.name = Util.option(merged, "theme", "mono")
     // The cn.i18n service watches this and loads the matching table.
     I18n.language = Util.option(merged, "language", "en")

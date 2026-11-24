@@ -109,6 +109,8 @@ Native screenshots stay inside Cornice: `cornice screenshot` selects a region, a
 
 ## Install
 
+On Arch Linux with stock Hyprland, use the [local package and first-run guide](docs/install-arch.md). It installs the everyday shell, including the bar, launcher and notifications. The package can be installed and removed with pacman, and activation is a separate manual step.
+
 Multi-seat is available on the default `main` branch and uses our Hyprland fork. Follow the [paired source installation](docs/source-install.md) for exact refs, dependencies, activation and rollback; an upstream merge or AUR package is not required. The default installer builds the complete native desktop and locked MCP/browser dependencies.
 
 ```bash
@@ -132,9 +134,7 @@ step from switching the running session.
 make install                     # same as ./install.sh
 ```
 
-Use the paired source guide for the validated installation. Arch package builds
-and AUR publication were not validated for this multi-desktop pair; historical
-packaging notes remain in [docs/aur.md](docs/aur.md).
+The independent Agent desktops, read-only observation and explicit human takeover need the paired source build and the fork's seat protocols. The Arch guide includes a plan for trying that pair in an isolated session.
 
 To run the daily shell in a compatible Hyprland session, a systemd user service restarts it if it dies:
 

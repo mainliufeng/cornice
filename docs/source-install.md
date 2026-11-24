@@ -1,5 +1,7 @@
 # 源码配套安装
 
+本文面向需要 Agent 独立桌面、观察与接管的用户。Arch 上的原版 Hyprland 日常 Shell 安装见[本地包指南](install-arch.md)，其中也有[隔离试用 fork 的方案](install-arch.md#隔离试用-fork)。
+
 当前安装方式是我们的 Hyprland fork 与 Cornice 源码配套；多 seat 尚未合入 Hyprland 上游。AUR、发行包和新的会话架构不是本轮前置。以下使用现有 CMake、`install.sh` 和 `session-trial`，不创建第二套同时运行的 compositor。
 
 ## 来源与版本

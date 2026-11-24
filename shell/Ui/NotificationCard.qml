@@ -103,7 +103,14 @@ Item {
 
   function focusApp() {
     if (DesktopSession.readOnly) return false
-    Util.exec("cornice-focus-app"
+    if (!DesktopSession.secondary) {
+      // Focusing an existing window on the primary seat does not launch an app.
+      const prefix = Quickshell.env("CORNICE_PATH") || "/usr/share/cornice"
+      Quickshell.execDetached([prefix + "/bin/cornice-focus-app",
+        "--pid", senderPid(), "--desktop", desktopEntryId(), "--name", root.appName])
+      return true
+    }
+    return Util.exec("cornice-focus-app"
       + " --pid " + Util.shellQuote(senderPid())
       + " --desktop " + Util.shellQuote(desktopEntryId())
       + " --name " + Util.shellQuote(root.appName))

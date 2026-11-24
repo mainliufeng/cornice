@@ -13,8 +13,10 @@ if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
   export QT_IM_MODULE=wayland
   unset QT_IM_MODULES
 fi
+export CORNICE_HAS_DESKTOP_MODULE=0
 for modules in "$prefix/native/qml" "$prefix/native/build/qml" "$prefix/native/platform-build/qml"; do
   if [[ -d $modules ]]; then export QML_IMPORT_PATH="$modules${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"; fi
+  if [[ -f $modules/Cornice/Desktop/qmldir ]]; then CORNICE_HAS_DESKTOP_MODULE=1; fi
 done
 
 if [[ -n ${CORNICE_QS:-} && -x ${CORNICE_QS} ]]; then

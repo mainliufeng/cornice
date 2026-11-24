@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "author": "cornice",
   "description": "Read-only independent workspace view",
+  "requiresDesktopModule": true,
   "kinds": [
     "overlay"
   ],
