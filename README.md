@@ -2,6 +2,13 @@
 
 **English** · [中文](README.zh-CN.md)
 
+> [!IMPORTANT]
+> **Cornice is archived and no longer maintained.**
+>
+> Cornice was created to reduce interference when people and agents work in parallel. On Liu Feng’s Hyprland machine, Cua’s Hyprland plugin is a better fit for the subset of background operations he verified, so Cornice is no longer maintained.
+>
+> The [project site](https://cornice.liufeng.me/en/), source history and [past releases and downloads](https://github.com/mainliufeng/cornice/releases) remain available.
+
 Cornice is a **Hyprland shell** built on [Quickshell](https://quickshell.org),
 with independent desktops for people and their AI agents. The daily shell brings
 the bar, panels, notifications, launcher, lock screen, idle handling and polkit

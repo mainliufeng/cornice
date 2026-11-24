@@ -2,6 +2,13 @@
 
 [English](README.md) · **中文**
 
+> [!IMPORTANT]
+> **Cornice 已归档，不再维护。**
+>
+> Cornice 最初是为了减少人和 Agent 并行操作时的相互干扰。在刘峰的 Hyprland 机器上，Cua 的 Hyprland 插件更适合已经验证的那部分后台操作，因此 Cornice 不再维护。
+>
+> [官网](https://cornice.liufeng.me/)、源码历史和[历史版本及下载](https://github.com/mainliufeng/cornice/releases)仍可访问。
+
 基于 [Quickshell](https://quickshell.org) 的 **Hyprland shell**，让人和 AI Agent
 各有自己的桌面。日常 Shell 把状态栏、面板、通知、启动器、锁屏、空闲管理与
 polkit 认证收进统一界面。任务、模型和对话由 Codex、Pi 等外部执行器管理；
